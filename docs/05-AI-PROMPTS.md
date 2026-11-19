@@ -1,6 +1,6 @@
 # 05 - Đặc tả Prompt & Structured Outputs cho Gemini API
 
-Sử dụng SDK chính thức `@google/genai` phía server (`src/lib/ai/classifier.ts` và `src/lib/gemini/classifier.ts`).
+Sử dụng SDK chính thức `@google/genai` phía server hợp nhất tại một nguồn duy nhất `src/lib/ai/classifier.ts`.
 
 ## 1. Phân loại Đa Phương Thức Series-Aware Gemini Vision (`src/lib/ai/classifier.ts`)
 - **Áp dụng:** Chỉ chạy cho các video thuộc kênh bật **từ 2 nhãn trở lên** (`['Phim AI', 'HH2D']`) và **chưa kế thừa được nhãn** từ các tập cùng `(channel_id, seriesKey)` đã có trong DB (kênh 1 nhãn được gán thẳng 100%, và luôn bỏ qua các video đã khóa thủ công `is_manual_tag = true`).
@@ -17,7 +17,7 @@ Sử dụng SDK chính thức `@google/genai` phía server (`src/lib/ai/classifi
   Trả về đúng 1 phần tử JSON cho mỗi `videoId`:
   `{ videoId, detectedGenre: 'Phim AI' | 'HH2D', seriesName: string | null, episodeNumber: integer | null, confidence: number }`.
 
-## 2. Tóm tắt nhanh Không Spoil (`src/lib/gemini/classifier.ts`)
+## 2. Tóm tắt nhanh Không Spoil (`src/lib/ai/classifier.ts`)
 - **Model:** `gemini-2.5-flash`
 - **Cache:** Chỉ gọi khi cột `videos.ai_summary` đang `NULL`, sau đó lưu kết quả vào DB dùng chung cho toàn hệ thống.
 - **Định dạng:** Đúng **3 gạch đầu dòng** tiếng Việt ngắn gọn (`- ...`), hấp dẫn và tuyệt đối không tiết lộ cái kết.

@@ -118,9 +118,19 @@ export function useYouTubePlayer({
   const lastSavedAtRef = useRef<number>(0);
   const latestTimeRef = useRef<number>(initialProgressSeconds);
   const latestDurationRef = useRef<number>(initialDurationSeconds);
+  const initialProgressRef = useRef<number>(initialProgressSeconds);
+  const initialDurationRef = useRef<number>(initialDurationSeconds);
   const playbackRateRef = useRef<number>(playbackRate);
   const onSaveRef = useRef(onSaveProgress);
   const onEndedRef = useRef(onEnded);
+
+  useEffect(() => {
+    initialProgressRef.current = initialProgressSeconds;
+  }, [initialProgressSeconds]);
+
+  useEffect(() => {
+    initialDurationRef.current = initialDurationSeconds;
+  }, [initialDurationSeconds]);
 
   useEffect(() => {
     playbackRateRef.current = playbackRate;
@@ -148,12 +158,14 @@ export function useYouTubePlayer({
   const [duration, setDuration] = useState<number>(initialDurationSeconds);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
 
+  // Chỉ khởi tạo lại YT.Player khi đổi videoId (tuyệt đối KHÔNG hủy iframe khi lưu tiến độ 10s/lần)
   useEffect(() => {
     let cancelled = false;
     const targetVideoId = videoId;
-    const startSec = Math.max(0, Math.floor(initialProgressSeconds));
+    const startSec = Math.max(0, Math.floor(initialProgressRef.current));
+    const initDur = Math.max(0, Math.floor(initialDurationRef.current));
     latestTimeRef.current = startSec;
-    latestDurationRef.current = initialDurationSeconds;
+    latestDurationRef.current = initDur;
     lastSavedAtRef.current = Date.now();
 
     const clearTicker = () => {
@@ -297,7 +309,7 @@ export function useYouTubePlayer({
         playerRef.current = null;
       }
     };
-  }, [videoId, initialProgressSeconds, initialDurationSeconds]);
+  }, [videoId]);
 
   const seekBy = useCallback((deltaSeconds: number) => {
     const p = playerRef.current;

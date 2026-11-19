@@ -699,10 +699,17 @@ export function UnifiedCinemaWorkspace({
         };
 
         if (!res.ok) {
-          if (payload.code === 'TOKEN_EXPIRED') {
+          if (payload.code === 'TOKEN_EXPIRED' || res.status === 401) {
             toast.error(
               payload.error ||
-                'Token Google đã hết hạn hoặc thiếu quyền đăng ký kênh. Vui lòng Đăng xuất và Đăng nhập lại bằng Google.',
+                'Token Google đã hết hạn hoặc thiếu quyền đăng ký kênh. Vui lòng đăng nhập lại bằng Google.',
+              {
+                duration: 8000,
+                action: {
+                  label: 'Đăng nhập lại',
+                  onClick: () => router.push('/login'),
+                },
+              },
             );
           } else {
             toast.error(payload.error || 'Không thể đăng ký kênh này.');
@@ -773,10 +780,17 @@ export function UnifiedCinemaWorkspace({
       };
 
       if (!res.ok) {
-        if (payload.code === 'TOKEN_EXPIRED') {
+        if (payload.code === 'TOKEN_EXPIRED' || res.status === 401) {
           toast.error(
             payload.error ||
-              'Google Access Token đã hết hạn. Vui lòng Đăng xuất và Đăng nhập lại bằng Google.',
+              'Google Access Token đã hết hạn. Vui lòng đăng nhập lại bằng Google để làm mới phiên.',
+            {
+              duration: 8000,
+              action: {
+                label: 'Đăng nhập lại',
+                onClick: () => router.push('/login'),
+              },
+            },
           );
         } else {
           toast.error(payload.error || 'Không thể đồng bộ kênh từ YouTube.');

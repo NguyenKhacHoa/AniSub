@@ -482,3 +482,59 @@ export async function classifyVideosMultimodalBatch(
     lastErrorMessage,
   };
 }
+
+export const GEMINI_SUMMARY_MODEL = 'gemini-2.5-flash' as const;
+
+/**
+ * Tạo 3 gạch đầu dòng tóm tắt nội dung ngắn gọn, KHÔNG spoil cái kết
+ * (có xoay vòng model dự phòng khi gặp 429/404).
+ */
+export async function generateVideoSummaryWithGemini(input: {
+  title: string;
+  description: string | null;
+  detectedGenre: string | null;
+  durationSeconds: number;
+}): Promise<string> {
+  const ai = getGeminiClient();
+
+  const prompt = `Bạn là biên tập viên rạp chiếu phim AniSub. Hãy viết tóm tắt nhanh cho video sau bằng tiếng Việt gồm ĐÚNG 3 gạch đầu dòng ngắn gọn (mỗi dòng bắt đầu bằng "- "), hấp dẫn và TUYỆT ĐỐI KHÔNG tiết lộ cái kết (no spoiler).
+
+- Tiêu đề: ${input.title}
+- Thể loại: ${input.detectedGenre ?? 'Hoạt hình'}
+- Thời lượng: ${Math.round(input.durationSeconds / 60)} phút
+- Mô tả gốc: ${(input.description ?? 'Không có mô tả chi tiết').slice(0, 1200)}
+
+Chỉ trả về đúng 3 dòng bắt đầu bằng "- ", không thêm lời mở đầu hay kết luận.`;
+
+  let lastError: unknown = null;
+
+  for (let i = 0; i < GEMINI_VISION_MODELS.length; i++) {
+    const modelName = GEMINI_VISION_MODELS[i];
+    try {
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: prompt,
+        config: {
+          temperature: 0.4,
+        },
+      });
+
+      const text = response.text?.trim();
+      if (text) return text;
+    } catch (err) {
+      lastError = err;
+      const status = getErrorStatus(err);
+      if (
+        (status === 429 || status === 404) &&
+        i < GEMINI_VISION_MODELS.length - 1
+      ) {
+        continue;
+      }
+      break;
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error('Gemini không trả về nội dung tóm tắt.');
+}

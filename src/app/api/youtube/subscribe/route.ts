@@ -92,7 +92,7 @@ export async function POST(request: Request) {
       reason === 'insufficientPermissions' ||
       reason === 'authError'
     ) {
-      return NextResponse.json(
+      const res = NextResponse.json(
         {
           code: 'TOKEN_EXPIRED',
           error:
@@ -100,6 +100,8 @@ export async function POST(request: Request) {
         },
         { status: 401 },
       );
+      res.cookies.delete('anisub_yt_token');
+      return res;
     } else {
       return NextResponse.json(
         {

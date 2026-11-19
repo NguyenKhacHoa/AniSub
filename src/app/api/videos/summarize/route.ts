@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server';
 import { verifyWhitelistedUser } from '@/lib/auth/whitelist';
-import { generateVideoSummaryWithGemini } from '@/lib/gemini/classifier';
+import { generateVideoSummaryWithGemini } from '@/lib/ai/classifier';
 
 export async function POST(request: Request) {
   const auth = await verifyWhitelistedUser();

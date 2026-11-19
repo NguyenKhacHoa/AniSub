@@ -135,14 +135,16 @@ export async function POST() {
   } catch (err) {
     if (err instanceof YouTubeApiError) {
       if (err.status === 401 || err.reason === 'authError') {
-        return NextResponse.json(
+        const res = NextResponse.json(
           {
             code: 'TOKEN_EXPIRED',
             error:
-              'Token YouTube từ Google đã hết hạn. Vui lòng Đăng xuất và Đăng nhập lại bằng Google.',
+              'Token YouTube từ Google đã hết hạn. Vui lòng Đăng xuất và Đăng nhập lại bằng Google để làm mới phiên.',
           },
           { status: 401 },
         );
+        res.cookies.delete('anisub_yt_token');
+        return res;
       }
 
       if (err.reason === 'quotaExceeded' || err.status === 403) {
