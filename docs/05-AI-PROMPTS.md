@@ -17,7 +17,10 @@ Sử dụng SDK chính thức `@google/genai` phía server hợp nhất tại m�
   Trả về đúng 1 phần tử JSON cho mỗi `videoId`:
   `{ videoId, detectedGenre: 'Phim AI' | 'HH2D', seriesName: string | null, episodeNumber: integer | null, confidence: number }`.
 
-## 2. Tóm tắt nhanh Không Spoil (`src/lib/ai/classifier.ts`)
-- **Model:** `gemini-2.5-flash`
-- **Cache:** Chỉ gọi khi cột `videos.ai_summary` đang `NULL`, sau đó lưu kết quả vào DB dùng chung cho toàn hệ thống.
-- **Định dạng:** Đúng **3 gạch đầu dòng** tiếng Việt ngắn gọn (`- ...`), hấp dẫn và tuyệt đối không tiết lộ cái kết.
+## 2. AI Cinema Insight & Interactive Assistant (`src/lib/ai/cinema-insight.ts`)
+- **Phân tích đa nguồn (`POST /api/ai/summary`):**
+  - Thu thập song song 3 nguồn: Metadata video + Lời thoại phụ đề YouTube (`vi` → `en` → track đầu tiên, giới hạn ~14.000 ký tự đầu/giữa/cuối kèm mốc `[MM:SS]`) + 60 bình luận thật từ YouTube Data API v3 (`commentThreads`, lọc bỏ spam/link rác).
+  - Gemini Structured JSON Output (`responseMimeType: 'application/json'`, xoay vòng 3 model dự phòng) trả về: `overallScore` (0–100), `verdictLabel`, 4 `metrics` (`plot`, `visuals`, `audio`, `pacing`), `overview` (không spoil), `highlights` (`time`, `description`), `communityPros`, `communityCons`, `featuredComments` (tối đa 3 bình luận), `analyzedCommentCount`, `hasTranscript`, `storyContext`.
+  - Cache 7 ngày vào cột JSONB `public.videos.insight_data` (có fallback memory cache an toàn nếu chưa chạy migration), hỗ trợ `forceRefresh: true`.
+- **Hỏi đáp theo ngữ cảnh (`POST /api/ai/chat`):**
+  - Nhận `videoId`, metadata, `insightContext` (bao gồm `storyContext`) và mảng `messages`, duy trì hội thoại nhiều lượt bằng tiếng Việt, bám sát lời thoại & bình luận thực tế, tránh bịa đặt và tránh spoil kết phim.

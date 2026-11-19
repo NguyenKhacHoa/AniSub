@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useTransition } from 'react';
 import {
   Search,
   Radio,
@@ -11,6 +11,7 @@ import {
   Sparkles,
   ArrowUpDown,
   EyeOff,
+  Loader2,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -84,6 +85,7 @@ export function CommandHub({
   onTriggerDeltaSync,
 }: CommandHubProps) {
   const searchRef = useRef<HTMLInputElement>(null);
+  const [isFilterPending, startFilterTransition] = useTransition();
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -200,7 +202,11 @@ export function CommandHub({
 
             <Tabs
               value={videoType}
-              onValueChange={(val) => onChangeVideoType(val as VideoTypeFilter)}
+              onValueChange={(val) =>
+                startFilterTransition(() =>
+                  onChangeVideoType(val as VideoTypeFilter),
+                )
+              }
             >
               <TabsList className="h-10 rounded-xl bg-[var(--bg-canvas)] p-1">
                 <TabsTrigger
@@ -275,7 +281,9 @@ export function CommandHub({
                   key={pill.value}
                   type="button"
                   aria-pressed={active}
-                  onClick={() => onChangeGenreFilter(pill.value)}
+                  onClick={() =>
+                    startFilterTransition(() => onChangeGenreFilter(pill.value))
+                  }
                   className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors cursor-pointer ${active
                     ? style
                       ? `${style.badgeClass} ring-1 ring-current`
@@ -306,7 +314,9 @@ export function CommandHub({
                       key={opt.value}
                       type="button"
                       aria-pressed={active}
-                      onClick={() => onChangeSortBy(opt.value)}
+                      onClick={() =>
+                        startFilterTransition(() => onChangeSortBy(opt.value))
+                      }
                       className={`h-6 rounded-md px-2 text-xs font-medium transition-colors cursor-pointer ${active
                         ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-xs'
                         : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -324,7 +334,11 @@ export function CommandHub({
               <button
                 type="button"
                 aria-pressed={onlyUnwatched}
-                onClick={() => onToggleOnlyUnwatched(!onlyUnwatched)}
+                onClick={() =>
+                  startFilterTransition(() =>
+                    onToggleOnlyUnwatched(!onlyUnwatched),
+                  )
+                }
                 title="Ẩn các phim hoặc bộ phim đã xem xong (>= 90%)"
                 className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors cursor-pointer ${onlyUnwatched
                   ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
@@ -339,6 +353,9 @@ export function CommandHub({
         )}
 
         <div className="flex items-center gap-2.5">
+          {isFilterPending && (
+            <Loader2 className="size-3.5 animate-spin text-[var(--accent-primary)]" />
+          )}
           {!isExplore && onTriggerDeltaSync && (
             <button
               type="button"

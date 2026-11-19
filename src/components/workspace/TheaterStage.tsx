@@ -7,7 +7,7 @@ import {
   Minimize2,
   X,
   SkipForward,
-  Sparkles,
+  BarChart3,
   Clock,
   CheckCircle2,
   Loader2,
@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { AiCinemaInsightPanel } from '@/components/workspace/AiCinemaInsightPanel';
 import { useYouTubePlayer } from '@/hooks/useYouTubePlayer';
 import {
   GENRE_DOT_STYLES,
@@ -32,6 +33,7 @@ import {
   getProgressPercent,
   type CinemaVideoItem,
 } from '@/types/workspace';
+import type { CinemaInsightData } from '@/types/ai-insight';
 import type { SeriesGroup } from '@/lib/series-parser';
 import type { UserSeriesStatus } from '@/types/database';
 
@@ -96,10 +98,28 @@ export function TheaterStage({
 }: TheaterStageProps) {
   const playerAnchorRef = useRef<HTMLDivElement>(null);
   const fullscreenContainerRef = useRef<HTMLDivElement>(null);
+  const aiPanelRef = useRef<HTMLDivElement>(null);
   const [isTheaterWide, setIsTheaterWide] = useState(false);
   const [isMiniPlayer, setIsMiniPlayer] = useState(false);
-  const [showAiSummary, setShowAiSummary] = useState(false);
-  const [isSummarizing, setIsSummarizing] = useState(false);
+  const [insightState, setInsightState] = useState<{
+    videoId: string;
+    open: boolean;
+    data: CinemaInsightData | null;
+  }>({
+    videoId: video.video_id,
+    open: false,
+    data: null,
+  });
+  const [isLoadingInsight, setIsLoadingInsight] = useState(false);
+  const [isRefreshingInsight, setIsRefreshingInsight] = useState(false);
+  const showAiInsight =
+    insightState.videoId === video.video_id && insightState.open;
+  const insightData =
+    insightState.videoId === video.video_id ? insightState.data : null;
+  const [isTogglingWatchLater, setIsTogglingWatchLater] = useState(false);
+  const [pendingSeriesAction, setPendingSeriesAction] = useState<
+    'following' | 'hidden' | null
+  >(null);
   const [playlistSortOrder, setPlaylistSortOrder] = useState<'desc' | 'asc'>(
     'desc',
   );
@@ -170,6 +190,7 @@ export function TheaterStage({
     duration,
     isPlaying,
     seekBy,
+    seekTo,
     applyPlaybackRate,
     playVideo,
     pauseVideo,
@@ -337,51 +358,104 @@ export function TheaterStage({
       ? GENRE_DOT_STYLES[video.detected_genre]
       : null;
 
-  const summaryBullets = video.ai_summary
-    ? video.ai_summary
-      .split('\n')
-      .map((line) => line.replace(/^[-•*]\s*/, '').trim())
-      .filter(Boolean)
-      .slice(0, 3)
-    : [];
-
-  const handleToggleAiSummary = async () => {
-    if (showAiSummary) {
-      setShowAiSummary(false);
-      return;
-    }
-
-    setShowAiSummary(true);
-
-    // Đã có cache trong DB -> hiển thị ngay không gọi lại API
-    if (video.ai_summary?.trim()) {
-      return;
-    }
-
-    setIsSummarizing(true);
-    try {
-      const res = await fetch('/api/videos/summarize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ videoId: video.video_id }),
-      });
-
-      const payload = (await res.json().catch(() => ({}))) as {
-        aiSummary?: string;
-        error?: string;
-      };
-
-      if (!res.ok || !payload.aiSummary) {
-        toast.error(payload.error || 'Không thể tóm tắt video bằng Gemini AI.');
-        return;
+  const fetchAiInsight = useCallback(
+    async (forceRefresh = false) => {
+      const targetVideoId = video.video_id;
+      if (forceRefresh) {
+        setIsRefreshingInsight(true);
+      } else {
+        setIsLoadingInsight(true);
       }
 
-      onSummaryGenerated(video.video_id, payload.aiSummary);
-    } catch {
-      toast.error('Lỗi kết nối khi gọi Gemini AI tóm tắt.');
-    } finally {
-      setIsSummarizing(false);
+      try {
+        const res = await fetch('/api/ai/summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            videoId: targetVideoId,
+            title: video.title,
+            description: video.description,
+            channelTitle: video.channel_title ?? null,
+            detectedGenre: video.detected_genre ?? null,
+            durationSeconds: video.duration_seconds,
+            forceRefresh,
+          }),
+        });
+
+        const payload = (await res.json().catch(() => ({}))) as {
+          insight?: CinemaInsightData;
+          cached?: boolean;
+          error?: string;
+        };
+
+        if (!res.ok || !payload.insight) {
+          toast.error(
+            payload.error || 'Không thể phân tích tập phim bằng Gemini AI.',
+          );
+          setInsightState((prev) =>
+            prev.videoId === targetVideoId && !prev.data
+              ? { ...prev, open: false }
+              : prev,
+          );
+          return;
+        }
+
+        setInsightState({
+          videoId: targetVideoId,
+          open: true,
+          data: payload.insight,
+        });
+        onSummaryGenerated(targetVideoId, payload.insight.overview);
+        if (forceRefresh) {
+          toast.success('Đã quét lại lời thoại, bình luận & điểm số mới nhất!');
+        }
+      } catch {
+        toast.error('Lỗi kết nối khi gọi Phân tích & Đánh giá AI.');
+        setInsightState((prev) =>
+          prev.videoId === targetVideoId && !prev.data
+            ? { ...prev, open: false }
+            : prev,
+        );
+      } finally {
+        setIsLoadingInsight(false);
+        setIsRefreshingInsight(false);
+      }
+    },
+    [
+      video.video_id,
+      video.title,
+      video.description,
+      video.channel_title,
+      video.detected_genre,
+      video.duration_seconds,
+      onSummaryGenerated,
+    ],
+  );
+
+  const handleToggleAiInsight = async () => {
+    if (showAiInsight) {
+      setInsightState((prev) => ({
+        videoId: video.video_id,
+        open: false,
+        data: prev.videoId === video.video_id ? prev.data : null,
+      }));
+      return;
     }
+
+    setInsightState((prev) => ({
+      videoId: video.video_id,
+      open: true,
+      data: prev.videoId === video.video_id ? prev.data : null,
+    }));
+    requestAnimationFrame(() => {
+      aiPanelRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+      });
+    });
+
+    if (insightData) return;
+    await fetchAiInsight(false);
   };
 
   return (
@@ -418,17 +492,35 @@ export function TheaterStage({
             <Button
               type="button"
               variant="outline"
-              onClick={() => onToggleWatchLater(video.video_id)}
+              disabled={isTogglingWatchLater}
+              onClick={async () => {
+                setIsTogglingWatchLater(true);
+                try {
+                  await Promise.resolve(onToggleWatchLater(video.video_id));
+                } finally {
+                  setIsTogglingWatchLater(false);
+                }
+              }}
               title={isWatchLater ? 'Xóa khỏi Xem sau' : 'Lưu vào Xem sau'}
               className={`h-8 rounded-lg border px-2.5 text-xs font-medium cursor-pointer ${isWatchLater
                 ? 'border-amber-500/50 bg-amber-500/15 text-amber-500 dark:text-amber-300'
                 : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                 }`}
             >
-              <Bookmark
-                className={`mr-1.5 size-3.5 ${isWatchLater ? 'fill-current' : ''}`}
-              />
-              <span>{isWatchLater ? 'Đã lưu' : 'Xem sau'}</span>
+              {isTogglingWatchLater ? (
+                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+              ) : (
+                <Bookmark
+                  className={`mr-1.5 size-3.5 ${isWatchLater ? 'fill-current' : ''}`}
+                />
+              )}
+              <span>
+                {isTogglingWatchLater
+                  ? 'Đang lưu...'
+                  : isWatchLater
+                    ? 'Đã lưu'
+                    : 'Xem sau'}
+              </span>
             </Button>
           )}
 
@@ -671,55 +763,83 @@ export function TheaterStage({
                       <>
                         <button
                           type="button"
-                          onClick={() =>
-                            onUpdateSeriesStatus(
-                              activeSeries,
-                              activeSeriesStatus === 'following'
-                                ? null
-                                : 'following',
-                            )
-                          }
+                          disabled={pendingSeriesAction !== null}
+                          onClick={async () => {
+                            setPendingSeriesAction('following');
+                            try {
+                              await Promise.resolve(
+                                onUpdateSeriesStatus(
+                                  activeSeries,
+                                  activeSeriesStatus === 'following'
+                                    ? null
+                                    : 'following',
+                                ),
+                              );
+                            } finally {
+                              setPendingSeriesAction(null);
+                            }
+                          }}
                           title={
                             activeSeriesStatus === 'following'
                               ? 'Bỏ theo dõi bộ phim'
                               : 'Theo dõi & ghim bộ phim lên đầu'
                           }
-                          className={`inline-flex h-7 items-center gap-1 rounded-lg border px-2 text-[11px] font-medium transition-colors cursor-pointer ${activeSeriesStatus === 'following'
+                          className={`inline-flex h-7 items-center gap-1 rounded-lg border px-2 text-[11px] font-medium transition-colors disabled:opacity-60 cursor-pointer ${activeSeriesStatus === 'following'
                             ? 'border-amber-500/50 bg-amber-500/15 text-amber-500 dark:text-amber-300'
                             : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
                             }`}
                         >
-                          <Star
-                            className={`size-3 shrink-0 ${activeSeriesStatus === 'following'
-                              ? 'fill-current'
-                              : ''
-                              }`}
-                          />
+                          {pendingSeriesAction === 'following' ? (
+                            <Loader2 className="size-3 shrink-0 animate-spin" />
+                          ) : (
+                            <Star
+                              className={`size-3 shrink-0 ${activeSeriesStatus === 'following'
+                                ? 'fill-current'
+                                : ''
+                                }`}
+                            />
+                          )}
                           <span className="hidden sm:inline">
-                            {activeSeriesStatus === 'following'
-                              ? 'Đang theo dõi'
-                              : 'Theo dõi'}
+                            {pendingSeriesAction === 'following'
+                              ? 'Đang lưu...'
+                              : activeSeriesStatus === 'following'
+                                ? 'Đang theo dõi'
+                                : 'Theo dõi'}
                           </span>
                         </button>
                         <button
                           type="button"
-                          onClick={() =>
-                            onUpdateSeriesStatus(
-                              activeSeries,
-                              activeSeriesStatus === 'hidden' ? null : 'hidden',
-                            )
-                          }
+                          disabled={pendingSeriesAction !== null}
+                          onClick={async () => {
+                            setPendingSeriesAction('hidden');
+                            try {
+                              await Promise.resolve(
+                                onUpdateSeriesStatus(
+                                  activeSeries,
+                                  activeSeriesStatus === 'hidden'
+                                    ? null
+                                    : 'hidden',
+                                ),
+                              );
+                            } finally {
+                              setPendingSeriesAction(null);
+                            }
+                          }}
                           title={
                             activeSeriesStatus === 'hidden'
                               ? 'Hiện lại bộ phim'
                               : 'Ẩn bớt bộ phim này khỏi danh sách chính'
                           }
-                          className={`inline-flex h-7 items-center justify-center rounded-lg border px-2 text-[11px] font-medium transition-colors cursor-pointer ${activeSeriesStatus === 'hidden'
+                          className={`inline-flex h-7 items-center justify-center rounded-lg border px-2 text-[11px] font-medium transition-colors disabled:opacity-60 cursor-pointer ${activeSeriesStatus === 'hidden'
                             ? 'border-rose-500/45 bg-rose-500/15 text-rose-400'
                             : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
                             }`}
                         >
-                          <EyeOff className="size-3 shrink-0" />
+                          {pendingSeriesAction === 'hidden' ? (
+                            <Loader2 className="size-3 shrink-0 animate-spin" />
+                          ) : (
+                            <EyeOff className="size-3 shrink-0" />
+                          )}
                         </button>
                       </>
                     )}
@@ -773,7 +893,7 @@ export function TheaterStage({
                     />
                   </div>
 
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     {effectiveNextVideo && (
                       <Button
                         type="button"
@@ -788,50 +908,30 @@ export function TheaterStage({
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={isSummarizing}
-                      onClick={handleToggleAiSummary}
-                      aria-expanded={showAiSummary}
-                      className={`h-8 rounded-lg border px-2.5 text-xs font-medium cursor-pointer ${effectiveNextVideo ? 'shrink-0' : 'flex-1'
-                        } ${showAiSummary
-                          ? 'border-[var(--ai-accent)] bg-violet-500/15 text-[var(--text-primary)]'
-                          : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]'
+                      disabled={isLoadingInsight || isRefreshingInsight}
+                      onClick={() => void handleToggleAiInsight()}
+                      aria-expanded={showAiInsight}
+                      className={`h-8 rounded-lg border px-2.5 text-xs font-medium cursor-pointer ${
+                        isLoadingInsight || isRefreshingInsight || !effectiveNextVideo
+                          ? 'w-full'
+                          : 'flex-1'
+                      } ${showAiInsight
+                          ? 'border-teal-500/55 bg-teal-500/12 text-teal-600 dark:text-teal-300'
+                          : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-primary)] hover:border-teal-500/45 hover:bg-[var(--bg-elevated)]'
                         }`}
                     >
-                      {isSummarizing ? (
-                        <Loader2 className="mr-1.5 size-3.5 animate-spin text-[var(--ai-accent)]" />
+                      {isLoadingInsight || isRefreshingInsight ? (
+                        <Loader2 className="mr-1.5 size-3.5 shrink-0 animate-spin text-teal-500 dark:text-teal-400" />
                       ) : (
-                        <Sparkles className="mr-1.5 size-3.5 text-[var(--ai-accent)]" />
+                        <BarChart3 className="mr-1.5 size-3.5 shrink-0 text-teal-500 dark:text-teal-400" />
                       )}
-                      <span>Tóm tắt AI</span>
+                      <span className="truncate">
+                        {isLoadingInsight || isRefreshingInsight
+                          ? 'Đang đọc nội dung phim & quét bình luận...'
+                          : 'Phân tích & Đánh giá AI'}
+                      </span>
                     </Button>
                   </div>
-
-                  {showAiSummary && (
-                    <div className="rounded-lg border border-[var(--ai-accent)]/40 bg-[var(--bg-canvas)] p-2.5">
-                      <p className="text-[11px] font-semibold text-[var(--ai-accent)]">
-                        Tóm tắt Gemini AI (Không Spoil)
-                      </p>
-                      {isSummarizing ? (
-                        <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-[var(--text-secondary)]">
-                          <Loader2 className="size-3 animate-spin text-[var(--ai-accent)]" />
-                          <span>Đang phân tích...</span>
-                        </div>
-                      ) : summaryBullets.length > 0 ? (
-                        <ul className="mt-1.5 flex flex-col gap-1 text-[11px] text-[var(--text-primary)]">
-                          {summaryBullets.map((line, i) => (
-                            <li key={i} className="flex items-start gap-1.5">
-                              <span className="mt-1.5 size-1 shrink-0 rounded-full bg-[var(--accent-primary)]" />
-                              <span>{line}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
-                          Bấm lại nút Tóm tắt AI để tạo nội dung.
-                        </p>
-                      )}
-                    </div>
-                  )}
                 </div>
               </div>
 
@@ -984,7 +1084,11 @@ export function TheaterStage({
                     ) : (
                       <Plus className="mr-2 size-4" />
                     )}
-                    <span>Đăng ký & Thêm vào AniSub</span>
+                    <span>
+                      {isSubscribingChannel
+                        ? 'Đang đăng ký & kéo video...'
+                        : 'Đăng ký & Thêm vào AniSub'}
+                    </span>
                   </Button>
                 ) : (
                   isChannelSubscribed &&
@@ -1010,59 +1114,25 @@ export function TheaterStage({
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={isSummarizing}
-                  onClick={handleToggleAiSummary}
-                  aria-expanded={showAiSummary}
-                  className={`h-10 w-full rounded-xl border text-sm font-medium cursor-pointer ${showAiSummary
-                    ? 'border-[var(--ai-accent)] bg-violet-500/15 text-[var(--text-primary)]'
-                    : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]'
+                  disabled={isLoadingInsight || isRefreshingInsight}
+                  onClick={() => void handleToggleAiInsight()}
+                  aria-expanded={showAiInsight}
+                  className={`h-10 w-full rounded-xl border text-sm font-medium cursor-pointer ${showAiInsight
+                    ? 'border-teal-500/55 bg-teal-500/12 text-teal-600 dark:text-teal-300'
+                    : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:border-teal-500/45 hover:bg-[var(--bg-elevated)]'
                     }`}
                 >
-                  {isSummarizing ? (
-                    <Loader2 className="mr-2 size-4 animate-spin text-[var(--ai-accent)]" />
+                  {isLoadingInsight || isRefreshingInsight ? (
+                    <Loader2 className="mr-2 size-4 animate-spin text-teal-500 dark:text-teal-400" />
                   ) : (
-                    <Sparkles className="mr-2 size-4 text-[var(--ai-accent)]" />
+                    <BarChart3 className="mr-2 size-4 text-teal-500 dark:text-teal-400" />
                   )}
                   <span>
-                    {isSummarizing
-                      ? 'Đang tóm tắt bằng AI...'
-                      : 'Tóm tắt nhanh bằng AI'}
+                    {isLoadingInsight || isRefreshingInsight
+                      ? 'Đang đọc nội dung phim & quét bình luận...'
+                      : 'Phân tích & Đánh giá AI'}
                   </span>
                 </Button>
-              </div>
-
-              {/* Khung 3 gạch đầu dòng tóm tắt */}
-              <div
-                className={`grid transition-all duration-300 ease-out ${showAiSummary ? 'mt-3 grid-rows-[1fr]' : 'grid-rows-[0fr]'
-                  }`}
-              >
-                <div className="overflow-hidden">
-                  <div className="rounded-xl border border-[var(--ai-accent)]/40 bg-[var(--bg-surface)] p-3">
-                    <p className="text-xs font-semibold text-[var(--ai-accent)]">
-                      Tóm tắt Gemini AI (3 ý chính • Không Spoil)
-                    </p>
-                    {isSummarizing ? (
-                      <div className="mt-2 flex items-center gap-2 py-2 text-xs text-[var(--text-secondary)]">
-                        <Loader2 className="size-3.5 animate-spin text-[var(--ai-accent)]" />
-                        <span>Gemini đang phân tích nội dung video...</span>
-                      </div>
-                    ) : summaryBullets.length > 0 ? (
-                      <ul className="mt-2 flex flex-col gap-1.5 text-xs text-[var(--text-primary)]">
-                        {summaryBullets.map((line, i) => (
-                          <li key={i} className="flex items-start gap-2">
-                            <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-[var(--accent-primary)]" />
-                            <span>{line}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="mt-1.5 text-xs text-[var(--text-secondary)]">
-                        Bấm lại nút Tóm tắt nhanh bằng AI để tạo 3 ý chính từ
-                        Gemini AI.
-                      </p>
-                    )}
-                  </div>
-                </div>
               </div>
             </div>
 
@@ -1073,6 +1143,21 @@ export function TheaterStage({
               <kbd className="font-mono">Esc</kbd> Đóng
             </p>
           </div>
+        )}
+      </div>
+
+      {/* Khu vực AI Cinema Insight & Trợ lý Hỏi Đáp (Hiển thị rộng thoáng ngay dưới trình phát) */}
+      <div ref={aiPanelRef}>
+        {showAiInsight && (
+          <AiCinemaInsightPanel
+            key={video.video_id}
+            video={video}
+            insight={insightData}
+            isLoading={isLoadingInsight}
+            isRefreshing={isRefreshingInsight}
+            onRefresh={() => void fetchAiInsight(true)}
+            onSeekToSeconds={seekTo}
+          />
         )}
       </div>
     </section>

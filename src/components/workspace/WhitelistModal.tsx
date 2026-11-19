@@ -24,6 +24,7 @@ export function WhitelistModal({
   const [newEmail, setNewEmail] = useState('');
   const [newNote, setNewNote] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [togglingEmail, setTogglingEmail] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -121,6 +122,7 @@ export function WhitelistModal({
   };
 
   const handleToggleActive = async (email: string, nextActive: boolean) => {
+    setTogglingEmail(email);
     try {
       const res = await fetch('/api/whitelist', {
         method: 'PATCH',
@@ -148,6 +150,8 @@ export function WhitelistModal({
       );
     } catch {
       toast.error('Lỗi kết nối khi cập nhật Whitelist.');
+    } finally {
+      setTogglingEmail(null);
     }
   };
 
@@ -222,7 +226,7 @@ export function WhitelistModal({
             ) : (
               <UserPlus className="mr-1.5 size-4" />
             )}
-            <span>Thêm email</span>
+            <span>{isSubmitting ? 'Đang thêm...' : 'Thêm email'}</span>
           </Button>
         </form>
 
@@ -268,14 +272,19 @@ export function WhitelistModal({
                       )}
                     </div>
 
-                    <Switch
-                      checked={row.is_active}
-                      disabled={Boolean(isSelf)}
-                      onCheckedChange={(checked) =>
-                        handleToggleActive(row.email, checked)
-                      }
-                      aria-label={`Bật/tắt quyền cho ${row.email}`}
-                    />
+                    <div className="flex items-center gap-2">
+                      {togglingEmail === row.email && (
+                        <Loader2 className="size-3.5 animate-spin text-[var(--accent-primary)]" />
+                      )}
+                      <Switch
+                        checked={row.is_active}
+                        disabled={Boolean(isSelf) || togglingEmail === row.email}
+                        onCheckedChange={(checked) =>
+                          handleToggleActive(row.email, checked)
+                        }
+                        aria-label={`Bật/tắt quyền cho ${row.email}`}
+                      />
+                    </div>
                   </div>
                 );
               })}

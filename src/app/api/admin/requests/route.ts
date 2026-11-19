@@ -91,12 +91,13 @@ export async function PATCH(request: Request) {
   let whitelistedItem = null;
 
   if (body.action === 'approve') {
-    const normalizedEmail = target.email.trim().toLowerCase();
+    // Luôn lấy đúng email từ bản ghi access_requests (target.email), tuyệt đối không dùng session Admin
+    const applicantEmail = target.email.trim().toLowerCase();
     const { data: upsertedEmail, error: upsertError } = await admin
       .from('allowed_emails')
       .upsert(
         {
-          email: normalizedEmail,
+          email: applicantEmail,
           note: target.full_name
             ? `${target.full_name} (Duyệt qua đơn)`
             : 'Duyệt qua đơn xin cấp quyền',

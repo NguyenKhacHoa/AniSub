@@ -53,7 +53,9 @@ Tất cả các API dữ liệu người dùng đều bắt buộc đi qua kiể
 | `/api/channels/reclassify` | `POST` | Chạy lại Gemini Vision (1 đại diện / 1 Series) cho toàn bộ video của 1 kênh đa nhãn (bỏ qua `is_manual_tag = true` và kế thừa các bộ đã khóa tay). |
 | `/api/videos/reclassify-all` | `POST` | Quét lại nhãn bằng Gemini Vision theo cơ chế **1 đại diện / 1 Series** (4 series / batch) cho toàn bộ kho video chưa khóa tay (`is_manual_tag = false`) của các kênh đang bật. |
 | `/api/videos/update-genre` | `POST` | Đổi nhanh nhãn `Phim AI` ↔ `HH2D` 1 chạm, tự động **lan truyền đồng loạt** `detected_genre` và khóa `is_manual_tag = true` cho toàn bộ các tập cùng `(channel_id, seriesKey)`. |
-| `/api/videos/summarize` | `POST` | Gọi Gemini tóm tắt 3 ý chính không spoil và cache vào cột `ai_summary`. |
+| `/api/videos/summarize` | `POST` | Endpoint tương thích ngược tóm tắt 3 ý chính không spoil và cache vào `ai_summary`. |
+| `/api/ai/summary` | `POST` | **AI Cinema Insight:** Kết hợp song song 3 nguồn (Metadata + YouTube Transcript kèm `[MM:SS]` + 60 bình luận YouTube `commentThreads`), chấm điểm thang 100 (`overallScore`, 4 `metrics`, `overview`, `highlights`, `communityPros/Cons`, `featuredComments`, `storyContext`) và cache 7 ngày trong `videos.insight_data`. |
+| `/api/ai/chat` | `POST` | **AI Cinema Assistant:** Hội thoại nhiều lượt theo ngữ cảnh tập phim dựa trên `storyContext` + dữ liệu phân tích + lịch sử tin nhắn. |
 | `/api/watch-progress` | `POST` | Lưu tiến độ xem thời gian thực (`progress_seconds`, `is_completed`) vào `watch_progress`. |
 | `/api/youtube/explore` | `GET` | Đề xuất video từ kênh lạ hợp gu hỗ trợ phân trang vô hạn (`?page=1&refresh=false&pageTokens=...&excludeIds=...`): Trang 1 cache 6 tiếng, Trang ≥ 2 dùng `nextPageToken` hoặc mở rộng từ khóa qua Gemini AI, lọc bỏ Shorts (`<= 65s`) và trả về `nextPage`, `hasMore`, `pageTokens`. |
 | `/api/youtube/subscribe` | `POST` | Đăng ký kênh mới trực tiếp lên YouTube (`youtube.force-ssl`) và kéo ngay 50 video vào AniSub. |

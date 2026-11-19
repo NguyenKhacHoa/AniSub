@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient, createClient } from '@/lib/supabase/server';
-import { isEmailAllowed } from '@/lib/auth/whitelist';
+import { isAdminEmail, isEmailAllowed } from '@/lib/auth/whitelist';
 
 /**
  * GET /api/access-requests
@@ -50,14 +50,45 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  let body: { message?: string } = {};
+  let body: { message?: string; expectedEmail?: string } = {};
   try {
-    body = (await request.json()) as { message?: string };
+    body = (await request.json()) as {
+      message?: string;
+      expectedEmail?: string;
+    };
   } catch {
     body = {};
   }
 
   const normalizedEmail = user.email.trim().toLowerCase();
+
+  // Chống lỗi lệch phiên đăng nhập giữa nhiều tab trên cùng trình duyệt
+  if (
+    body.expectedEmail &&
+    body.expectedEmail.trim().toLowerCase() !== normalizedEmail
+  ) {
+    return NextResponse.json(
+      {
+        code: 'SESSION_MISMATCH',
+        error: `Phiên đăng nhập trên trình duyệt vừa đổi sang ${normalizedEmail}. Vui lòng tải lại trang hoặc mở cửa sổ Ẩn danh để gửi đơn cho ${body.expectedEmail}.`,
+      },
+      { status: 409 },
+    );
+  }
+
+  // Không cho phép Admin hoặc tài khoản đã có trong Whitelist tự tạo đơn chờ duyệt
+  const alreadyAllowed =
+    isAdminEmail(normalizedEmail) ||
+    (await isEmailAllowed(normalizedEmail, supabase));
+  if (alreadyAllowed) {
+    return NextResponse.json(
+      {
+        code: 'ALREADY_ALLOWED',
+        error: `Tài khoản ${normalizedEmail} đã có quyền truy cập AniSub. Không cần gửi đơn xin duyệt.`,
+      },
+      { status: 409 },
+    );
+  }
   const meta = user.user_metadata as
     | { full_name?: string; name?: string; avatar_url?: string; picture?: string }
     | undefined;

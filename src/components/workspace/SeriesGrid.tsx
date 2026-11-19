@@ -10,6 +10,7 @@ import {
   Star,
   EyeOff,
   Eye,
+  Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { VideoThumbnail } from '@/components/workspace/VideoThumbnail';
@@ -42,6 +43,20 @@ export function SeriesGrid({
   onOpenVault,
 }: SeriesGridProps) {
   const [showHiddenSection, setShowHiddenSection] = useState(false);
+  const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
+
+  const handleStatusClick = async (
+    series: SeriesGroup,
+    nextStatus: UserSeriesStatus | null,
+    actionId: string,
+  ) => {
+    setPendingActionKey(actionId);
+    try {
+      await Promise.resolve(onUpdateSeriesStatus(series, nextStatus));
+    } finally {
+      setPendingActionKey((prev) => (prev === actionId ? null : prev));
+    }
+  };
 
   // Phân tách danh sách:
   // 1) Bộ phim đang hiển thị (ghim nhóm ⭐ Theo dõi lên đầu tiên, nổi bật bộ có tập mới)
@@ -228,51 +243,95 @@ export function SeriesGrid({
                 {isHiddenView ? (
                   <button
                     type="button"
+                    disabled={pendingActionKey === `${series.seriesKey}:restore`}
                     onClick={(e) => {
                       e.stopPropagation();
-                      onUpdateSeriesStatus(series, null);
+                      void handleStatusClick(
+                        series,
+                        null,
+                        `${series.seriesKey}:restore`,
+                      );
                     }}
-                    className="inline-flex h-7 flex-1 items-center justify-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 text-[11px] font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-elevated)] cursor-pointer"
+                    className="inline-flex h-7 flex-1 items-center justify-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 text-[11px] font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-elevated)] disabled:opacity-60 cursor-pointer"
                   >
-                    <Eye className="size-3.5" />
-                    <span>Hiện lại bộ phim</span>
+                    {pendingActionKey === `${series.seriesKey}:restore` ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Eye className="size-3.5" />
+                    )}
+                    <span>
+                      {pendingActionKey === `${series.seriesKey}:restore`
+                        ? 'Đang khôi phục...'
+                        : 'Hiện lại bộ phim'}
+                    </span>
                   </button>
                 ) : (
                   <>
                     <button
                       type="button"
+                      disabled={
+                        pendingActionKey === `${series.seriesKey}:follow` ||
+                        pendingActionKey === `${series.seriesKey}:hide`
+                      }
                       onClick={(e) => {
                         e.stopPropagation();
-                        onUpdateSeriesStatus(
+                        void handleStatusClick(
                           series,
                           isFollowing ? null : 'following',
+                          `${series.seriesKey}:follow`,
                         );
                       }}
-                      className={`inline-flex h-7 flex-1 items-center justify-center gap-1 rounded-lg border px-2 text-[11px] font-medium transition-colors cursor-pointer ${
+                      className={`inline-flex h-7 flex-1 items-center justify-center gap-1 rounded-lg border px-2 text-[11px] font-medium transition-colors disabled:opacity-60 cursor-pointer ${
                         isFollowing
                           ? 'border-amber-500/50 bg-amber-500/15 text-amber-500 dark:text-amber-300'
                           : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
                       }`}
                     >
-                      <Star
-                        className={`size-3 shrink-0 ${
-                          isFollowing ? 'fill-current' : ''
-                        }`}
-                      />
-                      <span>{isFollowing ? 'Đang theo dõi' : 'Theo dõi'}</span>
+                      {pendingActionKey === `${series.seriesKey}:follow` ? (
+                        <Loader2 className="size-3 shrink-0 animate-spin" />
+                      ) : (
+                        <Star
+                          className={`size-3 shrink-0 ${
+                            isFollowing ? 'fill-current' : ''
+                          }`}
+                        />
+                      )}
+                      <span>
+                        {pendingActionKey === `${series.seriesKey}:follow`
+                          ? 'Đang lưu...'
+                          : isFollowing
+                            ? 'Đang theo dõi'
+                            : 'Theo dõi'}
+                      </span>
                     </button>
 
                     <button
                       type="button"
+                      disabled={
+                        pendingActionKey === `${series.seriesKey}:follow` ||
+                        pendingActionKey === `${series.seriesKey}:hide`
+                      }
                       onClick={(e) => {
                         e.stopPropagation();
-                        onUpdateSeriesStatus(series, 'hidden');
+                        void handleStatusClick(
+                          series,
+                          'hidden',
+                          `${series.seriesKey}:hide`,
+                        );
                       }}
                       title="Ẩn bớt bộ phim này khỏi danh sách chính"
-                      className="inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 text-[11px] font-medium text-[var(--text-secondary)] transition-colors hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-400 cursor-pointer"
+                      className="inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 text-[11px] font-medium text-[var(--text-secondary)] transition-colors hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-400 disabled:opacity-60 cursor-pointer"
                     >
-                      <EyeOff className="size-3 shrink-0" />
-                      <span>Ẩn</span>
+                      {pendingActionKey === `${series.seriesKey}:hide` ? (
+                        <Loader2 className="size-3 shrink-0 animate-spin" />
+                      ) : (
+                        <EyeOff className="size-3 shrink-0" />
+                      )}
+                      <span>
+                        {pendingActionKey === `${series.seriesKey}:hide`
+                          ? 'Đang ẩn...'
+                          : 'Ẩn'}
+                      </span>
                     </button>
                   </>
                 )}

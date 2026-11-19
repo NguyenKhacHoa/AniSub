@@ -53,6 +53,7 @@ function LoginGateContent() {
 
   const isUnauthorizedParam = searchParams.get('status') === 'unauthorized';
   const errorParam = searchParams.get('error');
+  const reasonParam = searchParams.get('reason');
 
   const routerRef = useRef(router);
   useEffect(() => {
@@ -147,11 +148,16 @@ function LoginGateContent() {
 
   useEffect(() => {
     if (errorParam === 'auth_failed') {
-      toast.error('Xác thực Google không thành công. Vui lòng thử lại.');
+      toast.error(
+        reasonParam
+          ? `Xác thực Google thất bại: ${reasonParam}`
+          : 'Xác thực Google không thành công. Vui lòng thử lại.',
+        { duration: 7000 },
+      );
     } else if (errorParam === 'missing_code') {
       toast.warning('Thiếu mã xác thực OAuth từ Google.');
     }
-  }, [errorParam]);
+  }, [errorParam, reasonParam]);
 
   const isUnauthorizedState = isUnauthorizedParam || Boolean(sessionUser);
 
@@ -199,13 +205,22 @@ function LoginGateContent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: requestMessage.trim() || undefined,
+          expectedEmail: sessionUser.email,
         }),
       });
 
       const payload = (await res.json().catch(() => ({}))) as {
         request?: AccessRequestRow;
+        code?: string;
         error?: string;
       };
+
+      if (payload.code === 'ALREADY_ALLOWED') {
+        toast.success('Tài khoản của bạn đã có quyền truy cập! Đang vào rạp...');
+        router.replace('/');
+        router.refresh();
+        return;
+      }
 
       if (!res.ok || !payload.request) {
         toast.error(payload.error || 'Không thể gửi đơn xin cấp quyền.');
@@ -370,7 +385,11 @@ function LoginGateContent() {
                     <RefreshCw
                       className={`mr-2 size-4 ${isRefreshingStatus ? 'animate-spin' : ''}`}
                     />
-                    <span>Kiểm tra lại trạng thái</span>
+                    <span>
+                      {isRefreshingStatus
+                        ? 'Đang kiểm tra...'
+                        : 'Kiểm tra lại trạng thái'}
+                    </span>
                   </Button>
 
                   <Button
@@ -380,8 +399,16 @@ function LoginGateContent() {
                     disabled={isSigningOut}
                     className="h-10 w-full rounded-xl border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
                   >
-                    <LogOut className="mr-2 size-3.5" />
-                    <span>Đăng xuất / Đổi tài khoản</span>
+                    {isSigningOut ? (
+                      <Loader2 className="mr-2 size-3.5 animate-spin" />
+                    ) : (
+                      <LogOut className="mr-2 size-3.5" />
+                    )}
+                    <span>
+                      {isSigningOut
+                        ? 'Đang đăng xuất...'
+                        : 'Đăng xuất / Đổi tài khoản'}
+                    </span>
                   </Button>
                 </div>
               </div>
@@ -457,7 +484,11 @@ function LoginGateContent() {
                     ) : (
                       <Send className="mr-2 size-4" />
                     )}
-                    <span>Gửi đơn xin cấp quyền</span>
+                    <span>
+                      {isSubmittingRequest
+                        ? 'Đang gửi đơn...'
+                        : 'Gửi đơn xin cấp quyền'}
+                    </span>
                   </Button>
 
                   <Button
@@ -467,8 +498,16 @@ function LoginGateContent() {
                     disabled={isSigningOut}
                     className="h-10 w-full rounded-xl border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
                   >
-                    <LogOut className="mr-2 size-3.5" />
-                    <span>Đăng xuất / Đổi tài khoản</span>
+                    {isSigningOut ? (
+                      <Loader2 className="mr-2 size-3.5 animate-spin" />
+                    ) : (
+                      <LogOut className="mr-2 size-3.5" />
+                    )}
+                    <span>
+                      {isSigningOut
+                        ? 'Đang đăng xuất...'
+                        : 'Đăng xuất / Đổi tài khoản'}
+                    </span>
                   </Button>
                 </div>
               </form>

@@ -330,6 +330,23 @@ export function useYouTubePlayer({
     }
   }, []);
 
+  const seekTo = useCallback((targetSeconds: number) => {
+    const p = playerRef.current;
+    if (!p) return;
+    try {
+      const dur = p.getDuration();
+      const clamped =
+        Number.isFinite(dur) && dur > 0
+          ? Math.max(0, Math.min(dur - 1, targetSeconds))
+          : Math.max(0, targetSeconds);
+      p.seekTo(clamped, true);
+      latestTimeRef.current = clamped;
+      setCurrentTime(Math.floor(clamped));
+    } catch {
+      // Ignore if player not ready
+    }
+  }, []);
+
   const applyPlaybackRate = useCallback((rate: number) => {
     playbackRateRef.current = rate;
     const p = playerRef.current;
@@ -363,6 +380,7 @@ export function useYouTubePlayer({
     duration,
     isPlaying,
     seekBy,
+    seekTo,
     applyPlaybackRate,
     playVideo,
     pauseVideo,

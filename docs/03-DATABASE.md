@@ -113,12 +113,14 @@ CREATE TABLE public.videos (
   series_name TEXT, -- Tên bộ phim trích xuất từ tiêu đề (để gom nhóm các tập)
   episode_number INTEGER, -- Số tập trích xuất được (nếu có)
   ai_summary TEXT, -- Cache tóm tắt nội dung từ Gemini
+  insight_data JSONB, -- Cache phân tích đa nguồn AI Cinema Insight (thang 100, transcript, bình luận, storyContext)
   is_manual_tag BOOLEAN DEFAULT FALSE, -- TRUE = Người dùng chỉnh tay (AI bỏ qua khi quét lại)
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Migration bổ sung cột is_manual_tag cho DB đã khởi tạo trước đó:
+-- Migration bổ sung cột is_manual_tag và insight_data cho DB đã khởi tạo trước đó:
 -- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS is_manual_tag BOOLEAN DEFAULT FALSE;
+-- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS insight_data JSONB;
 
 CREATE INDEX idx_videos_channel_published ON public.videos(channel_id, published_at DESC);
 CREATE INDEX idx_videos_type ON public.videos(video_type, is_short);

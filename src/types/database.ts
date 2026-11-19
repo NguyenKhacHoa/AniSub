@@ -102,6 +102,7 @@ export type VideoRow = {
   series_name: string | null;
   episode_number: number | null;
   ai_summary: string | null;
+  insight_data?: Json | null;
   is_manual_tag?: boolean;
   created_at: string;
 };
@@ -231,6 +232,7 @@ export type Database = {
           series_name?: string | null;
           episode_number?: number | null;
           ai_summary?: string | null;
+          insight_data?: Json | null;
           is_manual_tag?: boolean;
           created_at?: string;
         };
@@ -248,6 +250,7 @@ export type Database = {
           series_name?: string | null;
           episode_number?: number | null;
           ai_summary?: string | null;
+          insight_data?: Json | null;
           is_manual_tag?: boolean;
           created_at?: string;
         };

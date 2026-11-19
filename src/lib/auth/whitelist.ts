@@ -40,6 +40,11 @@ export async function isEmailAllowed(
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail) return false;
 
+  // Admin luôn được phép truy cập ngay lập tức (bỏ qua check bảng allowed_emails)
+  if (isAdminEmail(normalizedEmail)) {
+    return true;
+  }
+
   const hasServiceRole = Boolean(
     process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() &&
       process.env.SUPABASE_SERVICE_ROLE_KEY?.trim(),

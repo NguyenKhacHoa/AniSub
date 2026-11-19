@@ -15,6 +15,7 @@ import {
   Loader2,
   UserCircle2,
   CheckCircle2,
+  RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -53,7 +54,35 @@ export function AdminDashboardClient({
   const [requests, setRequests] = useState<AccessRequestRow[]>(initialRequests);
   const [whitelist, setWhitelist] =
     useState<AllowedEmailRow[]>(initialWhitelist);
-  const [processingId, setProcessingId] = useState<string | null>(null);
+  const [processingAction, setProcessingAction] = useState<{
+    id: string;
+    action: 'approve' | 'reject';
+  } | null>(null);
+  const [togglingEmail, setTogglingEmail] = useState<string | null>(null);
+  const [isRefreshingRequests, setIsRefreshingRequests] = useState(false);
+
+  const handleRefreshRequests = async () => {
+    setIsRefreshingRequests(true);
+    try {
+      const res = await fetch('/api/admin/requests');
+      const payload = (await res.json().catch(() => ({}))) as {
+        requests?: AccessRequestRow[];
+        error?: string;
+      };
+      if (!res.ok) {
+        toast.error(payload.error || 'Không thể tải lại danh sách đơn.');
+        return;
+      }
+      if (Array.isArray(payload.requests)) {
+        setRequests(payload.requests);
+        toast.success('Đã cập nhật danh sách đơn mới nhất.');
+      }
+    } catch {
+      toast.error('Lỗi kết nối khi làm mới danh sách đơn.');
+    } finally {
+      setIsRefreshingRequests(false);
+    }
+  };
 
   const [newEmail, setNewEmail] = useState('');
   const [newNote, setNewNote] = useState('');
@@ -78,7 +107,7 @@ export function AdminDashboardClient({
     id: string,
     action: 'approve' | 'reject',
   ) => {
-    setProcessingId(id);
+    setProcessingAction({ id, action });
     try {
       const res = await fetch('/api/admin/requests', {
         method: 'PATCH',
@@ -116,7 +145,7 @@ export function AdminDashboardClient({
     } catch {
       toast.error('Lỗi kết nối khi xử lý đơn.');
     } finally {
-      setProcessingId(null);
+      setProcessingAction(null);
     }
   };
 
@@ -167,6 +196,7 @@ export function AdminDashboardClient({
   };
 
   const handleToggleWhitelist = async (email: string, nextActive: boolean) => {
+    setTogglingEmail(email);
     try {
       const res = await fetch('/api/whitelist', {
         method: 'PATCH',
@@ -194,6 +224,8 @@ export function AdminDashboardClient({
       );
     } catch {
       toast.error('Lỗi kết nối khi cập nhật Whitelist.');
+    } finally {
+      setTogglingEmail(null);
     }
   };
 
@@ -205,6 +237,7 @@ export function AdminDashboardClient({
           <div className="flex items-center gap-3">
             <Link
               href="/"
+              prefetch={false}
               className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] cursor-pointer"
             >
               <ArrowLeft className="size-4" />
@@ -258,9 +291,25 @@ export function AdminDashboardClient({
                   </p>
                 </div>
               </div>
-              <span className="rounded-lg bg-[var(--accent-primary)] px-2.5 py-0.5 text-xs font-semibold tabular-nums text-[var(--accent-foreground)]">
-                {pendingRequests.length}
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={isRefreshingRequests}
+                  onClick={() => void handleRefreshRequests()}
+                  title="Tải lại danh sách đơn từ Supabase"
+                  className="inline-flex h-7 items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2 text-[11px] font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] disabled:opacity-60 cursor-pointer"
+                >
+                  <RefreshCw
+                    className={`size-3 ${isRefreshingRequests ? 'animate-spin' : ''}`}
+                  />
+                  <span>
+                    {isRefreshingRequests ? 'Đang tải...' : 'Làm mới'}
+                  </span>
+                </button>
+                <span className="rounded-lg bg-[var(--accent-primary)] px-2.5 py-0.5 text-xs font-semibold tabular-nums text-[var(--accent-foreground)]">
+                  {pendingRequests.length}
+                </span>
+              </div>
             </div>
 
             {pendingRequests.length === 0 ? (
@@ -276,7 +325,11 @@ export function AdminDashboardClient({
             ) : (
               <div className="mt-4 flex flex-col gap-3">
                 {pendingRequests.map((req) => {
-                  const isBusy = processingId === req.id;
+                  const isBusy = processingAction?.id === req.id;
+                  const isApproving =
+                    isBusy && processingAction?.action === 'approve';
+                  const isRejecting =
+                    isBusy && processingAction?.action === 'reject';
                   return (
                     <article
                       key={req.id}
@@ -323,8 +376,14 @@ export function AdminDashboardClient({
                           onClick={() => handleReviewRequest(req.id, 'reject')}
                           className="h-9 rounded-lg border-[var(--border-subtle)] bg-rose-500/10 px-3 text-xs font-medium text-rose-500 dark:text-rose-400 hover:bg-rose-500/15 cursor-pointer"
                         >
-                          <X className="mr-1.5 size-3.5" />
-                          <span>Từ chối</span>
+                          {isRejecting ? (
+                            <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                          ) : (
+                            <X className="mr-1.5 size-3.5" />
+                          )}
+                          <span>
+                            {isRejecting ? 'Đang từ chối...' : 'Từ chối'}
+                          </span>
                         </Button>
                         <Button
                           type="button"
@@ -332,12 +391,14 @@ export function AdminDashboardClient({
                           onClick={() => handleReviewRequest(req.id, 'approve')}
                           className="h-9 rounded-lg bg-[var(--accent-primary)] px-3.5 text-xs font-semibold text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
                         >
-                          {isBusy ? (
+                          {isApproving ? (
                             <Loader2 className="mr-1.5 size-3.5 animate-spin" />
                           ) : (
                             <Check className="mr-1.5 size-3.5" />
                           )}
-                          <span>Phê duyệt</span>
+                          <span>
+                            {isApproving ? 'Đang phê duyệt...' : 'Phê duyệt'}
+                          </span>
                         </Button>
                       </div>
                     </article>
@@ -436,7 +497,7 @@ export function AdminDashboardClient({
                 ) : (
                   <UserPlus className="mr-1.5 size-4" />
                 )}
-                <span>Thêm</span>
+                <span>{isAddingEmail ? 'Đang thêm...' : 'Thêm'}</span>
               </Button>
             </form>
 
@@ -471,12 +532,15 @@ export function AdminDashboardClient({
                     </div>
 
                     <div className="flex items-center gap-2.5">
+                      {togglingEmail === item.email && (
+                        <Loader2 className="size-3.5 animate-spin text-[var(--accent-primary)]" />
+                      )}
                       <span className="text-xs text-[var(--text-secondary)]">
                         {item.is_active ? 'Đang bật' : 'Đã khóa'}
                       </span>
                       <Switch
                         checked={item.is_active}
-                        disabled={isSelf}
+                        disabled={isSelf || togglingEmail === item.email}
                         onCheckedChange={(checked) =>
                           handleToggleWhitelist(item.email, checked)
                         }

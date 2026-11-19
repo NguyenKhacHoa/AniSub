@@ -23,6 +23,13 @@ function isPublicOrBypassPath(pathname: string): boolean {
 }
 
 export async function proxy(request: NextRequest) {
+  const { pathname, searchParams } = request.nextUrl;
+
+  // Tuyệt đối không chạy getUser() hay can thiệp cookie trên luồng PKCE /auth/callback
+  if (pathname.startsWith('/auth/callback')) {
+    return NextResponse.next();
+  }
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -59,16 +66,22 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { pathname, searchParams } = request.nextUrl;
-
   if (isBypassPath(pathname)) {
     return response;
   }
 
-  const isWhitelisted = user?.email
-    ? await isEmailAllowed(user.email, supabase)
-    : false;
+  // Helper giữ lại toàn bộ cookie mới refresh từ Supabase khi thực hiện redirect
+  const redirectWithCookies = (targetUrl: URL) => {
+    const redirectRes = NextResponse.redirect(targetUrl);
+    response.cookies.getAll().forEach((cookie) => {
+      redirectRes.cookies.set(cookie);
+    });
+    return redirectRes;
+  };
+
   const isAdmin = user?.email ? isAdminEmail(user.email) : false;
+  const isWhitelisted =
+    isAdmin || (user?.email ? await isEmailAllowed(user.email, supabase) : false);
 
   // Xử lý trang /login (tránh redirect loop tuyệt đối)
   if (pathname === '/login') {
@@ -77,14 +90,14 @@ export async function proxy(request: NextRequest) {
     }
 
     if (isWhitelisted) {
-      return NextResponse.redirect(new URL('/', request.url));
+      return redirectWithCookies(new URL('/', request.url));
     }
 
     if (searchParams.get('status') === 'unauthorized') {
       return response;
     }
 
-    return NextResponse.redirect(
+    return redirectWithCookies(
       new URL('/login?status=unauthorized', request.url),
     );
   }
@@ -95,14 +108,14 @@ export async function proxy(request: NextRequest) {
       if (pathname.startsWith('/api/')) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
       }
-      return NextResponse.redirect(new URL('/login', request.url));
+      return redirectWithCookies(new URL('/login', request.url));
     }
 
     if (!isWhitelisted) {
       if (pathname.startsWith('/api/')) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
-      return NextResponse.redirect(
+      return redirectWithCookies(
         new URL('/login?status=unauthorized', request.url),
       );
     }
@@ -111,7 +124,7 @@ export async function proxy(request: NextRequest) {
       if (pathname.startsWith('/api/')) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
-      return NextResponse.redirect(new URL('/', request.url));
+      return redirectWithCookies(new URL('/', request.url));
     }
 
     return response;
@@ -123,14 +136,14 @@ export async function proxy(request: NextRequest) {
       if (pathname.startsWith('/api/')) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
       }
-      return NextResponse.redirect(new URL('/login', request.url));
+      return redirectWithCookies(new URL('/login', request.url));
     }
 
     if (!isWhitelisted) {
       if (pathname.startsWith('/api/')) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
       }
-      return NextResponse.redirect(
+      return redirectWithCookies(
         new URL('/login?status=unauthorized', request.url),
       );
     }

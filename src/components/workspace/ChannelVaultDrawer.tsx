@@ -60,6 +60,15 @@ export function ChannelVaultDrawer({
 }: ChannelVaultDrawerProps) {
   const [drawerSearch, setDrawerSearch] = useState('');
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const [channelAction, setChannelAction] = useState<{
+    channelId: string;
+    type: 'load_more' | 'reclassify' | 'toggle';
+  } | null>(null);
+
+  const activeChannelAction =
+    busyChannelId && channelAction?.channelId === busyChannelId
+      ? channelAction.type
+      : null;
 
   useEffect(() => {
     if (!open) return;
@@ -427,34 +436,52 @@ export function ChannelVaultDrawer({
                             <button
                               type="button"
                               disabled={isBusy}
-                              onClick={() =>
-                                onLoadMoreChannelVideos(ch.channel_id)
-                              }
-                              title="Kéo thêm tối đa 50 video cũ hơn từ YouTube cho kênh này (chỉ quét AI video mới)"
+                              onClick={() => {
+                                setChannelAction({
+                                  channelId: ch.channel_id,
+                                  type: 'load_more',
+                                });
+                                onLoadMoreChannelVideos(ch.channel_id);
+                              }}
+                              title="Đồng bộ trọn vẹn toàn bộ video từ Tập 1 đến Tập mới nhất cho kênh này"
                               className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 text-xs font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-elevated)] disabled:opacity-60 cursor-pointer"
                             >
-                              {isBusy ? (
-                                <Loader2 className="size-3.5 animate-spin" />
+                              {isBusy && activeChannelAction === 'load_more' ? (
+                                <Loader2 className="size-3.5 animate-spin text-[var(--accent-primary)]" />
                               ) : (
                                 <History className="size-3.5 text-[var(--accent-primary)]" />
                               )}
-                              <span>+50 video cũ</span>
+                              <span>
+                                {isBusy && activeChannelAction === 'load_more'
+                                  ? 'Đang kéo video...'
+                                  : 'Đồng bộ đủ video'}
+                              </span>
                             </button>
 
                             {isMultiTag && (
                               <button
                                 type="button"
                                 disabled={isBusy}
-                                onClick={() => onReclassifyChannel(ch.channel_id)}
-                                title="Chạy lại Gemini Vision + Metadata để phân loại lại toàn bộ video của kênh này"
+                                onClick={() => {
+                                  setChannelAction({
+                                    channelId: ch.channel_id,
+                                    type: 'reclassify',
+                                  });
+                                  onReclassifyChannel(ch.channel_id);
+                                }}
+                                title="Chạy lại Gemini Vision (1 đại diện / 1 Series) cho toàn bộ video của kênh này"
                                 className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[var(--ai-accent)]/40 bg-violet-500/10 px-2.5 text-xs font-medium text-[var(--ai-accent)] transition-colors hover:bg-violet-500/20 disabled:opacity-60 cursor-pointer"
                               >
-                                {isBusy ? (
+                                {isBusy && activeChannelAction === 'reclassify' ? (
                                   <Loader2 className="size-3.5 animate-spin" />
                                 ) : (
                                   <Sparkles className="size-3.5" />
                                 )}
-                                <span>Quét AI lại</span>
+                                <span>
+                                  {isBusy && activeChannelAction === 'reclassify'
+                                    ? 'Đang quét AI...'
+                                    : 'Quét AI lại'}
+                                </span>
                               </button>
                             )}
                           </div>

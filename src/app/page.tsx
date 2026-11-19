@@ -39,16 +39,26 @@ export default async function HomePage() {
       } = await supabase.auth.getUser();
 
       if (user?.email) {
-        const allowed = await isEmailAllowed(user.email, supabase);
+        isAdmin = isAdminEmail(user.email);
+        const allowed = isAdmin || (await isEmailAllowed(user.email, supabase));
         if (allowed) {
           authStatus = 'authenticated';
-          isAdmin = isAdminEmail(user.email);
 
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('full_name, avatar_url, last_synced_at')
-            .eq('id', user.id)
-            .maybeSingle();
+          let profile: {
+            full_name: string | null;
+            avatar_url: string | null;
+            last_synced_at: string | null;
+          } | null = null;
+          try {
+            const { data } = await supabase
+              .from('profiles')
+              .select('full_name, avatar_url, last_synced_at')
+              .eq('id', user.id)
+              .maybeSingle();
+            profile = data;
+          } catch {
+            profile = null;
+          }
 
           const meta = user.user_metadata as
             | {
@@ -70,23 +80,31 @@ export default async function HomePage() {
           };
 
           if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
-            const workspaceData = await loadWorkspaceDataForUser(user.id);
-            initialChannels = workspaceData.channels;
-            initialVideos = workspaceData.videos;
-            initialSeriesStatuses = workspaceData.seriesStatuses;
-            initialWatchLaterIds = workspaceData.watchLaterIds;
-            initialTotalVideosCount = workspaceData.totalVideosCount;
-            if (workspaceData.lastSyncedAt) {
-              initialUser.lastSyncedAt = workspaceData.lastSyncedAt;
+            try {
+              const workspaceData = await loadWorkspaceDataForUser(user.id);
+              initialChannels = workspaceData.channels;
+              initialVideos = workspaceData.videos;
+              initialSeriesStatuses = workspaceData.seriesStatuses;
+              initialWatchLaterIds = workspaceData.watchLaterIds;
+              initialTotalVideosCount = workspaceData.totalVideosCount;
+              if (workspaceData.lastSyncedAt) {
+                initialUser.lastSyncedAt = workspaceData.lastSyncedAt;
+              }
+            } catch (loadErr) {
+              console.error('[HomePage] Lỗi tải workspaceData:', loadErr);
             }
 
             if (isAdmin) {
-              const admin = createAdminClient();
-              const { count } = await admin
-                .from('access_requests')
-                .select('id', { count: 'exact', head: true })
-                .eq('status', 'pending');
-              pendingRequestsCount = count ?? 0;
+              try {
+                const admin = createAdminClient();
+                const { count } = await admin
+                  .from('access_requests')
+                  .select('id', { count: 'exact', head: true })
+                  .eq('status', 'pending');
+                pendingRequestsCount = count ?? 0;
+              } catch {
+                pendingRequestsCount = 0;
+              }
             }
           }
         } else {
