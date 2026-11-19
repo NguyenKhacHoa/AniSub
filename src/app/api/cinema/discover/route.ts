@@ -124,62 +124,92 @@ Trả về DUY NHẤT 1 mảng JSON hợp lệ (không giải thích ngoài JSON
   }
 ]`;
 
+  const parseVerificationResponse = (rawText: string) => {
+    const arrayMatch = rawText.match(/\[[\s\S]*\]/);
+    if (!arrayMatch) return 0;
+
+    let added = 0;
+    try {
+      const parsed = JSON.parse(arrayMatch[0]) as Array<{
+        videoId?: string;
+        isTheatricalMovie?: boolean;
+        isHorrorOrGore?: boolean;
+        canonicalTitle?: string | null;
+        releaseYear?: number | null;
+      }>;
+
+      if (!Array.isArray(parsed)) return 0;
+
+      for (const item of parsed) {
+        if (!item?.videoId) continue;
+        const year =
+          typeof item.releaseYear === 'number' &&
+          item.releaseYear >= 1970 &&
+          item.releaseYear <= 2028
+            ? Math.floor(item.releaseYear)
+            : null;
+        const cleanTitle =
+          typeof item.canonicalTitle === 'string' &&
+          item.canonicalTitle.trim().length >= 2
+            ? item.canonicalTitle.trim()
+            : null;
+
+        const isApproved =
+          item.isTheatricalMovie === true &&
+          item.isHorrorOrGore === false &&
+          cleanTitle !== null &&
+          year !== null;
+
+        verifiedMap.set(item.videoId, {
+          videoId: item.videoId,
+          isTheatricalMovie: isApproved,
+          isHorrorOrGore: Boolean(item.isHorrorOrGore),
+          canonicalTitle: isApproved ? cleanTitle : null,
+          releaseYear: isApproved ? year : null,
+        });
+        if (isApproved) added += 1;
+      }
+    } catch {
+      return 0;
+    }
+    return added;
+  };
+
+  // Lượt 1: Bật Google Search Grounding (`tools: [{ googleSearch: {} }]` / `google_search`)
   try {
     const { text } = await callGeminiWithFallback({
       contents: prompt,
-      perModelTimeoutMs: 8000,
+      perModelTimeoutMs: 10000,
       config: {
         tools: [{ googleSearch: {} }],
         temperature: 0.1,
       },
     });
-
-    const arrayMatch = text.match(/\[[\s\S]*\]/);
-    if (!arrayMatch) return verifiedMap;
-
-    const parsed = JSON.parse(arrayMatch[0]) as Array<{
-      videoId?: string;
-      isTheatricalMovie?: boolean;
-      isHorrorOrGore?: boolean;
-      canonicalTitle?: string | null;
-      releaseYear?: number | null;
-    }>;
-
-    if (!Array.isArray(parsed)) return verifiedMap;
-
-    for (const item of parsed) {
-      if (!item?.videoId) continue;
-      const year =
-        typeof item.releaseYear === 'number' &&
-        item.releaseYear >= 1970 &&
-        item.releaseYear <= 2028
-          ? Math.floor(item.releaseYear)
-          : null;
-      const cleanTitle =
-        typeof item.canonicalTitle === 'string' &&
-        item.canonicalTitle.trim().length >= 2
-          ? item.canonicalTitle.trim()
-          : null;
-
-      const isApproved =
-        item.isTheatricalMovie === true &&
-        item.isHorrorOrGore === false &&
-        cleanTitle !== null &&
-        year !== null;
-
-      verifiedMap.set(item.videoId, {
-        videoId: item.videoId,
-        isTheatricalMovie: isApproved,
-        isHorrorOrGore: Boolean(item.isHorrorOrGore),
-        canonicalTitle: isApproved ? cleanTitle : null,
-        releaseYear: isApproved ? year : null,
-      });
-    }
+    parseVerificationResponse(text);
   } catch (err) {
     console.warn(
-      '[Cinema Discover] Không thể xác minh Google Search Grounding lúc này:',
+      '[Cinema Discover] Google Search Grounding timeout/quá tải, thử lại chế độ JSON chuẩn:',
       err,
     );
+  }
+
+  // Dự phòng an toàn nếu công cụ Google Search Grounding trên key bị giới hạn quota/timeout
+  if (verifiedMap.size === 0) {
+    try {
+      const { text } = await callGeminiWithFallback({
+        contents: prompt,
+        perModelTimeoutMs: 6500,
+        config: {
+          temperature: 0.1,
+        },
+      });
+      parseVerificationResponse(text);
+    } catch (fallbackErr) {
+      console.warn(
+        '[Cinema Discover] Không thể xác minh danh sách ứng viên lúc này:',
+        fallbackErr,
+      );
+    }
   }
 
   return verifiedMap;
@@ -424,6 +454,44 @@ async function runCinemaDiscovery(options: {
     }
   }
 
+  // 4b. Bổ sung thêm các ứng viên từ chính bảng `public.videos` hiện có (65-165 phút, chưa gắn is_theatrical_movie)
+  if (candidates.length < 12) {
+    const { data: localCandidates } = await admin
+      .from('videos')
+      .select(
+        'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds',
+      )
+      .gte('duration_seconds', THEATRICAL_MIN_DURATION_SECONDS)
+      .lte('duration_seconds', THEATRICAL_MAX_DURATION_SECONDS)
+      .eq('is_short', false)
+      .order('published_at', { ascending: false })
+      .limit(30);
+
+    const existingCandidateIds = new Set(candidates.map((c) => c.videoId));
+    for (const row of localCandidates ?? []) {
+      if (
+        existingIdSet.has(row.video_id) ||
+        existingCandidateIds.has(row.video_id)
+      ) {
+        continue;
+      }
+      const item: CandidateMovieItem = {
+        videoId: row.video_id,
+        channelId: row.channel_id,
+        channelTitle: row.channel_id,
+        title: row.title,
+        description: row.description || '',
+        thumbnailUrl: row.thumbnail_url,
+        publishedAt: row.published_at,
+        durationSeconds: row.duration_seconds,
+      };
+      if (passesCinemaLayer1PreFilter(item)) {
+        candidates.push(item);
+        existingCandidateIds.add(item.videoId);
+      }
+    }
+  }
+
   // 5. Áp dụng Lớp 2: Xác minh thực tế qua Gemini + Google Search Grounding
   const verifiedMap = await verifyCandidatesWithGoogleSearchGrounding(
     candidates,
@@ -432,20 +500,44 @@ async function runCinemaDiscovery(options: {
     (c) => verifiedMap.get(c.videoId)?.isTheatricalMovie === true,
   );
 
-  // 6. Upsert các kênh và phim đã vượt qua cả 2 lớp kiểm duyệt vào Supabase
+  // 6. Upsert các kênh (`is_subscribed = false` để không lẫn vào danh sách kênh đã đăng ký) và phim vào Supabase
   if (approvedMovies.length > 0) {
-    const uniqueChannels = new Map<string, { channel_id: string; title: string; updated_at: string }>();
+    const uniqueChannelsWithFlag = new Map<
+      string,
+      {
+        channel_id: string;
+        title: string;
+        is_subscribed: boolean;
+        updated_at: string;
+      }
+    >();
     for (const m of approvedMovies) {
-      uniqueChannels.set(m.channelId, {
+      uniqueChannelsWithFlag.set(m.channelId, {
         channel_id: m.channelId,
         title: m.channelTitle,
+        is_subscribed: false,
         updated_at: nowIso,
       });
     }
 
-    await admin
+    const { error: chUpsertErr } = await admin
       .from('channels')
-      .upsert(Array.from(uniqueChannels.values()), { onConflict: 'channel_id' });
+      .upsert(Array.from(uniqueChannelsWithFlag.values()) as never, {
+        onConflict: 'channel_id',
+      });
+
+    if (chUpsertErr) {
+      const fallbackChannels = Array.from(uniqueChannelsWithFlag.values()).map(
+        ({ channel_id, title, updated_at }) => ({
+          channel_id,
+          title,
+          updated_at,
+        }),
+      );
+      await admin
+        .from('channels')
+        .upsert(fallbackChannels, { onConflict: 'channel_id' });
+    }
 
     const videoRowsWithTheatricalCol = approvedMovies.map((m) => {
       const meta = verifiedMap.get(m.videoId)!;
@@ -533,7 +625,7 @@ export async function GET(request: Request) {
 
 /**
  * POST /api/cinema/discover
- * Kích hoạt ngầm từ phía client (Background Auto-Sync chu kỳ 12h khi mở web hoặc mở tab Phim Chiếu Rạp).
+ * Kích hoạt từ phía client (hỗ trợ `?force=true` trên URL hoặc `{ force: true }` trong body).
  */
 export async function POST(request: Request) {
   const auth = await verifyWhitelistedUser();
@@ -541,16 +633,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  let force = false;
+  const urlForce =
+    new URL(request.url).searchParams.get('force') === 'true';
+  let bodyForce = false;
   try {
     const body = (await request.json()) as { force?: boolean };
-    force = Boolean(body?.force);
+    bodyForce = Boolean(body?.force);
   } catch {
-    force = false;
+    bodyForce = false;
   }
 
   return runCinemaDiscovery({
     userId: auth.userId,
-    force,
+    force: urlForce || bodyForce,
   });
 }

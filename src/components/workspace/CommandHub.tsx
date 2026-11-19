@@ -22,6 +22,7 @@ import {
   GENRE_DOT_STYLES,
   type GenreFilter,
   type SortOption,
+  type TheatricalCategoryFilter,
   type VideoTypeFilter,
   type WorkspaceViewMode,
 } from '@/types/workspace';
@@ -37,6 +38,8 @@ interface CommandHubProps {
   onToggleTrailers: (checked: boolean) => void;
   genreFilter: GenreFilter;
   onChangeGenreFilter: (genre: GenreFilter) => void;
+  theatricalCategory?: TheatricalCategoryFilter;
+  onChangeTheatricalCategory?: (cat: TheatricalCategoryFilter) => void;
   sortBy?: SortOption;
   onChangeSortBy?: (sort: SortOption) => void;
   onlyUnwatched?: boolean;
@@ -56,6 +59,17 @@ const GENRE_PILLS: Array<{ value: GenreFilter; label: string }> = [
   { value: 'HH2D', label: 'HH2D' },
 ];
 
+const THEATRICAL_CATEGORY_PILLS: Array<{
+  value: TheatricalCategoryFilter;
+  label: string;
+}> = [
+  { value: 'all', label: 'Tất cả phim rạp' },
+  { value: 'action', label: 'Hành động / Phiêu lưu' },
+  { value: 'fantasy', label: 'Giả tưởng' },
+  { value: 'romance', label: 'Tình cảm / Đời thường' },
+  { value: 'scifi', label: 'Viễn tưởng' },
+];
+
 const SORT_OPTIONS: Array<{ value: SortOption; label: string }> = [
   { value: 'newest', label: 'Mới nhất' },
   { value: 'longest', label: 'Dài nhất' },
@@ -73,6 +87,8 @@ export function CommandHub({
   onToggleTrailers,
   genreFilter,
   onChangeGenreFilter,
+  theatricalCategory = 'all',
+  onChangeTheatricalCategory,
   sortBy = 'newest',
   onChangeSortBy,
   onlyUnwatched = false,
@@ -100,29 +116,32 @@ export function CommandHub({
   }, []);
 
   const isExplore = viewMode === 'explore';
+  const isTheatrical = viewMode === 'theatrical';
+  const isSubscribedSpace = !isExplore && !isTheatrical;
 
   return (
     <section
       aria-label="Command Hub — Thanh điều khiển và lọc nhanh"
       className="flex flex-col gap-3 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3.5 sm:p-4"
     >
-      {/* Hàng 1: Chuyển 2 Không gian (Đã đăng ký / Khám phá) + Tìm kiếm (Ctrl+K) + WebSub Live / Làm mới */}
+      {/* Hàng 1: Chuyển 3 Không gian chính ngang hàng (Đã đăng ký | Khám phá | Phim Chiếu Rạp) + Tìm kiếm (Ctrl+K) */}
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-1 flex-wrap items-center gap-2.5">
-          {/* Chuyển 2 Không gian Rạp Chiếu */}
+          {/* Chuyển 3 Không gian Rạp Chiếu ngang hàng */}
           <div
             role="group"
             aria-label="Chuyển không gian rạp chiếu"
-            className="inline-flex h-10 items-center rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-1"
+            className="inline-flex h-10 flex-wrap items-center rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-1"
           >
             <button
               type="button"
               onClick={() => onChangeViewMode('cinema')}
-              aria-pressed={!isExplore}
-              className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors cursor-pointer ${!isExplore
-                ? 'bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                }`}
+              aria-pressed={isSubscribedSpace}
+              className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors cursor-pointer ${
+                isSubscribedSpace
+                  ? 'bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
             >
               <Film className="size-3.5" />
               <span>Đã đăng ký</span>
@@ -131,13 +150,27 @@ export function CommandHub({
               type="button"
               onClick={() => onChangeViewMode('explore')}
               aria-pressed={isExplore}
-              className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors cursor-pointer ${isExplore
-                ? 'bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                }`}
+              className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors cursor-pointer ${
+                isExplore
+                  ? 'bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
             >
               <Compass className="size-3.5" />
               <span>Khám phá</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onChangeViewMode('theatrical')}
+              aria-pressed={isTheatrical}
+              className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors cursor-pointer ${
+                isTheatrical
+                  ? 'bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              <Clapperboard className="size-3.5" />
+              <span>Phim Chiếu Rạp</span>
             </button>
           </div>
 
@@ -149,7 +182,11 @@ export function CommandHub({
               type="search"
               value={searchQuery}
               onChange={(e) => onChangeSearch(e.target.value)}
-              placeholder="Tìm nhanh phim hoặc kênh..."
+              placeholder={
+                isTheatrical
+                  ? 'Tìm phim chiếu rạp, tên phim, kênh...'
+                  : 'Tìm nhanh phim hoặc kênh...'
+              }
               aria-label="Tìm kiếm nhanh phim hoặc kênh"
               className="h-10 w-full rounded-xl border-[var(--border-subtle)] bg-[var(--bg-canvas)] pl-9 pr-16 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]"
             />
@@ -170,7 +207,7 @@ export function CommandHub({
           </div>
         </div>
 
-        {/* Cụm phải: Ở chế độ Khám phá hiện nút Làm mới gợi ý; ở chế độ Đã đăng ký hiện Tabs + Trailer */}
+        {/* Cụm phải: Theo đúng từng không gian */}
         {isExplore ? (
           <div className="flex flex-wrap items-center gap-2.5">
             <Button
@@ -181,22 +218,31 @@ export function CommandHub({
               className="h-10 rounded-xl border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3.5 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] cursor-pointer"
             >
               <RefreshCw
-                className={`mr-1.5 size-3.5 text-[var(--accent-primary)] ${isLoadingExplore ? 'animate-spin' : ''
-                  }`}
+                className={`mr-1.5 size-3.5 text-[var(--accent-primary)] ${
+                  isLoadingExplore ? 'animate-spin' : ''
+                }`}
               />
               <span>
                 {isLoadingExplore ? 'Đang săn kênh mới...' : 'Làm mới gợi ý'}
               </span>
             </Button>
           </div>
+        ) : isTheatrical ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 text-xs font-medium text-amber-600 dark:text-amber-300">
+              <Clapperboard className="size-3.5 shrink-0 text-amber-500 dark:text-amber-400" />
+              <span>65–165 phút • Google Search Verified • Không Kinh Dị</span>
+            </span>
+          </div>
         ) : (
           <div className="flex flex-wrap items-center justify-between gap-2.5 lg:justify-end">
             <div className="hidden h-10 items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 text-xs font-medium xl:inline-flex">
               <Radio
-                className={`size-3.5 ${isRealtimeConnected
-                  ? 'text-emerald-500 dark:text-emerald-400 animate-pulse'
-                  : 'text-[var(--text-secondary)]'
-                  }`}
+                className={`size-3.5 ${
+                  isRealtimeConnected
+                    ? 'text-emerald-500 dark:text-emerald-400 animate-pulse'
+                    : 'text-[var(--text-secondary)]'
+                }`}
               />
               <span className="text-[var(--text-primary)]">WebSub Live</span>
             </div>
@@ -223,13 +269,6 @@ export function CommandHub({
                   Phim Bộ
                 </TabsTrigger>
                 <TabsTrigger
-                  value="theatrical"
-                  className="inline-flex items-center gap-1.5 rounded-lg px-3 text-xs font-medium data-[state=active]:bg-[var(--accent-primary)] data-[state=active]:text-[var(--accent-foreground)] cursor-pointer"
-                >
-                  <Clapperboard className="size-3.5 shrink-0" />
-                  <span>Phim Chiếu Rạp</span>
-                </TabsTrigger>
-                <TabsTrigger
                   value="full_movie"
                   className="rounded-lg px-3 text-xs font-medium data-[state=active]:bg-[var(--accent-primary)] data-[state=active]:text-[var(--accent-foreground)] cursor-pointer"
                 >
@@ -250,7 +289,7 @@ export function CommandHub({
         )}
       </div>
 
-      {/* Hàng 2: Các Pill Thể loại & Danh mục ('Tất cả', 'Phim AI', 'HH2D', 'Phim Chiếu Rạp') hoặc Từ khóa AI đang săn ở chế độ Khám phá */}
+      {/* Hàng 2: Thanh lọc phụ theo đúng ngữ cảnh từng không gian (không lặp lại Phim Chiếu Rạp) */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border-subtle)] pt-3">
         {isExplore ? (
           <div className="flex flex-wrap items-center gap-2">
@@ -276,57 +315,64 @@ export function CommandHub({
         ) : (
           <div
             role="group"
-            aria-label="Lọc theo thể loại"
+            aria-label="Bộ lọc danh sách phim"
             className="flex flex-wrap items-center gap-2"
           >
-            {GENRE_PILLS.map((pill) => {
-              const active = genreFilter === pill.value;
-              const style =
-                pill.value !== 'all' ? GENRE_DOT_STYLES[pill.value] : null;
+            {isTheatrical
+              ? THEATRICAL_CATEGORY_PILLS.map((pill) => {
+                  const active = theatricalCategory === pill.value;
+                  return (
+                    <button
+                      key={pill.value}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() =>
+                        startFilterTransition(() =>
+                          onChangeTheatricalCategory?.(pill.value),
+                        )
+                      }
+                      className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors cursor-pointer ${
+                        active
+                          ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
+                          : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+                      }`}
+                    >
+                      <span>{pill.label}</span>
+                    </button>
+                  );
+                })
+              : GENRE_PILLS.map((pill) => {
+                  const active = genreFilter === pill.value;
+                  const style =
+                    pill.value !== 'all' ? GENRE_DOT_STYLES[pill.value] : null;
 
-              return (
-                <button
-                  key={pill.value}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() =>
-                    startFilterTransition(() => onChangeGenreFilter(pill.value))
-                  }
-                  className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors cursor-pointer ${active
-                    ? style
-                      ? `${style.badgeClass} ring-1 ring-current`
-                      : 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
-                    : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
-                    }`}
-                >
-                  {style && (
-                    <span className={`size-2 rounded-full ${style.dotClass}`} />
-                  )}
-                  <span>{pill.label}</span>
-                </button>
-              );
-            })}
-
-            {/* Pill lọc nhanh Phim Chiếu Rạp (Movie / Bản điện ảnh / OVA / >= 65 phút) */}
-            <button
-              type="button"
-              aria-pressed={videoType === 'theatrical'}
-              onClick={() =>
-                startFilterTransition(() =>
-                  onChangeVideoType(
-                    videoType === 'theatrical' ? 'all' : 'theatrical',
-                  ),
-                )
-              }
-              className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors cursor-pointer ${
-                videoType === 'theatrical'
-                  ? 'border-amber-500/45 bg-amber-500/15 text-amber-600 dark:text-amber-300 ring-1 ring-current'
-                  : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              <Clapperboard className="size-3.5 shrink-0 text-amber-500 dark:text-amber-400" />
-              <span>Phim Chiếu Rạp</span>
-            </button>
+                  return (
+                    <button
+                      key={pill.value}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() =>
+                        startFilterTransition(() =>
+                          onChangeGenreFilter(pill.value),
+                        )
+                      }
+                      className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors cursor-pointer ${
+                        active
+                          ? style
+                            ? `${style.badgeClass} ring-1 ring-current`
+                            : 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
+                          : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+                      }`}
+                    >
+                      {style && (
+                        <span
+                          className={`size-2 rounded-full ${style.dotClass}`}
+                        />
+                      )}
+                      <span>{pill.label}</span>
+                    </button>
+                  );
+                })}
 
             {/* Bộ chọn Sắp xếp nhanh (Mới nhất / Dài nhất / Tên A-Z) */}
             {onChangeSortBy && (
@@ -346,10 +392,11 @@ export function CommandHub({
                       onClick={() =>
                         startFilterTransition(() => onChangeSortBy(opt.value))
                       }
-                      className={`h-6 rounded-md px-2 text-xs font-medium transition-colors cursor-pointer ${active
-                        ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-xs'
-                        : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                        }`}
+                      className={`h-6 rounded-md px-2 text-xs font-medium transition-colors cursor-pointer ${
+                        active
+                          ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-xs'
+                          : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                      }`}
                     >
                       {opt.label}
                     </button>
@@ -369,10 +416,11 @@ export function CommandHub({
                   )
                 }
                 title="Ẩn các phim hoặc bộ phim đã xem xong (>= 90%)"
-                className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors cursor-pointer ${onlyUnwatched
-                  ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-                  : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
-                  }`}
+                className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors cursor-pointer ${
+                  onlyUnwatched
+                    ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                    : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+                }`}
               >
                 <EyeOff className="size-3.5 shrink-0" />
                 <span>Chưa xem</span>
@@ -390,12 +438,17 @@ export function CommandHub({
               type="button"
               disabled={isDeltaSyncing}
               onClick={onTriggerDeltaSync}
-              title="Quét nhanh 10 video mới nhất của các kênh đang bật"
+              title={
+                isTheatrical
+                  ? 'Quét & xác minh thêm Phim Chiếu Rạp mới từ YouTube'
+                  : 'Quét nhanh 10 video mới nhất của các kênh đang bật'
+              }
               className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 text-xs font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--accent-primary)]/50 hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] disabled:opacity-60 cursor-pointer"
             >
               <RefreshCw
-                className={`size-3.5 text-[var(--accent-primary)] ${isDeltaSyncing ? 'animate-spin' : ''
-                  }`}
+                className={`size-3.5 text-[var(--accent-primary)] ${
+                  isDeltaSyncing ? 'animate-spin' : ''
+                }`}
               />
               <span>
                 {isDeltaSyncing ? 'Đang quét tập mới...' : 'Cập nhật tập mới'}
@@ -407,7 +460,11 @@ export function CommandHub({
             <strong className="font-semibold text-[var(--text-primary)]">
               {totalMatchingVideos}
             </strong>{' '}
-            {isExplore ? 'video đề xuất' : 'khe phim sẵn sàng'}
+            {isExplore
+              ? 'video đề xuất'
+              : isTheatrical
+                ? 'phim chiếu rạp'
+                : 'khe phim sẵn sàng'}
           </span>
         </div>
       </div>

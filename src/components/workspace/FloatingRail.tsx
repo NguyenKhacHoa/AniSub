@@ -221,6 +221,27 @@ export function FloatingRail({
 
             <button
               type="button"
+              onClick={() => onChangeViewMode('theatrical')}
+              aria-current={
+                viewMode === 'theatrical' && !isVaultOpen ? 'page' : undefined
+              }
+              title="Phim Chiếu Rạp (Bản Điện Ảnh & Anime Movie)"
+              className={`flex h-10 items-center rounded-xl transition-colors cursor-pointer ${
+                expanded ? 'w-full gap-3 px-3' : 'w-full justify-center'
+              } ${
+                viewMode === 'theatrical' && !isVaultOpen
+                  ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)] font-medium'
+                  : 'text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              <Clapperboard className="size-5 shrink-0" />
+              {expanded && (
+                <span className="truncate text-sm">Phim Chiếu Rạp</span>
+              )}
+            </button>
+
+            <button
+              type="button"
               onClick={() => onChangeViewMode('continue')}
               aria-current={
                 viewMode === 'continue' && !isVaultOpen ? 'page' : undefined

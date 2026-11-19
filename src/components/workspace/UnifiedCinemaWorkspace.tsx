@@ -19,11 +19,13 @@ import {
 } from '@/lib/series-parser';
 import {
   isTheatricalMovieVideo,
+  matchesTheatricalSafeCategory,
   type ChannelWithSelection,
   type CinemaVideoItem,
   type GenreFilter,
   type PrimaryGenreTag,
   type SortOption,
+  type TheatricalCategoryFilter,
   type VideoTypeFilter,
   type WorkspaceAuthStatus,
   type WorkspaceViewMode,
@@ -175,6 +177,10 @@ export function UnifiedCinemaWorkspace({
   const [viewMode, setViewMode] = useState<WorkspaceViewMode>('cinema');
   const [searchQuery, setSearchQuery] = useState('');
   const [videoType, setVideoType] = useState<VideoTypeFilter>('all');
+  const [theatricalCategory, setTheatricalCategory] =
+    useState<TheatricalCategoryFilter>('all');
+  const [isLoadingTheatrical, setIsLoadingTheatrical] = useState(false);
+  const isDiscoveringTheatricalRef = useRef(false);
   const [showTrailers, setShowTrailers] = useState(false);
   const [genreFilter, setGenreFilter] = useState<GenreFilter>('all');
   const [sortBy, setSortBy] = useState<SortOption>('newest');
@@ -189,14 +195,14 @@ export function UnifiedCinemaWorkspace({
   const currentTabKey =
     viewMode === 'explore'
       ? 'explore'
-      : viewMode === 'continue'
-        ? 'continue'
-        : viewMode === 'watch_later'
-          ? 'watch_later'
-          : videoType === 'episode'
-            ? 'episode'
-            : videoType === 'theatrical'
-              ? 'theatrical'
+      : viewMode === 'theatrical'
+        ? 'theatrical'
+        : viewMode === 'continue'
+          ? 'continue'
+          : viewMode === 'watch_later'
+            ? 'watch_later'
+            : videoType === 'episode'
+              ? 'episode'
               : videoType === 'full_movie'
                 ? 'full'
                 : 'all';
@@ -236,39 +242,44 @@ export function UnifiedCinemaWorkspace({
     const query = searchQuery.trim().toLowerCase();
     const matched = allVideos.filter((v) => {
       if (v.is_short) return false;
-      // Ở tab Phim Chiếu Rạp, hiển thị toàn bộ phim chiếu rạp đã xác minh mà không yêu cầu phải subscribe kênh trước
-      const isTheatricalTab =
-        viewMode === 'cinema' && videoType === 'theatrical';
-      if (
-        !isTheatricalTab &&
-        selectedChannelIds.size > 0 &&
-        !selectedChannelIds.has(v.channel_id)
-      ) {
-        return false;
-      }
-      if (viewMode === 'watch_later') {
-        if (!watchLaterSet.has(v.video_id)) return false;
-      } else if (viewMode === 'continue') {
-        if (!(v.progress_seconds > 0 && !v.is_completed)) return false;
+
+      // Không gian "Phim Chiếu Rạp" độc lập hoàn toàn với bộ lọc kênh Đã đăng ký
+      if (viewMode === 'theatrical') {
+        if (!isTheatricalMovieVideo(v)) return false;
+        if (!matchesTheatricalSafeCategory(v, theatricalCategory)) {
+          return false;
+        }
       } else {
-        if (!showTrailers && v.video_type === 'trailer') return false;
-        if (videoType === 'episode' && v.video_type !== 'episode') return false;
-        if (videoType === 'theatrical' && !isTheatricalMovieVideo(v)) {
+        if (
+          selectedChannelIds.size > 0 &&
+          !selectedChannelIds.has(v.channel_id)
+        ) {
           return false;
         }
-        if (videoType === 'full_movie' && v.video_type !== 'full_movie') {
+        if (viewMode === 'watch_later') {
+          if (!watchLaterSet.has(v.video_id)) return false;
+        } else if (viewMode === 'continue') {
+          if (!(v.progress_seconds > 0 && !v.is_completed)) return false;
+        } else {
+          if (!showTrailers && v.video_type === 'trailer') return false;
+          if (videoType === 'episode' && v.video_type !== 'episode') {
+            return false;
+          }
+          if (videoType === 'full_movie' && v.video_type !== 'full_movie') {
+            return false;
+          }
+        }
+        if (genreFilter !== 'all' && v.detected_genre !== genreFilter) {
           return false;
         }
       }
+
       if (onlyUnwatched) {
         const isWatched =
           v.is_completed ||
           (v.duration_seconds > 0 &&
             v.progress_seconds / v.duration_seconds >= 0.9);
         if (isWatched) return false;
-      }
-      if (genreFilter !== 'all' && v.detected_genre !== genreFilter) {
-        return false;
       }
       if (query) {
         const matchTitle = v.title.toLowerCase().includes(query);
@@ -299,6 +310,7 @@ export function UnifiedCinemaWorkspace({
     selectedChannelIds,
     watchLaterSet,
     viewMode,
+    theatricalCategory,
     showTrailers,
     videoType,
     onlyUnwatched,
@@ -455,8 +467,10 @@ export function UnifiedCinemaWorkspace({
       const pool = allVideos.filter(
         (v) =>
           !v.is_short &&
-          (selectedChannelIds.size === 0 ||
-            selectedChannelIds.has(v.channel_id)),
+          (viewMode === 'theatrical'
+            ? isTheatricalMovieVideo(v)
+            : selectedChannelIds.size === 0 ||
+              selectedChannelIds.has(v.channel_id)),
       );
       setRecommendedOrderIds(buildRecommendationIds(pool, video));
 
@@ -468,7 +482,7 @@ export function UnifiedCinemaWorkspace({
         });
       });
     },
-    [allVideos, selectedChannelIds, activeSeries],
+    [allVideos, selectedChannelIds, activeSeries, viewMode],
   );
 
   // Chọn 1 Bộ phim (Series Card) -> mở sân khấu TheaterStage ở chế độ Playlist & phát tập phù hợp nhất
@@ -1415,8 +1429,102 @@ export function UnifiedCinemaWorkspace({
       .catch(() => {});
   }, [authStatus, allVideos]);
 
-  // Tự động chạy ngầm Background Auto-Sync cho kho Phim Chiếu Rạp (chu kỳ 12 giờ hoặc khi kho trống)
-  // Hoàn toàn chạy nền (keepalive: true), không chặn giao diện, không hiện toast lỗi làm phiền người dùng
+  // Quét tự động / thủ công kho Phim Chiếu Rạp (YouTube Data API v3 + Gemini Google Search Grounding)
+  const runTheatricalDiscover = useCallback(
+    async (force: boolean, showFeedback = false) => {
+      if (isDiscoveringTheatricalRef.current) return;
+      isDiscoveringTheatricalRef.current = true;
+
+      try {
+        await Promise.resolve();
+        setIsLoadingTheatrical(true);
+
+        try {
+          window.localStorage.setItem(
+            CINEMA_DISCOVER_STORAGE_KEY,
+            String(Date.now()),
+          );
+        } catch {
+          // Ignore storage error
+        }
+
+        const res = await fetch(
+          `/api/cinema/discover${force ? '?force=true' : ''}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ force }),
+            keepalive: true,
+          },
+        );
+
+        const payload = (await res.json().catch(() => ({}))) as {
+          discoveredCount?: number;
+          movies?: CinemaVideoItem[];
+          error?: string;
+        };
+
+        if (res.ok) {
+          const incoming = payload.movies ?? [];
+          if (incoming.length > 0) {
+            setAllVideos((prev) => {
+              const map = new Map(prev.map((v) => [v.video_id, v]));
+              for (const item of incoming) {
+                const existing = map.get(item.video_id);
+                if (!existing) {
+                  map.set(item.video_id, item);
+                } else {
+                  map.set(item.video_id, {
+                    ...existing,
+                    ...item,
+                    progress_seconds: existing.progress_seconds,
+                    is_completed: existing.is_completed,
+                    last_watched_at: existing.last_watched_at,
+                  });
+                }
+              }
+              return Array.from(map.values());
+            });
+          }
+
+          // Đồng bộ lại danh sách từ /api/workspace để hiển thị ngay các phim rạp mới mà không cần F5
+          const wsRes = await fetch('/api/workspace').catch(() => null);
+          if (wsRes && wsRes.ok) {
+            const wsData = (await wsRes.json().catch(() => ({}))) as {
+              videos?: CinemaVideoItem[];
+              channels?: ChannelWithSelection[];
+            };
+            if (Array.isArray(wsData.videos) && wsData.videos.length > 0) {
+              setAllVideos(wsData.videos);
+            }
+            if (Array.isArray(wsData.channels) && wsData.channels.length > 0) {
+              setChannels(wsData.channels);
+            }
+          }
+
+          if (showFeedback) {
+            if ((payload.discoveredCount ?? 0) > 0) {
+              toast.success(
+                `🎬 Đã phát hiện & xác minh ${payload.discoveredCount} phim chiếu rạp mới!`,
+              );
+            } else {
+              toast.info(
+                `Kho Phim Chiếu Rạp đã được làm mới (${incoming.length} tác phẩm điện ảnh đã xác minh).`,
+              );
+            }
+          }
+        }
+      } catch {
+        // Silent background fail — không hiển thị toast lỗi làm phiền người xem
+      } finally {
+        isDiscoveringTheatricalRef.current = false;
+        setIsLoadingTheatrical(false);
+      }
+    },
+    [],
+  );
+
+  // Tự động chạy ngầm Background Auto-Sync cho kho Phim Chiếu Rạp (chu kỳ 12 giờ hoặc khi bấm mở tab mà kho trống)
   useEffect(() => {
     if (authStatus !== 'authenticated') return;
 
@@ -1439,59 +1547,17 @@ export function UnifiedCinemaWorkspace({
       // Fallback sang server check
     }
 
-    if (!isStaleOrEmpty) return;
-
-    // Ghi nhận mốc thời gian ngay lập tức để tránh gọi lặp lại
-    try {
-      window.localStorage.setItem(
-        CINEMA_DISCOVER_STORAGE_KEY,
-        String(Date.now()),
-      );
-    } catch {
-      // Ignore storage error
+    if (viewMode === 'theatrical' && currentTheatricalCount === 0) {
+      void Promise.resolve().then(() => runTheatricalDiscover(true, false));
+      return;
     }
 
-    void fetch('/api/cinema/discover', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ force: false }),
-      keepalive: true,
-    })
-      .then(async (res) => {
-        if (!res.ok) return;
-        const payload = (await res.json().catch(() => ({}))) as {
-          movies?: CinemaVideoItem[];
-        };
-        const incoming = payload.movies ?? [];
-        if (incoming.length === 0) return;
+    if (!isStaleOrEmpty) return;
 
-        setAllVideos((prev) => {
-          const map = new Map(prev.map((v) => [v.video_id, v]));
-          let hasNew = false;
-          for (const item of incoming) {
-            if (!map.has(item.video_id)) {
-              map.set(item.video_id, item);
-              hasNew = true;
-            } else {
-              const existing = map.get(item.video_id)!;
-              if (!isTheatricalMovieVideo(existing)) {
-                map.set(item.video_id, {
-                  ...existing,
-                  series_name: item.series_name,
-                  is_theatrical_movie: true,
-                  theatrical_release_year: item.theatrical_release_year,
-                });
-                hasNew = true;
-              }
-            }
-          }
-          return hasNew ? Array.from(map.values()) : prev;
-        });
-      })
-      .catch(() => {
-        // Silent background fail — không hiển thị toast lỗi làm phiền người xem
-      });
-  }, [authStatus, videoType, allVideos]);
+    void Promise.resolve().then(() =>
+      runTheatricalDiscover(currentTheatricalCount === 0, false),
+    );
+  }, [authStatus, viewMode, allVideos, runTheatricalDiscover]);
 
   // Tự động chạy ngầm Smart Delta Sync khi mở app nếu đã quá >= 60 phút từ lần quét trước
   useEffect(() => {
@@ -1658,6 +1724,8 @@ export function UnifiedCinemaWorkspace({
               onToggleTrailers={setShowTrailers}
               genreFilter={genreFilter}
               onChangeGenreFilter={setGenreFilter}
+              theatricalCategory={theatricalCategory}
+              onChangeTheatricalCategory={setTheatricalCategory}
               sortBy={sortBy}
               onChangeSortBy={setSortBy}
               onlyUnwatched={onlyUnwatched}
@@ -1671,11 +1739,18 @@ export function UnifiedCinemaWorkspace({
               exploreKeywords={exploreKeywords}
               isLoadingExplore={isLoadingExplore}
               onRefreshExplore={() => void loadExploreFeed(true)}
-              isDeltaSyncing={isDeltaSyncing}
+              isDeltaSyncing={
+                viewMode === 'theatrical'
+                  ? isLoadingTheatrical
+                  : isDeltaSyncing
+              }
               onTriggerDeltaSync={
-                authStatus === 'authenticated' && selectedChannelIds.size > 0
-                  ? () => void runDeltaSync(true)
-                  : undefined
+                viewMode === 'theatrical'
+                  ? () => void runTheatricalDiscover(true, true)
+                  : authStatus === 'authenticated' &&
+                      selectedChannelIds.size > 0
+                    ? () => void runDeltaSync(true)
+                    : undefined
               }
             />
           )}
@@ -1719,29 +1794,31 @@ export function UnifiedCinemaWorkspace({
             hasMoreExplore={hasMoreExplore}
             isLoadingMoreExplore={isLoadingMoreExplore}
             onLoadMoreExplore={handleLoadMoreExplore}
+            isLoadingTheatrical={isLoadingTheatrical}
+            onRefreshTheatrical={() => void runTheatricalDiscover(true, true)}
             selectedChannelIds={selectedChannelIds}
             watchLaterIds={watchLaterSet}
             subscribingChannelId={subscribingChannelId}
             sectionHeading={
               viewMode === 'explore'
                 ? 'Khám phá YouTube — Kênh mới hợp gu của bạn'
-                : viewMode === 'watch_later'
-                  ? `Danh sách Xem sau (${watchLaterList.length})`
-                  : activeVideo
-                    ? `Đề xuất cùng thể loại [${activeVideo.detected_genre ?? 'HH2D'}] & Tập tiếp theo`
-                    : videoType === 'theatrical'
-                      ? 'Phim Chiếu Rạp & Bản Điện Ảnh (Theatrical Movies / OVA)'
+                : viewMode === 'theatrical'
+                  ? 'Phim Chiếu Rạp & Bản Điện Ảnh (Verified Theatrical Movies)'
+                  : viewMode === 'watch_later'
+                    ? `Danh sách Xem sau (${watchLaterList.length})`
+                    : activeVideo
+                      ? `Đề xuất cùng thể loại [${activeVideo.detected_genre ?? 'HH2D'}] & Tập tiếp theo`
                       : undefined
             }
             sectionSubtitle={
               viewMode === 'explore'
                 ? 'Gợi ý cá nhân hóa từ lịch sử xem & Like YouTube (đã lọc bỏ Shorts, ưu tiên kênh chưa theo dõi)'
-                : viewMode === 'watch_later'
-                  ? 'Các video bạn đã đánh dấu lưu lại để cày sau — bấm biểu tượng Bookmark để gỡ sau khi xem xong'
-                  : activeVideo
-                    ? 'Ưu tiên tập kế tiếp cùng bộ/kênh, theo sau là gợi ý cùng thể loại đã làm mới ngẫu nhiên'
-                    : videoType === 'theatrical'
-                      ? 'Tự động nhận diện Anime Movie, Bản điện ảnh chiếu rạp, OVA/Special hoặc phim lẻ từ 65 phút trở lên'
+                : viewMode === 'theatrical'
+                  ? 'Tự động săn tìm & đối chiếu Google Search các tác phẩm điện ảnh chiếu rạp chính thức (65–165 phút, an toàn không kinh dị)'
+                  : viewMode === 'watch_later'
+                    ? 'Các video bạn đã đánh dấu lưu lại để cày sau — bấm biểu tượng Bookmark để gỡ sau khi xem xong'
+                    : activeVideo
+                      ? 'Ưu tiên tập kế tiếp cùng bộ/kênh, theo sau là gợi ý cùng thể loại đã làm mới ngẫu nhiên'
                       : undefined
             }
             onSelectVideo={handleSelectVideo}

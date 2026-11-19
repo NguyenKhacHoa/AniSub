@@ -39,6 +39,8 @@ interface StructuredCinemaRowsProps {
   sectionHeading?: string;
   sectionSubtitle?: string;
   isLoadingExplore?: boolean;
+  isLoadingTheatrical?: boolean;
+  onRefreshTheatrical?: () => void;
   hasMoreExplore?: boolean;
   isLoadingMoreExplore?: boolean;
   onLoadMoreExplore?: () => void;
@@ -86,6 +88,8 @@ export function StructuredCinemaRows({
   sectionHeading,
   sectionSubtitle,
   isLoadingExplore = false,
+  isLoadingTheatrical = false,
+  onRefreshTheatrical,
   hasMoreExplore = false,
   isLoadingMoreExplore = false,
   onLoadMoreExplore,
@@ -230,9 +234,29 @@ export function StructuredCinemaRows({
     );
   }
 
-  // 3b. Trạng thái: Đã đăng nhập nhưng chưa chọn kênh theo dõi nào và không có phim hiển thị (chỉ áp dụng ngoài tab Khám phá)
+  // 3a. Trạng thái: Đang săn & xác minh Phim Chiếu Rạp qua Google Search Grounding
+  if (viewMode === 'theatrical' && isLoadingTheatrical && videos.length === 0) {
+    return (
+      <section
+        aria-label="Đang săn & kiểm duyệt Phim Chiếu Rạp"
+        className="flex flex-1 flex-col items-center justify-center rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-16 text-center"
+      >
+        <Loader2 className="size-7 animate-spin text-amber-500 dark:text-amber-400" />
+        <h2 className="mt-3 text-base font-semibold text-[var(--text-primary)]">
+          Gemini AI & Google Search đang săn Phim Chiếu Rạp miễn phí trên YouTube...
+        </h2>
+        <p className="mt-1 max-w-md text-xs text-[var(--text-secondary)]">
+          Đang lọc khung thời lượng chuẩn rạp (65–165 phút), xác minh phát hành
+          chiếu rạp thương mại và loại bỏ phim kinh dị.
+        </p>
+      </section>
+    );
+  }
+
+  // 3b. Trạng thái: Đã đăng nhập nhưng chưa chọn kênh theo dõi nào và không có phim hiển thị (chỉ áp dụng ở không gian Đã đăng ký)
   if (
     viewMode !== 'explore' &&
+    viewMode !== 'theatrical' &&
     selectedChannelCount === 0 &&
     videos.length === 0
   ) {
@@ -263,8 +287,46 @@ export function StructuredCinemaRows({
     );
   }
 
-  // 4. Trạng thái: Chưa có video (riêng Khám phá và Xem sau hiển thị empty gọn)
+  // 4. Trạng thái: Chưa có video (riêng Khám phá, Phim Chiếu Rạp và Xem sau hiển thị empty gọn)
   if (videos.length === 0) {
+    if (viewMode === 'theatrical') {
+      return (
+        <section
+          aria-label="Kho Phim Chiếu Rạp đang cập nhật"
+          className="flex flex-1 flex-col items-center justify-center rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-14 text-center"
+        >
+          <Clapperboard className="size-7 text-amber-500 dark:text-amber-400" />
+          <h2 className="mt-3 text-base font-semibold text-[var(--text-primary)]">
+            Chưa có phim chiếu rạp nào khớp bộ lọc hiện tại
+          </h2>
+          <p className="mt-1 max-w-md text-xs text-[var(--text-secondary)]">
+            Bấm nút &ldquo;Cập nhật tập mới&rdquo; bên dưới để hệ thống tự động
+            săn và xác minh Phim Chiếu Rạp miễn phí trên toàn YouTube.
+          </p>
+          {onRefreshTheatrical && (
+            <Button
+              type="button"
+              disabled={isLoadingTheatrical}
+              onClick={onRefreshTheatrical}
+              className="mt-4 h-10 rounded-xl bg-[var(--accent-primary)] px-4 text-xs font-semibold text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
+            >
+              {isLoadingTheatrical ? (
+                <>
+                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                  <span>Đang săn Phim Chiếu Rạp...</span>
+                </>
+              ) : (
+                <>
+                  <Clapperboard className="mr-1.5 size-3.5" />
+                  <span>Quét Phim Chiếu Rạp ngay</span>
+                </>
+              )}
+            </Button>
+          )}
+        </section>
+      );
+    }
+
     if (viewMode === 'watch_later') {
       return (
         <section
@@ -569,7 +631,7 @@ export function StructuredCinemaRows({
                       {video.channel_title || video.channel_id}
                     </p>
 
-                    {viewMode === 'explore' &&
+                    {(viewMode === 'explore' || viewMode === 'theatrical') &&
                       (selectedChannelIds?.has(video.channel_id) ? (
                         <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-emerald-500/35 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
                           <Check className="size-3" />

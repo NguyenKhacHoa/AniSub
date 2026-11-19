@@ -19,10 +19,11 @@ Toàn bộ trải nghiệm rạp chiếu phim được hợp nhất trên **1 m�
 
 ### 1.2. Không Gian Trung Tâm Biến Hình (Vùng A & Vùng B)
 - **Vùng A — Trạng thái 1 (`Command Hub`, khi chưa chọn video):**
+  - **Cụm chuyển 3 Không gian chính trên cùng (góc trái):** **`Đã đăng ký`** (`viewMode === 'cinema'`) | **`Khám phá`** (`viewMode === 'explore'`) | **`Phim Chiếu Rạp`** (`viewMode === 'theatrical'`, icon `Clapperboard`). Không gian **`Phim Chiếu Rạp`** hoạt động độc lập, bỏ qua hoàn toàn bộ lọc kênh Đã đăng ký.
   - Ô tìm kiếm nhanh hỗ trợ phím tắt `Ctrl + K` / `⌘K`.
-  - Chỉ báo trạng thái kết nối `WebSub Live`, nút xoay **"Cập nhật tập mới"** (Smart Delta Sync) ngay cạnh bộ đếm phim.
-  - Tabs lọc dạng video: `Tất cả` | `Phim Bộ` | `Phim Chiếu Rạp` (icon `Clapperboard`) | `Phim Full`.
-  - Công tắc gạt `Hiện Trailer`, các pill lọc danh mục/thể loại (`Tất cả thể loại`, `Phim AI`, `HH2D`, `Phim Chiếu Rạp`), bộ chọn sắp xếp nhanh (**`Mới nhất`** | **`Dài nhất`** | **`Tên A-Z`**) và nút bật/tắt **`Chưa xem`** (ẩn phim đã xem $\ge 90\%$).
+  - Chỉ báo trạng thái kết nối `WebSub Live`, nút xoay **"Cập nhật tập mới"** (kích hoạt Smart Delta Sync khi ở `Đã đăng ký`, hoặc kích hoạt `/api/cinema/discover?force=true` khi ở `Phim Chiếu Rạp`) ngay cạnh bộ đếm phim.
+  - **Đã gỡ bỏ hoàn toàn sự trùng lặp:** Cụm tab định dạng bên phải khi ở `Đã đăng ký` chỉ gồm 3 nút: `Tất cả` | `Phim Bộ` | `Phim Full`. Thanh lọc con bên dưới khi ở `Đã đăng ký` chỉ gồm: `Tất cả thể loại` | `Phim AI` | `HH2D` (kèm công tắc `Hiện Trailer`, bộ chọn sắp xếp và nút `Chưa xem`).
+  - **Thanh lọc con riêng khi ở `Phim Chiếu Rạp` (`viewMode === 'theatrical'`):** Chỉ hiển thị các pill lọc thể loại phim rạp an toàn (`Tất cả phim rạp`, `Hành động / Phiêu lưu`, `Giả tưởng`, `Tình cảm / Đời thường`, `Viễn tưởng`), bộ chọn sắp xếp (**`Mới nhất`** | **`Dài nhất`** | **`Tên A-Z`**) và nút bật/tắt **`Chưa xem`**, ẩn hoàn toàn các nút không liên quan như `Phim AI` hay `Phim Bộ`.
   - **Thanh "Xem Tiếp" (`ContinueWatchingShelf`):** Hàng thẻ ngang tối đa 6 video xem dở (`> 30s`, `< 92%`) ngay dưới Command Hub ở tab `Tất cả` & `Phim Bộ`, gồm thanh tiến độ đáy ảnh, thời gian còn lại và nút xóa nhanh.
 - **Vùng A — Trạng thái 2 (`Theater Stage`, khi bấm vào một khe phim hoặc Thẻ Bộ Phim):**
   - Thiết kế bố cục 2 cột chuẩn rạp chiếu trên Desktop (`lg:grid-cols-12`, chiều cao cột phải khớp khung video, không làm trôi màn hình phim):

@@ -7,11 +7,22 @@ import type {
   WatchProgressRow,
 } from '@/types/database';
 
-export type WorkspaceViewMode = 'cinema' | 'explore' | 'continue' | 'watch_later';
-export type VideoTypeFilter = 'all' | 'episode' | 'theatrical' | 'full_movie';
+export type WorkspaceViewMode =
+  | 'cinema'
+  | 'explore'
+  | 'theatrical'
+  | 'continue'
+  | 'watch_later';
+export type VideoTypeFilter = 'all' | 'episode' | 'full_movie';
 export type GenreFilter = 'all' | GenreTag;
 export type PrimaryGenreTag = GenreTag;
 export type SortOption = 'newest' | 'longest' | 'title_asc';
+export type TheatricalCategoryFilter =
+  | 'all'
+  | 'action'
+  | 'fantasy'
+  | 'romance'
+  | 'scifi';
 
 /**
  * Dấu hiệu xác minh chính thức trong DB sau khi Gemini + Google Search Grounding
@@ -35,11 +46,11 @@ export const CINEMA_HORROR_PREFILTER_RE =
 
 /**
  * Từ khóa LOẠI TRỪ CỨNG: Mọi video chứa dấu hiệu ghép tập, tổng hợp nhiều giờ,
- * trọn bộ, tập lẻ, review, tóm tắt, OVA/Special hoặc thuộc danh mục `Phim AI`
+ * trọn bộ, tập lẻ (`tập 1`, `ep 1`...), review, tóm tắt hoặc thuộc danh mục `Phim AI`
  * đều KHÔNG BAO GIỜ được gắn mác `Chiếu Rạp`.
  */
 export const THEATRICAL_HARD_EXCLUSION_RE =
-  /\b(trọn\s*bộ|tron\s*bo|tổng\s*hợp|tong\s*hop|full\s*bộ|full\s*bo|full\s*mùa|full\s*mua|full\s*tập|full\s*tap|tất\s*cả\s*các\s*tập|all\s*episodes|review|tóm\s*tắt|tom\s*tat|tập|tap|ep|episode|chương|chuong|mùa\s*\d|mua\s*\d|phần\s*\d|phan\s*\d|season\s*\d|ss\s*\d|ova|oad|ona|special|trailer|teaser|preview|phim\s*ai|3d\s*ai)\b|\b\d{1,2}\s*(?:h\d{0,2}p?|giờ|gio|tiếng|tieng)\b/i;
+  /\b(trọn\s*bộ|tron\s*bo|tổng\s*hợp|tong\s*hop|full\s*bộ|full\s*bo|full\s*mùa|full\s*mua|full\s*tập|full\s*tap|tất\s*cả\s*các\s*tập|all\s*episodes|review|tóm\s*tắt|tom\s*tat|tập\s*\.?\s*\d+|tap\s*\.?\s*\d+|ep\s*\.?\s*\d+|episode\s*\.?\s*\d+|chương\s*\.?\s*\d+|chuong\s*\.?\s*\d+|mùa\s*\d+|mua\s*\d+|phần\s*\d+\s*[-–:]?\s*tập|season\s*\d+\s*ep|trailer|teaser|preview|phim\s*ai|3d\s*ai)\b|\b\d{1,2}\s*(?:h\d{0,2}p?|giờ|gio|tiếng|tieng)\b/i;
 
 /**
  * Từ khóa ứng viên cần kiểm tra Google Search Grounding xem có phải Bản Điện Ảnh Chiếu Rạp thật không.
@@ -164,6 +175,44 @@ export function isTheatricalMovieVideo(video: {
   }
 
   return false;
+}
+
+/**
+ * Lọc nhanh theo nhóm thể loại an toàn trong không gian Phim Chiếu Rạp
+ */
+export function matchesTheatricalSafeCategory(
+  video: {
+    title: string;
+    description?: string | null;
+    series_name?: string | null;
+  },
+  category: TheatricalCategoryFilter,
+): boolean {
+  if (category === 'all') return true;
+  const hay =
+    `${video.title} ${video.series_name ?? ''} ${video.description ?? ''}`.toLowerCase();
+
+  if (category === 'action') {
+    return /\b(hành\s*động|hanh\s*dong|phiêu\s*lưu|phieu\s*luu|chiến\s*đấu|chien\s*dau|action|adventure|shonen|thanh\s*gươm|jujutsu|chú\s*thuật|one\s*piece|conan|thám\s*tử|naruto|dragon\s*ball|bleach|hunter)\b/i.test(
+      hay,
+    );
+  }
+  if (category === 'fantasy') {
+    return /\b(giả\s*tưởng|gia\s*tuong|phép\s*thuật|phep\s*thuat|ma\s*thuật|fantasy|magic|isekai|dị\s*giới|thần\s*thoại|suzume|ghibli|spirited|mononoke|howl|vùng\s*đất|lâu\s*đài)\b/i.test(
+      hay,
+    );
+  }
+  if (category === 'romance') {
+    return /\b(tình\s*cảm|tinh\s*cam|lãng\s*mạn|lang\s*man|đời\s*thường|doi\s*thuong|học\s*đường|hoc\s*duong|romance|slice\s*of\s*life|drama|your\s*name|kimi\s*no\s*na|weathering|đứa\s*con\s*của\s*thời\s*tiết|dáng\s*hình\s*thanh\s*âm|violet|5cm|khu\s*vườn\s*ngôn\s*từ)\b/i.test(
+      hay,
+    );
+  }
+  if (category === 'scifi') {
+    return /\b(viễn\s*tưởng|vien\s*tuong|tương\s*lai|tuong\s*lai|vũ\s*trụ|vu\s*tru|cơ\s*giáp|mecha|sci-fi|scifi|robot|gundam|evangelion|doraemon|cyber|không\s*gian)\b/i.test(
+      hay,
+    );
+  }
+  return true;
 }
 
 export const PRIMARY_GENRE_OPTIONS: PrimaryGenreTag[] = ['Phim AI', 'HH2D'];
