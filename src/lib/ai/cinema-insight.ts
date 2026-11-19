@@ -7,7 +7,7 @@ import type {
   CommentSentiment,
 } from '@/types/ai-insight';
 
-const MAX_TRANSCRIPT_CHARS = 14000;
+const MAX_TRANSCRIPT_CHARS = 9000;
 
 interface CaptionTrack {
   baseUrl?: string;
@@ -204,10 +204,11 @@ function buildCompactTimestampedTranscript(
     return fullText;
   }
 
-  // Giới hạn tối ưu token: lấy phần ĐẦU (~5.5k) + GIỮA (~4.5k) + CUỐI (~3.5k)
-  const headLen = 5500;
-  const midLen = 4500;
-  const tailLen = 3500;
+  // Giới hạn tối ưu token (~9.000 ký tự) để video dài > 3 tiếng vẫn phản hồi nhanh trên Vercel:
+  // lấy phần ĐẦU (3.6k) + GIỮA (3.0k) + CUỐI (2.4k)
+  const headLen = 3600;
+  const midLen = 3000;
+  const tailLen = 2400;
   const midStart = Math.max(
     headLen,
     Math.floor((fullText.length - midLen) / 2),

@@ -27,7 +27,10 @@ export function getGeminiClient(): GoogleGenAI {
   }
 
   if (!geminiClientInstance) {
-    geminiClientInstance = new GoogleGenAI({ apiKey });
+    geminiClientInstance = new GoogleGenAI({
+      apiKey,
+      apiVersion: 'v1beta',
+    });
   }
 
   return geminiClientInstance;
