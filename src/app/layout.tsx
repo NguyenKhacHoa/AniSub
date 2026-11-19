@@ -16,9 +16,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AniSub — Unified Cinema Workspace",
+  title: "AniSub — Cinema Workspace",
   description:
-    "Không gian rạp chiếu phim cá nhân hóa hợp nhất, đồng bộ kênh YouTube theo thời gian thực và phân loại bằng Gemini AI.",
+    "Không gian xem phim cá nhân hóa hợp nhất, đồng bộ kênh YouTube theo thời gian thực.",
 };
 
 export default function RootLayout({

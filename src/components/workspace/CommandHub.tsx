@@ -116,11 +116,10 @@ export function CommandHub({
               type="button"
               onClick={() => onChangeViewMode('cinema')}
               aria-pressed={!isExplore}
-              className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors cursor-pointer ${
-                !isExplore
-                  ? 'bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
+              className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors cursor-pointer ${!isExplore
+                ? 'bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
+                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
             >
               <Film className="size-3.5" />
               <span>Đã đăng ký</span>
@@ -129,14 +128,13 @@ export function CommandHub({
               type="button"
               onClick={() => onChangeViewMode('explore')}
               aria-pressed={isExplore}
-              className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors cursor-pointer ${
-                isExplore
-                  ? 'bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
+              className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors cursor-pointer ${isExplore
+                ? 'bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
+                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
             >
               <Compass className="size-3.5" />
-              <span>Khám phá YouTube</span>
+              <span>Khám phá</span>
             </button>
           </div>
 
@@ -180,9 +178,8 @@ export function CommandHub({
               className="h-10 rounded-xl border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3.5 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] cursor-pointer"
             >
               <RefreshCw
-                className={`mr-1.5 size-3.5 text-[var(--accent-primary)] ${
-                  isLoadingExplore ? 'animate-spin' : ''
-                }`}
+                className={`mr-1.5 size-3.5 text-[var(--accent-primary)] ${isLoadingExplore ? 'animate-spin' : ''
+                  }`}
               />
               <span>
                 {isLoadingExplore ? 'Đang săn kênh mới...' : 'Làm mới gợi ý'}
@@ -193,11 +190,10 @@ export function CommandHub({
           <div className="flex flex-wrap items-center justify-between gap-2.5 lg:justify-end">
             <div className="hidden h-10 items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 text-xs font-medium xl:inline-flex">
               <Radio
-                className={`size-3.5 ${
-                  isRealtimeConnected
-                    ? 'text-emerald-500 dark:text-emerald-400 animate-pulse'
-                    : 'text-[var(--text-secondary)]'
-                }`}
+                className={`size-3.5 ${isRealtimeConnected
+                  ? 'text-emerald-500 dark:text-emerald-400 animate-pulse'
+                  : 'text-[var(--text-secondary)]'
+                  }`}
               />
               <span className="text-[var(--text-primary)]">WebSub Live</span>
             </div>
@@ -217,7 +213,7 @@ export function CommandHub({
                   value="episode"
                   className="rounded-lg px-3 text-xs font-medium data-[state=active]:bg-[var(--accent-primary)] data-[state=active]:text-[var(--accent-foreground)] cursor-pointer"
                 >
-                  Tập mới
+                  Phim Bộ
                 </TabsTrigger>
                 <TabsTrigger
                   value="full_movie"
@@ -280,13 +276,12 @@ export function CommandHub({
                   type="button"
                   aria-pressed={active}
                   onClick={() => onChangeGenreFilter(pill.value)}
-                  className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors cursor-pointer ${
-                    active
-                      ? style
-                        ? `${style.badgeClass} ring-1 ring-current`
-                        : 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
-                      : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
-                  }`}
+                  className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors cursor-pointer ${active
+                    ? style
+                      ? `${style.badgeClass} ring-1 ring-current`
+                      : 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
+                    : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+                    }`}
                 >
                   {style && (
                     <span className={`size-2 rounded-full ${style.dotClass}`} />
@@ -312,11 +307,10 @@ export function CommandHub({
                       type="button"
                       aria-pressed={active}
                       onClick={() => onChangeSortBy(opt.value)}
-                      className={`h-6 rounded-md px-2 text-xs font-medium transition-colors cursor-pointer ${
-                        active
-                          ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-xs'
-                          : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                      }`}
+                      className={`h-6 rounded-md px-2 text-xs font-medium transition-colors cursor-pointer ${active
+                        ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-xs'
+                        : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                        }`}
                     >
                       {opt.label}
                     </button>
@@ -332,11 +326,10 @@ export function CommandHub({
                 aria-pressed={onlyUnwatched}
                 onClick={() => onToggleOnlyUnwatched(!onlyUnwatched)}
                 title="Ẩn các phim hoặc bộ phim đã xem xong (>= 90%)"
-                className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors cursor-pointer ${
-                  onlyUnwatched
-                    ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-                    : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
-                }`}
+                className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors cursor-pointer ${onlyUnwatched
+                  ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                  : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+                  }`}
               >
                 <EyeOff className="size-3.5 shrink-0" />
                 <span>Chưa xem</span>
@@ -355,9 +348,8 @@ export function CommandHub({
               className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 text-xs font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--accent-primary)]/50 hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] disabled:opacity-60 cursor-pointer"
             >
               <RefreshCw
-                className={`size-3.5 text-[var(--accent-primary)] ${
-                  isDeltaSyncing ? 'animate-spin' : ''
-                }`}
+                className={`size-3.5 text-[var(--accent-primary)] ${isDeltaSyncing ? 'animate-spin' : ''
+                  }`}
               />
               <span>
                 {isDeltaSyncing ? 'Đang quét tập mới...' : 'Cập nhật tập mới'}

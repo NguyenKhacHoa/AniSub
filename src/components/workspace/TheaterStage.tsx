@@ -298,9 +298,9 @@ export function TheaterStage({
     const el = fullscreenContainerRef.current;
     if (!el) return;
     if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
+      document.exitFullscreen().catch(() => { });
     } else {
-      el.requestFullscreen().catch(() => {});
+      el.requestFullscreen().catch(() => { });
     }
   };
 
@@ -339,10 +339,10 @@ export function TheaterStage({
 
   const summaryBullets = video.ai_summary
     ? video.ai_summary
-        .split('\n')
-        .map((line) => line.replace(/^[-•*]\s*/, '').trim())
-        .filter(Boolean)
-        .slice(0, 3)
+      .split('\n')
+      .map((line) => line.replace(/^[-•*]\s*/, '').trim())
+      .filter(Boolean)
+      .slice(0, 3)
     : [];
 
   const handleToggleAiSummary = async () => {
@@ -420,11 +420,10 @@ export function TheaterStage({
               variant="outline"
               onClick={() => onToggleWatchLater(video.video_id)}
               title={isWatchLater ? 'Xóa khỏi Xem sau' : 'Lưu vào Xem sau'}
-              className={`h-8 rounded-lg border px-2.5 text-xs font-medium cursor-pointer ${
-                isWatchLater
-                  ? 'border-amber-500/50 bg-amber-500/15 text-amber-500 dark:text-amber-300'
-                  : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
+              className={`h-8 rounded-lg border px-2.5 text-xs font-medium cursor-pointer ${isWatchLater
+                ? 'border-amber-500/50 bg-amber-500/15 text-amber-500 dark:text-amber-300'
+                : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
             >
               <Bookmark
                 className={`mr-1.5 size-3.5 ${isWatchLater ? 'fill-current' : ''}`}
@@ -438,11 +437,10 @@ export function TheaterStage({
             variant="outline"
             onClick={() => setIsTheaterWide((prev) => !prev)}
             title="Chế độ Rạp rộng (Phím T)"
-            className={`h-8 rounded-lg border-[var(--border-subtle)] px-2.5 text-xs font-medium cursor-pointer ${
-              isTheaterWide
-                ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)] border-[var(--accent-primary)]'
-                : 'bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-            }`}
+            className={`h-8 rounded-lg border-[var(--border-subtle)] px-2.5 text-xs font-medium cursor-pointer ${isTheaterWide
+              ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)] border-[var(--accent-primary)]'
+              : 'bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
           >
             {isTheaterWide ? (
               <Minimize2 className="mr-1.5 size-3.5" />
@@ -477,15 +475,13 @@ export function TheaterStage({
 
       {/* Bố cục 2 cột (hoặc bung Rạp rộng 100% khi isTheaterWide = true) */}
       <div
-        className={`grid grid-cols-1 gap-4 ${
-          isTheaterWide ? '' : 'lg:grid-cols-12'
-        }`}
+        className={`grid grid-cols-1 gap-4 ${isTheaterWide ? '' : 'lg:grid-cols-12'
+          }`}
       >
         {/* CỘT TRÁI: Khung YouTube IFrame Player API 16:9 + Floating Mini-Player (Zero Unmount) + Thanh điều khiển thông minh */}
         <div
-          className={`flex flex-col gap-2.5 ${
-            isTheaterWide ? 'w-full' : 'lg:col-span-8'
-          }`}
+          className={`flex flex-col gap-2.5 ${isTheaterWide ? 'w-full' : 'lg:col-span-8'
+            }`}
         >
           {/* Anchor cố định giữ chiều cao 16:9 trong layout flow để IntersectionObserver theo dõi */}
           <div
@@ -629,11 +625,10 @@ export function TheaterStage({
                       type="button"
                       aria-pressed={active}
                       onClick={() => handleSelectPlaybackRate(rate)}
-                      className={`h-6 rounded-md px-2 text-[11px] font-semibold tabular-nums transition-colors cursor-pointer ${
-                        active
-                          ? 'bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
-                          : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                      }`}
+                      className={`h-6 rounded-md px-2 text-[11px] font-semibold tabular-nums transition-colors cursor-pointer ${active
+                        ? 'bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
+                        : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                        }`}
                     >
                       {rate}x
                     </button>
@@ -647,18 +642,16 @@ export function TheaterStage({
         {/* CỘT PHẢI: Chế độ Playlist Bộ phim (cuộn dọc cố định chiều cao) HOẶC Thông tin video lẻ */}
         {activeSeries ? (
           <div
-            className={`${
-              isTheaterWide
-                ? 'w-full'
-                : 'lg:relative lg:col-span-4'
-            }`}
+            className={`${isTheaterWide
+              ? 'w-full'
+              : 'lg:relative lg:col-span-4'
+              }`}
           >
             <div
-              className={`flex flex-col overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] ${
-                isTheaterWide
-                  ? 'max-h-[420px]'
-                  : 'max-h-[420px] lg:absolute lg:inset-0 lg:max-h-none'
-              }`}
+              className={`flex flex-col overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] ${isTheaterWide
+                ? 'max-h-[420px]'
+                : 'max-h-[420px] lg:absolute lg:inset-0 lg:max-h-none'
+                }`}
             >
               {/* Header Playlist */}
               <div className="shrink-0 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3.5 py-3">
@@ -691,18 +684,16 @@ export function TheaterStage({
                               ? 'Bỏ theo dõi bộ phim'
                               : 'Theo dõi & ghim bộ phim lên đầu'
                           }
-                          className={`inline-flex h-7 items-center gap-1 rounded-lg border px-2 text-[11px] font-medium transition-colors cursor-pointer ${
-                            activeSeriesStatus === 'following'
-                              ? 'border-amber-500/50 bg-amber-500/15 text-amber-500 dark:text-amber-300'
-                              : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
-                          }`}
+                          className={`inline-flex h-7 items-center gap-1 rounded-lg border px-2 text-[11px] font-medium transition-colors cursor-pointer ${activeSeriesStatus === 'following'
+                            ? 'border-amber-500/50 bg-amber-500/15 text-amber-500 dark:text-amber-300'
+                            : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+                            }`}
                         >
                           <Star
-                            className={`size-3 shrink-0 ${
-                              activeSeriesStatus === 'following'
-                                ? 'fill-current'
-                                : ''
-                            }`}
+                            className={`size-3 shrink-0 ${activeSeriesStatus === 'following'
+                              ? 'fill-current'
+                              : ''
+                              }`}
                           />
                           <span className="hidden sm:inline">
                             {activeSeriesStatus === 'following'
@@ -723,11 +714,10 @@ export function TheaterStage({
                               ? 'Hiện lại bộ phim'
                               : 'Ẩn bớt bộ phim này khỏi danh sách chính'
                           }
-                          className={`inline-flex h-7 items-center justify-center rounded-lg border px-2 text-[11px] font-medium transition-colors cursor-pointer ${
-                            activeSeriesStatus === 'hidden'
-                              ? 'border-rose-500/45 bg-rose-500/15 text-rose-400'
-                              : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
-                          }`}
+                          className={`inline-flex h-7 items-center justify-center rounded-lg border px-2 text-[11px] font-medium transition-colors cursor-pointer ${activeSeriesStatus === 'hidden'
+                            ? 'border-rose-500/45 bg-rose-500/15 text-rose-400'
+                            : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+                            }`}
                         >
                           <EyeOff className="size-3 shrink-0" />
                         </button>
@@ -758,11 +748,10 @@ export function TheaterStage({
                   <div className="flex items-center justify-between gap-2 text-[11px]">
                     <span className="inline-flex items-center gap-1 font-medium tabular-nums text-[var(--text-secondary)]">
                       <Clock
-                        className={`size-3 ${
-                          isPlaying
-                            ? 'text-[var(--accent-primary)]'
-                            : 'text-[var(--text-secondary)]'
-                        }`}
+                        className={`size-3 ${isPlaying
+                          ? 'text-[var(--accent-primary)]'
+                          : 'text-[var(--text-secondary)]'
+                          }`}
                       />
                       <span>
                         {formatDuration(currentTime)} /{' '}
@@ -802,13 +791,11 @@ export function TheaterStage({
                       disabled={isSummarizing}
                       onClick={handleToggleAiSummary}
                       aria-expanded={showAiSummary}
-                      className={`h-8 rounded-lg border px-2.5 text-xs font-medium cursor-pointer ${
-                        effectiveNextVideo ? 'shrink-0' : 'flex-1'
-                      } ${
-                        showAiSummary
+                      className={`h-8 rounded-lg border px-2.5 text-xs font-medium cursor-pointer ${effectiveNextVideo ? 'shrink-0' : 'flex-1'
+                        } ${showAiSummary
                           ? 'border-[var(--ai-accent)] bg-violet-500/15 text-[var(--text-primary)]'
                           : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]'
-                      }`}
+                        }`}
                     >
                       {isSummarizing ? (
                         <Loader2 className="mr-1.5 size-3.5 animate-spin text-[var(--ai-accent)]" />
@@ -869,11 +856,10 @@ export function TheaterStage({
                         role="option"
                         aria-selected={isCurrent}
                         onClick={() => onSelectVideo(ep.video)}
-                        className={`group flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors cursor-pointer ${
-                          isCurrent
-                            ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]'
-                            : 'border-transparent bg-[var(--bg-surface)]/70 hover:border-[var(--border-subtle)] hover:bg-[var(--bg-elevated)]'
-                        }`}
+                        className={`group flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors cursor-pointer ${isCurrent
+                          ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]'
+                          : 'border-transparent bg-[var(--bg-surface)]/70 hover:border-[var(--border-subtle)] hover:bg-[var(--bg-elevated)]'
+                          }`}
                       >
                         {/* Biểu tượng trạng thái: ▶ đang phát / ✓ đã xem / chấm tròn */}
                         <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-[var(--bg-canvas)]">
@@ -889,11 +875,10 @@ export function TheaterStage({
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
                             <span
-                              className={`truncate text-xs font-semibold ${
-                                isCurrent
-                                  ? 'text-[var(--accent-primary)]'
-                                  : 'text-[var(--text-primary)]'
-                              }`}
+                              className={`truncate text-xs font-semibold ${isCurrent
+                                ? 'text-[var(--accent-primary)]'
+                                : 'text-[var(--text-primary)]'
+                                }`}
                             >
                               {ep.episodeLabel}
                             </span>
@@ -931,9 +916,8 @@ export function TheaterStage({
           </div>
         ) : (
           <div
-            className={`flex flex-col justify-between gap-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-4 ${
-              isTheaterWide ? 'w-full' : 'lg:col-span-4'
-            }`}
+            className={`flex flex-col justify-between gap-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-4 ${isTheaterWide ? 'w-full' : 'lg:col-span-4'
+              }`}
           >
             <div>
               <h1 className="text-base font-semibold leading-snug text-[var(--text-primary)] sm:text-lg">
@@ -945,11 +929,10 @@ export function TheaterStage({
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                   <span className="inline-flex items-center gap-1.5 font-medium tabular-nums text-[var(--text-primary)]">
                     <Clock
-                      className={`size-3.5 ${
-                        isPlaying
-                          ? 'text-[var(--accent-primary)]'
-                          : 'text-[var(--text-secondary)]'
-                      }`}
+                      className={`size-3.5 ${isPlaying
+                        ? 'text-[var(--accent-primary)]'
+                        : 'text-[var(--text-secondary)]'
+                        }`}
                     />
                     <span>
                       {formatDuration(currentTime)} /{' '}
@@ -1030,11 +1013,10 @@ export function TheaterStage({
                   disabled={isSummarizing}
                   onClick={handleToggleAiSummary}
                   aria-expanded={showAiSummary}
-                  className={`h-10 w-full rounded-xl border text-sm font-medium cursor-pointer ${
-                    showAiSummary
-                      ? 'border-[var(--ai-accent)] bg-violet-500/15 text-[var(--text-primary)]'
-                      : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]'
-                  }`}
+                  className={`h-10 w-full rounded-xl border text-sm font-medium cursor-pointer ${showAiSummary
+                    ? 'border-[var(--ai-accent)] bg-violet-500/15 text-[var(--text-primary)]'
+                    : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]'
+                    }`}
                 >
                   {isSummarizing ? (
                     <Loader2 className="mr-2 size-4 animate-spin text-[var(--ai-accent)]" />
@@ -1051,9 +1033,8 @@ export function TheaterStage({
 
               {/* Khung 3 gạch đầu dòng tóm tắt */}
               <div
-                className={`grid transition-all duration-300 ease-out ${
-                  showAiSummary ? 'mt-3 grid-rows-[1fr]' : 'grid-rows-[0fr]'
-                }`}
+                className={`grid transition-all duration-300 ease-out ${showAiSummary ? 'mt-3 grid-rows-[1fr]' : 'grid-rows-[0fr]'
+                  }`}
               >
                 <div className="overflow-hidden">
                   <div className="rounded-xl border border-[var(--ai-accent)]/40 bg-[var(--bg-surface)] p-3">

@@ -72,7 +72,7 @@ function LoginGateContent() {
 
   const isSupabaseConfigured = Boolean(
     process.env.NEXT_PUBLIC_SUPABASE_URL &&
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
   );
 
   const supabase = useMemo(
@@ -104,11 +104,11 @@ function LoginGateContent() {
 
         const meta = user.user_metadata as
           | {
-              full_name?: string;
-              name?: string;
-              avatar_url?: string;
-              picture?: string;
-            }
+            full_name?: string;
+            name?: string;
+            avatar_url?: string;
+            picture?: string;
+          }
           | undefined;
 
         setSessionUser({
@@ -237,7 +237,7 @@ function LoginGateContent() {
       };
 
       if (payload.allowed) {
-        toast.success('Tài khoản đã được phê duyệt! Đang vào rạp phim...');
+        toast.success('Tài khoản đã được phê duyệt! Đang vào AniSub...');
         router.replace('/');
         router.refresh();
         return;
@@ -424,7 +424,7 @@ function LoginGateContent() {
                   <ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-500 dark:text-amber-400" />
                   <p className="text-xs leading-relaxed text-[var(--text-secondary)] text-pretty">
                     Tài khoản của bạn chưa có trong danh sách Whitelist. Gửi đơn
-                    ngay để Admin duyệt chỉ với 1 chạm.
+                    ngay để Admin duyệt cho bạn.
                   </p>
                 </div>
 
@@ -478,7 +478,7 @@ function LoginGateContent() {
           /* TRẠNG THÁI 1: Chưa đăng nhập */
           <div className="mt-6">
             <p className="text-sm leading-relaxed text-[var(--text-secondary)] text-pretty">
-              Rạp chiếu phim hoạt hình cá nhân hóa từ kênh đăng ký YouTube của
+              Website xem phim cá nhân hóa từ kênh đăng ký YouTube của
               bạn.
             </p>
 
@@ -517,7 +517,7 @@ function LoginGateContent() {
               <Lock className="mt-0.5 size-4 shrink-0 text-[var(--accent-primary)]" />
               <div className="text-xs leading-relaxed text-[var(--text-secondary)] text-pretty">
                 <p className="font-medium text-[var(--text-primary)]">
-                  Quyền chỉ đọc YouTube (youtube.readonly)
+                  Quyền chỉ đọc YouTube
                 </p>
                 <p className="mt-0.5">
                   Chỉ dùng để đồng bộ danh sách kênh bạn đã đăng ký và xác minh
