@@ -199,10 +199,14 @@ export function AiCinemaInsightPanel({
     setChatInput('');
     setIsSendingChat(true);
 
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 16000);
+
     try {
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           videoId: video.video_id,
           videoTitle: video.title,
@@ -229,9 +233,10 @@ export function AiCinemaInsightPanel({
         { role: 'assistant', content: payload.reply! },
       ]);
     } catch {
-      toast.error('Lỗi kết nối khi gửi câu hỏi tới Trợ lý AI.');
+      toast.error('Trợ lý AI phản hồi quá hạn hoặc mất kết nối, vui lòng thử lại.');
       setMessages(messages);
     } finally {
+      window.clearTimeout(timeoutId);
       setIsSendingChat(false);
     }
   };

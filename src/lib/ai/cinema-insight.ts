@@ -6,10 +6,12 @@ import type {
   CommentSentiment,
 } from '@/types/ai-insight';
 
-const MAX_TRANSCRIPT_CHARS = 4800;
-const MAX_COMMENTS_CHARS = 1800;
-const MAX_PROMPT_CHARS = 7800;
-const MAX_SAMPLED_SEGMENTS = 900;
+const MAX_TRANSCRIPT_CHARS = 3500;
+const MAX_COMMENTS_COUNT = 25;
+const MAX_COMMENT_TEXT_CHARS = 180;
+const MAX_COMMENTS_CHARS = 1500;
+const MAX_PROMPT_CHARS = 5800;
+const MAX_SAMPLED_SEGMENTS = 600;
 
 interface CaptionTrack {
   baseUrl?: string;
@@ -111,7 +113,7 @@ async function fetchCaptionTracksForVideo(
           },
         }),
         cache: 'no-store',
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(2500),
       },
     );
 
@@ -143,7 +145,7 @@ async function fetchCaptionTracksForVideo(
           'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
         },
         cache: 'no-store',
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(2500),
       },
     );
     if (!watchRes.ok) return [];
@@ -203,11 +205,11 @@ function buildCompactTimestampedTranscript(
     return fullText;
   }
 
-  // Giới hạn transcript tối đa ~4.800 ký tự (ĐẦU 1.8k + GIỮA 1.5k + CUỐI 1.5k) để tổng prompt
-  // luôn nằm gọn trong ngưỡng ~6.000-7.800 ký tự, giúp phim 11-12 tiếng xử lý trong 2-3 giây.
-  const headLen = 1800;
-  const midLen = 1500;
-  const tailLen = 1500;
+  // Giới hạn transcript tối đa ~3.500 ký tự (ĐẦU 1.3k + GIỮA 1.1k + CUỐI 1.1k) để tổng prompt
+  // nằm dưới ~1.500 tokens, giúp gemini-2.5-flash không chạm ngưỡng TPM 429 và trả JSON trong 1.5-2.5s.
+  const headLen = 1300;
+  const midLen = 1100;
+  const tailLen = 1100;
   const midStart = Math.max(
     headLen,
     Math.floor((fullText.length - midLen) / 2),
@@ -247,7 +249,7 @@ export async function fetchYouTubeTranscript(videoId: string): Promise<{
     // Ưu tiên JSON3
     const jsonRes = await fetch(jsonUrl, {
       cache: 'no-store',
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(3000),
     });
 
     if (jsonRes.ok) {
@@ -279,7 +281,7 @@ export async function fetchYouTubeTranscript(videoId: string): Promise<{
     if (segments.length === 0) {
       const xmlRes = await fetch(baseUrl, {
         cache: 'no-store',
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(3000),
       });
       if (xmlRes.ok) {
         const xml = await xmlRes.text();
@@ -313,7 +315,7 @@ const SPAM_COMMENT_RE =
 
 /**
  * Nguồn 3: Quét bình luận thật từ YouTube Data API v3 (`commentThreads`).
- * Lọc bỏ spam/link rác, giữ tối đa 55 bình luận chất lượng kèm likeCount.
+ * Lọc bỏ spam/link rác, sắp xếp theo lượt like giảm dần và chỉ giữ tối đa 25 bình luận nhiều like nhất (mỗi bình luận <= 180 ký tự).
  * Fallback an toàn khi video tắt bình luận hoặc thiếu API key.
  */
 export async function fetchYouTubeComments(videoId: string): Promise<{
@@ -330,13 +332,13 @@ export async function fetchYouTubeComments(videoId: string): Promise<{
     url.searchParams.set('part', 'snippet');
     url.searchParams.set('videoId', videoId);
     url.searchParams.set('order', 'relevance');
-    url.searchParams.set('maxResults', '60');
+    url.searchParams.set('maxResults', '45');
     url.searchParams.set('textFormat', 'plainText');
     url.searchParams.set('key', apiKey);
 
     const res = await fetch(url.toString(), {
       cache: 'no-store',
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(3000),
     });
 
     if (!res.ok) {
@@ -375,17 +377,19 @@ export async function fetchYouTubeComments(videoId: string): Promise<{
       filtered.push({
         author: (snip?.authorDisplayName || 'Khán giả YouTube')
           .replace(/^@/, '')
-          .slice(0, 48),
-        text: compact.slice(0, 320),
+          .slice(0, 40),
+        text: compact.slice(0, MAX_COMMENT_TEXT_CHARS),
         likes: Math.max(0, Number(snip?.likeCount) || 0),
       });
-
-      if (filtered.length >= 55) break;
     }
 
+    const topLiked = filtered
+      .sort((a, b) => b.likes - a.likes)
+      .slice(0, MAX_COMMENTS_COUNT);
+
     return {
-      comments: filtered,
-      hasComments: filtered.length > 0,
+      comments: topLiked,
+      hasComments: topLiked.length > 0,
     };
   } catch {
     return { comments: [], hasComments: false };
@@ -484,13 +488,16 @@ export async function generateCinemaInsightWithGemini(input: {
   comments: FetchedCommentItem[];
   hasComments: boolean;
 }): Promise<CinemaInsightData> {
+  const topComments = [...input.comments]
+    .sort((a, b) => b.likes - a.likes)
+    .slice(0, MAX_COMMENTS_COUNT);
+
   const rawCommentsBlock =
-    input.comments.length > 0
-      ? input.comments
-          .slice(0, 28)
+    topComments.length > 0
+      ? topComments
           .map(
             (c, idx) =>
-              `${idx + 1}. [${c.author} | 👍 ${c.likes}]: ${c.text.slice(0, 180)}`,
+              `${idx + 1}. [${c.author} | 👍 ${c.likes}]: ${c.text.slice(0, MAX_COMMENT_TEXT_CHARS)}`,
           )
           .join('\n')
       : '(Video hiện không có bình luận hoặc đã tắt bình luận)';
@@ -504,16 +511,16 @@ export async function generateCinemaInsightWithGemini(input: {
 Hãy phân tích chuyên sâu video dưới đây từ 3 nguồn dữ liệu THỰC TẾ (Metadata, Lời thoại/Phụ đề bên trong phim, và Bình luận khán giả YouTube) rồi trả về đúng JSON theo schema.
 
 === NGUỒN 1: METADATA PHIM ===
-- Tiêu đề: ${input.title.slice(0, 220)}
-- Kênh: ${(input.channelTitle || 'Không rõ').slice(0, 100)}
+- Tiêu đề: ${input.title.slice(0, 180)}
+- Kênh: ${(input.channelTitle || 'Không rõ').slice(0, 80)}
 - Thể loại: ${input.detectedGenre || 'Hoạt hình'}
 - Thời lượng: ${Math.round(input.durationSeconds / 60)} phút (${input.durationSeconds} giây)
-- Mô tả: ${(input.description || '(Không có mô tả)').slice(0, 600)}
+- Mô tả: ${(input.description || '(Không có mô tả)').slice(0, 400)}
 
 === NGUỒN 2: LỜI THOẠI / PHỤ ĐỀ TRONG PHIM (Có sẵn: ${input.hasTranscript ? 'CÓ' : 'KHÔNG'}) ===
 ${transcriptBlock}
 
-=== NGUỒN 3: BÌNH LUẬN THẬT CỦA KHÁN GIẢ YOUTUBE (${input.comments.length} bình luận) ===
+=== NGUỒN 3: BÌNH LUẬN THẬT CỦA KHÁN GIẢ YOUTUBE (${topComments.length} bình luận nhiều like nhất) ===
 ${commentsBlock}
 
 === YÊU CẦU PHÂN TÍCH NGHIÊM NGẶT (TIẾNG VIỆT TỰ NHIÊN) ===
@@ -529,7 +536,7 @@ ${commentsBlock}
 6. communityPros: 2-3 điểm cộng cụ thể được khán giả khen nhiều nhất (nếu không có bình luận thì nêu ưu điểm nổi bật dựa trên nội dung phim).
 7. communityCons: 1-2 điểm trừ hoặc lưu ý nhỏ thực tế từ bình luận (nếu không có phàn nàn rõ rệt thì ghi 1 nhận xét khách quan hữu ích cho người xem).
 8. featuredComments: Trích tối đa 3 bình luận đắt giá/thú vị nhất TỪ ĐÚNG DANH SÁCH NGUỒN 3 ở trên (giữ đúng tác giả, số likes, tóm gọn nếu quá dài và gắn sentiment 'positive' | 'mixed' | 'critical'). Nếu Nguồn 3 rỗng thì trả về mảng rỗng [].
-9. storyContext: Bản ghi nhớ chi tiết khoảng 1.200-2.000 ký tự tổng hợp đầy đủ tên nhân vật, phe phái, tình tiết quan trọng theo trình tự từ lời thoại (nếu có) và các luồng ý kiến nổi bật trong bình luận, để làm trí nhớ chính xác cho trợ lý Chat hỏi đáp ngay sau đó.`;
+9. storyContext: Bản ghi nhớ khoảng 900-1.400 ký tự tổng hợp đầy đủ tên nhân vật, phe phái, tình tiết quan trọng theo trình tự từ lời thoại (nếu có) và các luồng ý kiến nổi bật trong bình luận, để làm trí nhớ chính xác cho trợ lý Chat hỏi đáp ngay sau đó.`;
 
   const prompt = rawPrompt.slice(0, MAX_PROMPT_CHARS);
 

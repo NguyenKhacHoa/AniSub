@@ -6,6 +6,8 @@ import type {
   CinemaInsightData,
 } from '@/types/ai-insight';
 
+export const maxDuration = 30;
+
 export async function POST(request: Request) {
   const auth = await verifyWhitelistedUser();
   if (!auth.allowed || !auth.userId) {

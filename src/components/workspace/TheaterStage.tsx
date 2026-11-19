@@ -366,10 +366,14 @@ export function TheaterStage({
         setIsLoadingInsight(true);
       }
 
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 20000);
+
       try {
         const res = await fetch('/api/ai/summary', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({
             videoId: targetVideoId,
             title: video.title,
@@ -408,14 +412,22 @@ export function TheaterStage({
         if (forceRefresh) {
           toast.success('Đã quét lại lời thoại, bình luận & điểm số mới nhất!');
         }
-      } catch {
-        toast.error('Lỗi kết nối khi gọi Phân tích & Đánh giá AI.');
+      } catch (err) {
+        const isAbort =
+          err instanceof Error &&
+          (err.name === 'AbortError' || err.name === 'TimeoutError');
+        toast.error(
+          isAbort
+            ? 'Yêu cầu phân tích AI quá 20 giây, vui lòng bấm thử lại.'
+            : 'Lỗi kết nối khi gọi Phân tích & Đánh giá AI.',
+        );
         setInsightState((prev) =>
           prev.videoId === targetVideoId && !prev.data
             ? { ...prev, open: false }
             : prev,
         );
       } finally {
+        window.clearTimeout(timeoutId);
         setIsLoadingInsight(false);
         setIsRefreshingInsight(false);
       }

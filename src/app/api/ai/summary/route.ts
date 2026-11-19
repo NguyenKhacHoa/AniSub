@@ -9,6 +9,8 @@ import {
 import type { CinemaInsightData } from '@/types/ai-insight';
 import type { Json } from '@/types/database';
 
+export const maxDuration = 30;
+
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Fallback cache trong bộ nhớ server nếu chưa chạy ALTER TABLE thêm cột `insight_data`
@@ -61,65 +63,6 @@ export async function POST(request: Request) {
   }
 
   const forceRefresh = Boolean(body.forceRefresh);
-  const admin = createAdminClient();
-
-  // 1. Lấy metadata video + kiểm tra cache trên Supabase (cột `insight_data`, fallback nếu chưa có cột)
-  let dbVideo: {
-    video_id: string;
-    channel_id: string;
-    title: string;
-    description: string | null;
-    detected_genre: string | null;
-    duration_seconds: number;
-    insight_data?: unknown;
-  } | null = null;
-  let hasInsightColumn = true;
-
-  const withInsightRes = await admin
-    .from('videos')
-    .select(
-      'video_id, channel_id, title, description, detected_genre, duration_seconds, insight_data',
-    )
-    .eq('video_id', videoId)
-    .maybeSingle();
-
-  if (withInsightRes.error) {
-    hasInsightColumn = false;
-    const fallbackRes = await admin
-      .from('videos')
-      .select(
-        'video_id, channel_id, title, description, detected_genre, duration_seconds',
-      )
-      .eq('video_id', videoId)
-      .maybeSingle();
-    dbVideo = fallbackRes.data ?? null;
-  } else {
-    dbVideo = withInsightRes.data ?? null;
-  }
-
-  // Trả ngay từ Cache nếu còn hạn (< 7 ngày) và không bấm Quét lại
-  if (!forceRefresh) {
-    if (
-      dbVideo?.insight_data &&
-      isValidCachedInsight(dbVideo.insight_data) &&
-      isFreshCache(dbVideo.insight_data.analyzedAt)
-    ) {
-      return NextResponse.json({
-        videoId,
-        insight: dbVideo.insight_data,
-        cached: true,
-      });
-    }
-
-    const memCached = memoryInsightCache.get(videoId);
-    if (memCached && isFreshCache(memCached.analyzedAt)) {
-      return NextResponse.json({
-        videoId,
-        insight: memCached,
-        cached: true,
-      });
-    }
-  }
 
   if (!process.env.GEMINI_API_KEY?.trim()) {
     return NextResponse.json(
@@ -128,30 +71,92 @@ export async function POST(request: Request) {
     );
   }
 
-  // Lấy tên kênh từ DB nếu client không truyền lên
-  let channelTitle = body.channelTitle?.trim() || null;
-  if (!channelTitle && dbVideo?.channel_id) {
-    const { data: chRow } = await admin
-      .from('channels')
-      .select('title')
-      .eq('channel_id', dbVideo.channel_id)
-      .maybeSingle();
-    channelTitle = chRow?.title ?? null;
-  }
-
-  const resolvedTitle = dbVideo?.title || body.title?.trim() || videoId;
-  const resolvedDescription = dbVideo?.description ?? body.description ?? null;
-  const resolvedGenre = dbVideo?.detected_genre ?? body.detectedGenre ?? null;
-  const resolvedDuration =
-    dbVideo?.duration_seconds ?? body.durationSeconds ?? 0;
-
-  // 2. Thu thập song song Nguồn 2 (Transcript) và Nguồn 3 (Bình luận YouTube)
-  const [transcriptResult, commentsResult] = await Promise.all([
-    fetchYouTubeTranscript(videoId),
-    fetchYouTubeComments(videoId),
-  ]);
-
   try {
+    const admin = createAdminClient();
+
+    // 1. Lấy metadata video + kiểm tra cache trên Supabase (cột `insight_data`, fallback nếu chưa có cột)
+    let dbVideo: {
+      video_id: string;
+      channel_id: string;
+      title: string;
+      description: string | null;
+      detected_genre: string | null;
+      duration_seconds: number;
+      insight_data?: unknown;
+    } | null = null;
+    let hasInsightColumn = true;
+
+    const withInsightRes = await admin
+      .from('videos')
+      .select(
+        'video_id, channel_id, title, description, detected_genre, duration_seconds, insight_data',
+      )
+      .eq('video_id', videoId)
+      .maybeSingle();
+
+    if (withInsightRes.error) {
+      hasInsightColumn = false;
+      const fallbackRes = await admin
+        .from('videos')
+        .select(
+          'video_id, channel_id, title, description, detected_genre, duration_seconds',
+        )
+        .eq('video_id', videoId)
+        .maybeSingle();
+      dbVideo = fallbackRes.data ?? null;
+    } else {
+      dbVideo = withInsightRes.data ?? null;
+    }
+
+    // Trả ngay từ Cache nếu còn hạn (< 7 ngày) và không bấm Quét lại
+    if (!forceRefresh) {
+      if (
+        dbVideo?.insight_data &&
+        isValidCachedInsight(dbVideo.insight_data) &&
+        isFreshCache(dbVideo.insight_data.analyzedAt)
+      ) {
+        return NextResponse.json({
+          videoId,
+          insight: dbVideo.insight_data,
+          cached: true,
+        });
+      }
+
+      const memCached = memoryInsightCache.get(videoId);
+      if (memCached && isFreshCache(memCached.analyzedAt)) {
+        return NextResponse.json({
+          videoId,
+          insight: memCached,
+          cached: true,
+        });
+      }
+    }
+
+    // Lấy tên kênh từ DB nếu client không truyền lên
+    let channelTitle = body.channelTitle?.trim() || null;
+    if (!channelTitle && dbVideo?.channel_id) {
+      const { data: chRow } = await admin
+        .from('channels')
+        .select('title')
+        .eq('channel_id', dbVideo.channel_id)
+        .maybeSingle();
+      channelTitle = chRow?.title ?? null;
+    }
+
+    const resolvedTitle = dbVideo?.title || body.title?.trim() || videoId;
+    const resolvedDescription =
+      dbVideo?.description ?? body.description ?? null;
+    const resolvedGenre =
+      dbVideo?.detected_genre ?? body.detectedGenre ?? null;
+    const resolvedDuration =
+      dbVideo?.duration_seconds ?? body.durationSeconds ?? 0;
+
+    // 2. Thu thập song song Nguồn 2 (Transcript) và Nguồn 3 (Bình luận YouTube)
+    const [transcriptResult, commentsResult] = await Promise.all([
+      fetchYouTubeTranscript(videoId),
+      fetchYouTubeComments(videoId),
+    ]);
+
     // 3. Phân tích chuyên sâu với Gemini Structured JSON Output
     const insight = await generateCinemaInsightWithGemini({
       title: resolvedTitle,

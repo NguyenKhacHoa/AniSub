@@ -46,21 +46,37 @@ export function getGeminiClient(): GoogleGenAI {
   return geminiClientInstance;
 }
 
+export const GEMINI_PER_MODEL_TIMEOUT_MS = 4500;
+
 export function getGeminiErrorStatus(err: unknown): number | null {
   if (!err || typeof err !== 'object') return null;
   const e = err as {
+    name?: string;
     status?: number;
     code?: number;
     message?: string;
     error?: { code?: number; status?: string; message?: string };
   };
+  if (e.name === 'AbortError' || e.name === 'TimeoutError') {
+    return 504;
+  }
   if (typeof e.status === 'number') return e.status;
   if (typeof e.code === 'number') return e.code;
   if (typeof e.error?.code === 'number') return e.error.code;
 
   const combinedMsg =
-    `${e.message ?? ''} ${e.error?.status ?? ''} ${e.error?.message ?? ''}`.toUpperCase();
+    `${e.name ?? ''} ${e.message ?? ''} ${e.error?.status ?? ''} ${e.error?.message ?? ''}`.toUpperCase();
 
+  if (
+    combinedMsg.includes('ABORT') ||
+    combinedMsg.includes('TIMEOUT') ||
+    combinedMsg.includes('TIMED OUT') ||
+    combinedMsg.includes('DEADLINE_EXCEEDED') ||
+    combinedMsg.includes('408') ||
+    combinedMsg.includes('504')
+  ) {
+    return 504;
+  }
   if (
     combinedMsg.includes('503') ||
     combinedMsg.includes('UNAVAILABLE') ||
@@ -72,7 +88,8 @@ export function getGeminiErrorStatus(err: unknown): number | null {
   if (
     combinedMsg.includes('429') ||
     combinedMsg.includes('RESOURCE_EXHAUSTED') ||
-    combinedMsg.includes('RATE_LIMIT')
+    combinedMsg.includes('RATE_LIMIT') ||
+    combinedMsg.includes('QUOTA')
   ) {
     return 429;
   }
@@ -86,7 +103,7 @@ export function getGeminiErrorStatus(err: unknown): number | null {
   if (combinedMsg.includes('500') || combinedMsg.includes('INTERNAL')) {
     return 500;
   }
-  if (combinedMsg.includes('502') || combinedMsg.includes('504')) {
+  if (combinedMsg.includes('502')) {
     return 502;
   }
   return null;
@@ -96,6 +113,7 @@ export function isRetryableGeminiModelError(err: unknown): boolean {
   const status = getGeminiErrorStatus(err);
   return (
     status === 404 ||
+    status === 408 ||
     status === 429 ||
     status === 503 ||
     status === 500 ||
@@ -113,14 +131,14 @@ export interface CallGeminiWithFallbackOptions {
   config?: GenerateContentParameters['config'];
   models?: readonly string[];
   retry429DelayMs?: number;
+  perModelTimeoutMs?: number;
 }
 
 /**
  * Helper dùng chung gọi Gemini `generateContent` trên `v1beta`:
- * - Ưu tiên `models/gemini-2.5-flash:generateContent`.
- * - Nếu gặp lỗi 404 (Not Found), 503 (High Demand / Unavailable) hoặc 429 (Resource Exhausted),
- *   lập tức tự động chuyển sang `models/gemini-3.5-flash-lite:generateContent` -> `gemini-3.8-flash`
- *   để người dùng luôn nhận phản hồi mượt mà ngay cả giờ cao điểm.
+ * - Mỗi lần gọi model giới hạn tối đa 4.5 giây (`AbortSignal.timeout(4500)`).
+ * - Nếu quá 4.5s hoặc gặp lỗi 404/503/429, hủy ngay và nhảy sang model tiếp theo:
+ *   `gemini-2.5-flash` -> `gemini-3.5-flash-lite` -> `gemini-3.8-flash`.
  */
 export async function callGeminiWithFallback(
   options: CallGeminiWithFallbackOptions,
@@ -131,17 +149,38 @@ export async function callGeminiWithFallback(
       ? options.models
       : GEMINI_FALLBACK_MODELS;
   const retry429DelayMs = options.retry429DelayMs ?? 0;
+  const perModelTimeoutMs =
+    options.perModelTimeoutMs ?? GEMINI_PER_MODEL_TIMEOUT_MS;
 
   let lastError: unknown = null;
 
   for (let i = 0; i < models.length; i++) {
     const modelName = models[i];
+    const timeoutSignal = AbortSignal.timeout(perModelTimeoutMs);
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+
     try {
-      const response = await ai.models.generateContent({
-        model: modelName,
-        contents: options.contents,
-        config: options.config,
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          const timeoutErr = new Error(
+            `Model ${modelName} phản hồi quá ${perModelTimeoutMs}ms (Timeout).`,
+          );
+          timeoutErr.name = 'TimeoutError';
+          reject(timeoutErr);
+        }, perModelTimeoutMs);
       });
+
+      const response = await Promise.race([
+        ai.models.generateContent({
+          model: modelName,
+          contents: options.contents,
+          config: {
+            ...options.config,
+            abortSignal: timeoutSignal,
+          },
+        }),
+        timeoutPromise,
+      ]);
 
       const text = response.text?.trim();
       if (!text) {
@@ -162,13 +201,17 @@ export async function callGeminiWithFallback(
           await sleep(retry429DelayMs);
         } else {
           console.warn(
-            `[Gemini Fallback] Model ${modelName} gặp mã ${status ?? 'quá tải'} (404/503/429), lập tức chuyển sang ${models[i + 1]}...`,
+            `[Gemini Fallback] Model ${modelName} gặp mã ${status ?? 'timeout/quá tải'} (404/503/429/504), hủy ngay và chuyển sang ${models[i + 1]}...`,
           );
         }
         continue;
       }
 
       break;
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
     }
   }
 
