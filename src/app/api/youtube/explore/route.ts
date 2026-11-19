@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import { Type, type Schema } from '@google/genai';
 import { createAdminClient, createClient } from '@/lib/supabase/server';
 import { verifyWhitelistedUser } from '@/lib/auth/whitelist';
-import { getGeminiClient } from '@/lib/gemini/client';
+import { callGeminiWithFallback } from '@/lib/gemini/client';
 import {
   classifyVideoHeuristic,
   parseIso8601Duration,
@@ -13,7 +13,6 @@ import type { Json } from '@/types/database';
 
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 const MAX_EXPLORE_PAGES = 10;
-const EXPLORE_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'] as const;
 
 interface CachedExplorePayload {
   keywords: string[];
@@ -124,7 +123,6 @@ async function generateExploreKeywords(
       : defaultKeywords;
   }
 
-  const ai = getGeminiClient();
   const schema: Schema = {
     type: Type.OBJECT,
     properties: {
@@ -158,33 +156,27 @@ Yêu cầu:
 - Trả về đúng 3 cụm từ khóa tiếng Việt ngắn gọn (4–8 từ mỗi cụm), tự nhiên như người dùng tìm phim trên YouTube (ví dụ: "phim AI tu tiên thuyết minh full", "truyện tranh 2D trọng sinh thuyết minh").
 - Không chứa tên kênh cụ thể để tìm ra được các kênh MỚI.${excludeNote}`;
 
-  for (const modelName of EXPLORE_MODELS) {
-    try {
-      const response = await ai.models.generateContent({
-        model: modelName,
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: schema,
-          temperature: excludeKeywords.length > 0 ? 0.85 : 0.5,
-        },
-      });
+  try {
+    const { text: raw } = await callGeminiWithFallback({
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: schema,
+        temperature: excludeKeywords.length > 0 ? 0.85 : 0.5,
+      },
+    });
 
-      const raw = response.text?.trim();
-      if (!raw) continue;
+    const parsed = JSON.parse(raw) as { keywords?: string[] };
+    const cleaned = (parsed.keywords ?? [])
+      .map((k) => k.trim())
+      .filter((k) => k.length > 0 && !excludeKeywords.includes(k))
+      .slice(0, 3);
 
-      const parsed = JSON.parse(raw) as { keywords?: string[] };
-      const cleaned = (parsed.keywords ?? [])
-        .map((k) => k.trim())
-        .filter((k) => k.length > 0 && !excludeKeywords.includes(k))
-        .slice(0, 3);
-
-      if (cleaned.length > 0) {
-        return cleaned;
-      }
-    } catch (err) {
-      console.error(`[AniSub Explore] Lỗi sinh từ khóa (${modelName}):`, err);
+    if (cleaned.length > 0) {
+      return cleaned;
     }
+  } catch (err) {
+    console.error('[AniSub Explore] Lỗi sinh từ khóa:', err);
   }
 
   const unusedFallbacks = FALLBACK_EXPANDED_KEYWORDS[dominantGenre].filter(

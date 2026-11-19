@@ -1,6 +1,5 @@
 import { Type, type Schema } from '@google/genai';
-import { getGeminiClient } from '@/lib/gemini/client';
-import { GEMINI_VISION_MODELS } from '@/lib/ai/classifier';
+import { callGeminiWithFallback } from '@/lib/gemini/client';
 import type {
   CinemaChatMessage,
   CinemaInsightData,
@@ -50,22 +49,6 @@ function decodeHtmlEntities(input: string): string {
       const code = Number(num);
       return Number.isFinite(code) ? String.fromCharCode(code) : '';
     });
-}
-
-function getErrorStatus(err: unknown): number | null {
-  if (!err || typeof err !== 'object') return null;
-  const e = err as { status?: number; code?: number; message?: string };
-  if (typeof e.status === 'number') return e.status;
-  if (typeof e.code === 'number') return e.code;
-  if (typeof e.message === 'string') {
-    if (e.message.includes('429') || e.message.includes('RESOURCE_EXHAUSTED')) {
-      return 429;
-    }
-    if (e.message.includes('404') || e.message.includes('NOT_FOUND')) {
-      return 404;
-    }
-  }
-  return null;
 }
 
 function selectPreferredCaptionTrack(tracks: CaptionTrack[]): CaptionTrack | null {
@@ -485,8 +468,6 @@ export async function generateCinemaInsightWithGemini(input: {
   comments: FetchedCommentItem[];
   hasComments: boolean;
 }): Promise<CinemaInsightData> {
-  const ai = getGeminiClient();
-
   const commentsBlock =
     input.comments.length > 0
       ? input.comments
@@ -532,115 +513,90 @@ ${commentsBlock}
 8. featuredComments: Trích tối đa 3 bình luận đắt giá/thú vị nhất TỪ ĐÚNG DANH SÁCH NGUỒN 3 ở trên (giữ đúng tác giả, số likes, tóm gọn nếu quá dài và gắn sentiment 'positive' | 'mixed' | 'critical'). Nếu Nguồn 3 rỗng thì trả về mảng rỗng [].
 9. storyContext: Bản ghi nhớ chi tiết khoảng 1.500-2.500 ký tự tổng hợp đầy đủ tên nhân vật, phe phái, tình tiết quan trọng theo trình tự từ lời thoại (nếu có) và các luồng ý kiến nổi bật trong bình luận, để làm trí nhớ chính xác cho trợ lý Chat hỏi đáp ngay sau đó.`;
 
-  let lastError: unknown = null;
+  const { text: raw } = await callGeminiWithFallback({
+    contents: prompt,
+    config: {
+      responseMimeType: 'application/json',
+      responseSchema: INSIGHT_RESPONSE_SCHEMA,
+      temperature: 0.25,
+    },
+  });
 
-  for (let i = 0; i < GEMINI_VISION_MODELS.length; i++) {
-    const modelName = GEMINI_VISION_MODELS[i];
-    try {
-      const response = await ai.models.generateContent({
-        model: modelName,
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: INSIGHT_RESPONSE_SCHEMA,
-          temperature: 0.25,
-        },
-      });
+  const parsed = JSON.parse(raw) as Partial<CinemaInsightData>;
 
-      const raw = response.text?.trim();
-      if (!raw) continue;
+  const metrics = {
+    plot: clampScore(parsed.metrics?.plot, 76),
+    visuals: clampScore(parsed.metrics?.visuals, 78),
+    audio: clampScore(parsed.metrics?.audio, 75),
+    pacing: clampScore(parsed.metrics?.pacing, 76),
+  };
 
-      const parsed = JSON.parse(raw) as Partial<CinemaInsightData>;
+  const avgFallback = Math.round(
+    (metrics.plot + metrics.visuals + metrics.audio + metrics.pacing) / 4,
+  );
 
-      const metrics = {
-        plot: clampScore(parsed.metrics?.plot, 76),
-        visuals: clampScore(parsed.metrics?.visuals, 78),
-        audio: clampScore(parsed.metrics?.audio, 75),
-        pacing: clampScore(parsed.metrics?.pacing, 76),
-      };
+  const featuredComments =
+    input.comments.length > 0 && Array.isArray(parsed.featuredComments)
+      ? parsed.featuredComments
+          .filter((c) => c && typeof c.text === 'string' && c.text.trim())
+          .slice(0, 3)
+          .map((c) => ({
+            author: String(c.author || 'Khán giả YouTube').slice(0, 50),
+            text: String(c.text).trim().slice(0, 260),
+            likes: Math.max(0, Math.round(Number(c.likes) || 0)),
+            sentiment: sanitizeSentiment(c.sentiment),
+          }))
+      : [];
 
-      const avgFallback = Math.round(
-        (metrics.plot + metrics.visuals + metrics.audio + metrics.pacing) / 4,
-      );
+  const highlights = Array.isArray(parsed.highlights)
+    ? parsed.highlights
+        .filter(
+          (h) =>
+            h && typeof h.description === 'string' && h.description.trim(),
+        )
+        .slice(0, 3)
+        .map((h) => ({
+          time: input.hasTranscript ? String(h.time || '').trim() : '',
+          description: String(h.description).trim(),
+        }))
+    : [];
 
-      const featuredComments =
-        input.comments.length > 0 && Array.isArray(parsed.featuredComments)
-          ? parsed.featuredComments
-              .filter((c) => c && typeof c.text === 'string' && c.text.trim())
-              .slice(0, 3)
-              .map((c) => ({
-                author: String(c.author || 'Khán giả YouTube').slice(0, 50),
-                text: String(c.text).trim().slice(0, 260),
-                likes: Math.max(0, Math.round(Number(c.likes) || 0)),
-                sentiment: sanitizeSentiment(c.sentiment),
-              }))
-          : [];
-
-      const highlights = Array.isArray(parsed.highlights)
-        ? parsed.highlights
-            .filter(
-              (h) =>
-                h && typeof h.description === 'string' && h.description.trim(),
-            )
-            .slice(0, 3)
-            .map((h) => ({
-              time: input.hasTranscript ? String(h.time || '').trim() : '',
-              description: String(h.description).trim(),
-            }))
-        : [];
-
-      return {
-        overallScore: clampScore(parsed.overallScore, avgFallback),
-        verdictLabel:
-          parsed.verdictLabel?.trim() ||
-          (avgFallback >= 80
-            ? 'Đáng cày ngay'
-            : avgFallback >= 65
-              ? 'Giải trí ổn áp'
-              : 'Kén người xem'),
-        metrics,
-        overview:
-          parsed.overview?.trim() ||
-          'Chưa đủ dữ liệu chi tiết để tóm tắt sâu, mời bạn xem trực tiếp tập phim.',
-        highlights,
-        communityPros: Array.isArray(parsed.communityPros)
-          ? parsed.communityPros
-              .map((s) => String(s).trim())
-              .filter(Boolean)
-              .slice(0, 3)
-          : [],
-        communityCons: Array.isArray(parsed.communityCons)
-          ? parsed.communityCons
-              .map((s) => String(s).trim())
-              .filter(Boolean)
-              .slice(0, 2)
-          : [],
-        featuredComments,
-        analyzedCommentCount: input.comments.length,
-        hasTranscript: input.hasTranscript,
-        hasComments: input.hasComments,
-        storyContext:
-          parsed.storyContext?.trim().slice(0, 3500) ||
-          parsed.overview?.trim() ||
-          '',
-        analyzedAt: new Date().toISOString(),
-      };
-    } catch (err) {
-      lastError = err;
-      const status = getErrorStatus(err);
-      if (
-        (status === 429 || status === 404) &&
-        i < GEMINI_VISION_MODELS.length - 1
-      ) {
-        continue;
-      }
-      break;
-    }
-  }
-
-  throw lastError instanceof Error
-    ? lastError
-    : new Error('Không thể phân tích tập phim bằng Gemini AI lúc này.');
+  return {
+    overallScore: clampScore(parsed.overallScore, avgFallback),
+    verdictLabel:
+      parsed.verdictLabel?.trim() ||
+      (avgFallback >= 80
+        ? 'Đáng cày ngay'
+        : avgFallback >= 65
+          ? 'Giải trí ổn áp'
+          : 'Kén người xem'),
+    metrics,
+    overview:
+      parsed.overview?.trim() ||
+      'Chưa đủ dữ liệu chi tiết để tóm tắt sâu, mời bạn xem trực tiếp tập phim.',
+    highlights,
+    communityPros: Array.isArray(parsed.communityPros)
+      ? parsed.communityPros
+          .map((s) => String(s).trim())
+          .filter(Boolean)
+          .slice(0, 3)
+      : [],
+    communityCons: Array.isArray(parsed.communityCons)
+      ? parsed.communityCons
+          .map((s) => String(s).trim())
+          .filter(Boolean)
+          .slice(0, 2)
+      : [],
+    featuredComments,
+    analyzedCommentCount: input.comments.length,
+    hasTranscript: input.hasTranscript,
+    hasComments: input.hasComments,
+    storyContext:
+      parsed.storyContext?.trim().slice(0, 3500) ||
+      parsed.overview?.trim() ||
+      '',
+    analyzedAt: new Date().toISOString(),
+  };
 }
 
 /**
@@ -653,7 +609,6 @@ export async function chatWithCinemaAssistant(input: {
   insightContext?: Partial<CinemaInsightData> | null;
   messages: CinemaChatMessage[];
 }): Promise<string> {
-  const ai = getGeminiClient();
   const ctx = input.insightContext;
 
   const commentsSnippet = (ctx?.featuredComments ?? [])
@@ -697,36 +652,13 @@ ${commentsSnippet || '(Không có)'}`;
     parts: [{ text: msg.content.slice(0, 1200) }],
   }));
 
-  let lastError: unknown = null;
+  const { text } = await callGeminiWithFallback({
+    contents,
+    config: {
+      systemInstruction,
+      temperature: 0.4,
+    },
+  });
 
-  for (let i = 0; i < GEMINI_VISION_MODELS.length; i++) {
-    const modelName = GEMINI_VISION_MODELS[i];
-    try {
-      const response = await ai.models.generateContent({
-        model: modelName,
-        contents,
-        config: {
-          systemInstruction,
-          temperature: 0.4,
-        },
-      });
-
-      const reply = response.text?.trim();
-      if (reply) return reply;
-    } catch (err) {
-      lastError = err;
-      const status = getErrorStatus(err);
-      if (
-        (status === 429 || status === 404) &&
-        i < GEMINI_VISION_MODELS.length - 1
-      ) {
-        continue;
-      }
-      break;
-    }
-  }
-
-  throw lastError instanceof Error
-    ? lastError
-    : new Error('Trợ lý AI tạm thời quá tải, vui lòng thử lại sau giây lát.');
+  return text;
 }

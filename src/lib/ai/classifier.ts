@@ -1,12 +1,14 @@
 import { Type, type Schema } from '@google/genai';
-import { getGeminiClient } from '@/lib/gemini/client';
+import {
+  GEMINI_FALLBACK_MODELS,
+  GEMINI_PRIMARY_MODEL,
+  callGeminiWithFallback,
+  getGeminiClient,
+} from '@/lib/gemini/client';
 import { extractSeriesInfo, parseEpisodeInfo } from '@/lib/series-parser';
 import type { PrimaryGenreTag } from '@/types/workspace';
 
-export const GEMINI_VISION_MODELS = [
-  'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
-] as const;
+export const GEMINI_VISION_MODELS = GEMINI_FALLBACK_MODELS;
 
 const BATCH_CHUNK_SIZE = 4;
 const INTER_CHUNK_DELAY_MS = 2000;
@@ -482,11 +484,11 @@ export async function classifyVideosMultimodalBatch(
   };
 }
 
-export const GEMINI_SUMMARY_MODEL = 'gemini-2.5-flash' as const;
+export const GEMINI_SUMMARY_MODEL = GEMINI_PRIMARY_MODEL;
 
 /**
  * Tạo 3 gạch đầu dòng tóm tắt nội dung ngắn gọn, KHÔNG spoil cái kết
- * (có xoay vòng model dự phòng khi gặp 429/404).
+ * (dùng callGeminiWithFallback: ưu tiên gemini-3.8-flash -> fallback gemini-2.5-flash).
  */
 export async function generateVideoSummaryWithGemini(input: {
   title: string;
@@ -494,8 +496,6 @@ export async function generateVideoSummaryWithGemini(input: {
   detectedGenre: string | null;
   durationSeconds: number;
 }): Promise<string> {
-  const ai = getGeminiClient();
-
   const prompt = `Bạn là biên tập viên rạp chiếu phim AniSub. Hãy viết tóm tắt nhanh cho video sau bằng tiếng Việt gồm ĐÚNG 3 gạch đầu dòng ngắn gọn (mỗi dòng bắt đầu bằng "- "), hấp dẫn và TUYỆT ĐỐI KHÔNG tiết lộ cái kết (no spoiler).
 
 - Tiêu đề: ${input.title}
@@ -505,35 +505,12 @@ export async function generateVideoSummaryWithGemini(input: {
 
 Chỉ trả về đúng 3 dòng bắt đầu bằng "- ", không thêm lời mở đầu hay kết luận.`;
 
-  let lastError: unknown = null;
+  const { text } = await callGeminiWithFallback({
+    contents: prompt,
+    config: {
+      temperature: 0.4,
+    },
+  });
 
-  for (let i = 0; i < GEMINI_VISION_MODELS.length; i++) {
-    const modelName = GEMINI_VISION_MODELS[i];
-    try {
-      const response = await ai.models.generateContent({
-        model: modelName,
-        contents: prompt,
-        config: {
-          temperature: 0.4,
-        },
-      });
-
-      const text = response.text?.trim();
-      if (text) return text;
-    } catch (err) {
-      lastError = err;
-      const status = getErrorStatus(err);
-      if (
-        (status === 429 || status === 404) &&
-        i < GEMINI_VISION_MODELS.length - 1
-      ) {
-        continue;
-      }
-      break;
-    }
-  }
-
-  throw lastError instanceof Error
-    ? lastError
-    : new Error('Gemini không trả về nội dung tóm tắt.');
+  return text;
 }
