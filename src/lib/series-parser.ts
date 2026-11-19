@@ -1,5 +1,7 @@
 import {
   PRIMARY_GENRE_OPTIONS,
+  THEATRICAL_MOVIE_KEYWORDS_RE,
+  isTheatricalMovieVideo,
   type CinemaVideoItem,
   type PrimaryGenreTag,
 } from '@/types/workspace';
@@ -39,6 +41,16 @@ export interface SeriesGroup {
   hasNewEpisode: boolean;
   lastWatchedEpisode: SeriesEpisodeItem | null;
   recommendedEpisode: SeriesEpisodeItem;
+}
+
+/**
+ * Kiểm tra một Bộ phim (SeriesGroup) có thuộc nhóm Phim Chiếu Rạp / Movie / OVA / Special không
+ */
+export function isTheatricalSeries(series: SeriesGroup): boolean {
+  if (THEATRICAL_MOVIE_KEYWORDS_RE.test(series.seriesTitle)) {
+    return true;
+  }
+  return series.episodes.some((ep) => isTheatricalMovieVideo(ep.video));
 }
 
 /**

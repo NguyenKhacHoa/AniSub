@@ -23,6 +23,7 @@ import {
   PRIMARY_GENRE_OPTIONS,
   formatDuration,
   getProgressPercent,
+  isTheatricalMovieVideo,
   type CinemaVideoItem,
   type PrimaryGenreTag,
   type WorkspaceAuthStatus,
@@ -472,6 +473,13 @@ export function StructuredCinemaRows({
                       <Play className="ml-0.5 size-4 fill-current" />
                     </div>
                   </div>
+
+                  {isTheatricalMovieVideo(video) && (
+                    <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-md border border-amber-400/50 bg-black/85 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-amber-300 shadow-sm backdrop-blur-sm">
+                      <Clapperboard className="size-3 shrink-0 text-amber-400" />
+                      <span>CHIẾU RẠP</span>
+                    </span>
+                  )}
 
                   {onToggleWatchLater && (
                     <button

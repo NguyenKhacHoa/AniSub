@@ -18,6 +18,7 @@ import {
   type SeriesGroup,
 } from '@/lib/series-parser';
 import {
+  isTheatricalMovieVideo,
   type ChannelWithSelection,
   type CinemaVideoItem,
   type GenreFilter,
@@ -191,9 +192,11 @@ export function UnifiedCinemaWorkspace({
           ? 'watch_later'
           : videoType === 'episode'
             ? 'episode'
-            : videoType === 'full_movie'
-              ? 'full'
-              : 'all';
+            : videoType === 'theatrical'
+              ? 'theatrical'
+              : videoType === 'full_movie'
+                ? 'full'
+                : 'all';
 
   const saveCurrentTabScroll = useCallback(() => {
     const top =
@@ -240,6 +243,9 @@ export function UnifiedCinemaWorkspace({
       } else {
         if (!showTrailers && v.video_type === 'trailer') return false;
         if (videoType === 'episode' && v.video_type !== 'episode') return false;
+        if (videoType === 'theatrical' && !isTheatricalMovieVideo(v)) {
+          return false;
+        }
         if (videoType === 'full_movie' && v.video_type !== 'full_movie') {
           return false;
         }
@@ -680,13 +686,24 @@ export function UnifiedCinemaWorkspace({
   );
 
   const handleSubscribeChannel = useCallback(
-    async (channelId: string, channelTitle?: string) => {
-      setSubscribingChannelId(channelId);
+    async (
+      channelIdOrHandle: string,
+      channelTitle?: string,
+      genreTags?: PrimaryGenreTag[],
+    ) => {
+      const cleanTarget = channelIdOrHandle.trim();
+      if (!cleanTarget) return;
+      setSubscribingChannelId(cleanTarget);
       try {
         const res = await fetch('/api/youtube/subscribe', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ channelId, channelTitle }),
+          body: JSON.stringify({
+            channelId: cleanTarget,
+            handleOrUrl: cleanTarget,
+            channelTitle,
+            genreTags,
+          }),
         });
 
         const payload = (await res.json().catch(() => ({}))) as {
@@ -712,7 +729,7 @@ export function UnifiedCinemaWorkspace({
               },
             );
           } else {
-            toast.error(payload.error || 'Không thể đăng ký kênh này.');
+            toast.error(payload.error || 'Không thể thêm kênh này.');
           }
           return;
         }
@@ -722,10 +739,10 @@ export function UnifiedCinemaWorkspace({
         router.refresh();
 
         toast.success(
-          `Đã đăng ký "${payload.channelTitle || channelTitle || channelId}" & kéo trọn bộ ${payload.fetchedVideosCount ?? 0} video vào AniSub!`,
+          `Đã thêm "${payload.channelTitle || channelTitle || cleanTarget}" & đồng bộ ${payload.fetchedVideosCount ?? 0} video thật từ YouTube vào AniSub!`,
         );
       } catch {
-        toast.error('Lỗi kết nối khi đăng ký kênh YouTube.');
+        toast.error('Lỗi kết nối khi thêm kênh YouTube.');
       } finally {
         setSubscribingChannelId(null);
       }
@@ -1582,7 +1599,9 @@ export function UnifiedCinemaWorkspace({
                   ? `Danh sách Xem sau (${watchLaterList.length})`
                   : activeVideo
                     ? `Đề xuất cùng thể loại [${activeVideo.detected_genre ?? 'HH2D'}] & Tập tiếp theo`
-                    : undefined
+                    : videoType === 'theatrical'
+                      ? 'Phim Chiếu Rạp & Bản Điện Ảnh (Theatrical Movies / OVA)'
+                      : undefined
             }
             sectionSubtitle={
               viewMode === 'explore'
@@ -1591,7 +1610,9 @@ export function UnifiedCinemaWorkspace({
                   ? 'Các video bạn đã đánh dấu lưu lại để cày sau — bấm biểu tượng Bookmark để gỡ sau khi xem xong'
                   : activeVideo
                     ? 'Ưu tiên tập kế tiếp cùng bộ/kênh, theo sau là gợi ý cùng thể loại đã làm mới ngẫu nhiên'
-                    : undefined
+                    : videoType === 'theatrical'
+                      ? 'Tự động nhận diện Anime Movie, Bản điện ảnh chiếu rạp, OVA/Special hoặc phim lẻ từ 65 phút trở lên'
+                      : undefined
             }
             onSelectVideo={handleSelectVideo}
             onCycleVideoGenre={handleCycleVideoGenre}
@@ -1611,12 +1632,14 @@ export function UnifiedCinemaWorkspace({
         isSyncing={isSyncing}
         isReclassifyingAll={isReclassifyingAll}
         busyChannelId={busyChannelId}
+        quickAddingHandle={subscribingChannelId}
         onSyncFromYouTube={handleSyncFromYouTube}
         onReclassifyAll={handleReclassifyAll}
         onToggleChannel={handleToggleChannel}
         onToggleChannelGenreTag={handleToggleChannelGenreTag}
         onReclassifyChannel={handleReclassifyChannel}
         onLoadMoreChannelVideos={handleLoadMoreChannelVideos}
+        onQuickAddChannel={handleSubscribeChannel}
       />
 
       <WhitelistModal

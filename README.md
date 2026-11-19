@@ -48,28 +48,31 @@ AniSub là rạp chiếu phim riêng tư dành cho chủ sở hữu và nhóm b�
    - Sau khi Admin phê duyệt, bấm **"Kiểm tra lại trạng thái"** (hoặc tải lại trang) để vào xem phim ngay.
 5. *Lưu ý phiên Google:* Token YouTube của Google có thời hạn nhất định. Nếu bấm đồng bộ kênh hoặc đăng ký kênh mới thấy thông báo hết hạn phiên, chỉ cần bấm nút **"Đăng nhập lại"** trên thông báo để làm mới trong 2 giây.
 
-## 3. Thiết lập Kho Kênh & Phân loại `Phim AI` / `HH2D`
+## 3. Thiết lập Kho Kênh, Kênh Anime Bản Quyền & Phân loại `Phim AI` / `HH2D`
 
 1. Bấm biểu tượng **Kho Kênh** trên thanh điều hướng bên trái (hoặc thanh dưới cùng trên điện thoại).
-2. Ở cột trái, bấm **"Đồng bộ kênh từ YouTube"** để kéo toàn bộ danh sách kênh bạn đang theo dõi trên YouTube về AniSub.
-3. Gạt công tắc bật những kênh bạn muốn đưa vào rạp chiếu. Khi bật kênh, hệ thống tự động kéo trọn bộ lịch sử video từ Tập 1 đến Tập mới nhất.
+2. **Thêm nhanh Kênh Anime Bản Quyền Miễn Phí (Nhiều Movie Chiếu Rạp):**
+   - Ngay đầu cột trái có mục gợi ý 3 kênh Anime bản quyền chính hãng tại Việt Nam: **Muse Việt Nam** (`@MuseVietNam`), **Ani-One Vietnam** (`@AniOneVietnam`) và **POPS Anime** (`@POPSAnime`), cùng ô nhập `@handle` / URL kênh bất kỳ.
+   - Bấm **"Thêm nhanh"** 1 chạm để tự động phân giải kênh thật và đồng bộ toàn bộ video từ YouTube API vào AniSub.
+3. Hoặc bấm **"Đồng bộ kênh từ YouTube"** để kéo toàn bộ danh sách kênh bạn đang theo dõi trên YouTube về AniSub, rồi gạt công tắc bật những kênh bạn muốn đưa vào rạp chiếu.
 4. Ở cột phải (**Kênh đang kích hoạt**), gắn nhãn thể loại cho từng kênh bằng 2 nút Pill:
    - **Chọn 1 nhãn (`Phim AI` hoặc `HH2D`):** Gán thẳng 100% video của kênh theo nhãn đó.
-   - **Chọn cả 2 nhãn (`Phim AI` + `HH2D`):** Gemini Vision tự động phân tích ảnh bìa theo từng bộ phim (1 đại diện / 1 Series) để tách chuẩn xác `Phim AI` (đồ họa tả thực/3D AI không viền mực) và `HH2D` (tranh vẽ 2D/Manhua có nét viền lineart).
+   - **Chọn cả 2 nhãn (`Phim AI` + `HH2D`):** Gemini Vision tự động phân tích ảnh bìa theo từng bộ phim (1 đại diện / 1 Series) để tách chuẩn xác `Phim AI` (đồ họa tả thực/3D AI không viền mực) và `HH2D` (tranh vẽ 2D/Manhua có nét viền lineart), đồng thời nhận diện cờ `isMovie` cho các bản điện ảnh chiếu rạp.
 5. **Đổi tag 1 chạm lan truyền cả bộ:** Nếu thấy AI nhận diện nhầm một tập nào đó, chỉ cần bấm trực tiếp vào nhãn `Phim AI` / `HH2D` trên thẻ phim — AniSub sẽ tự động đổi tag và khóa thủ công cho **toàn bộ các tập cùng bộ phim đó**.
 
 ## 4. Cày phim chuẩn rạp chiếu trên Unified Cinema Workspace
 
-- **Chuyển Tab tức thì (0ms) & Giữ vị trí cuộn:** Toàn bộ kho phim được nạp sẵn trong bộ nhớ. Bạn có thể chuyển qua lại giữa **`Tất cả`**, **`Tập mới`** (lưới Thẻ Bộ Phim), **`Phim Full`**, **`Đang Cày Dở`** và **`Xem sau`** tức thì mà không bị tải lại hay mất vị trí đang cuộn.
-- **Bộ lọc nhanh & Sắp xếp thông minh:** Lọc theo **`Phim AI` / `HH2D`**, sắp xếp theo **`Mới nhất`**, **`Dài nhất`** (tìm nhanh bản tổng hợp nhiều giờ), **`Tên A-Z`**, hoặc bật nút **`Chưa xem`** để ẩn toàn bộ phim đã xem xong ($\ge 90\%$).
+- **Chuyển Tab tức thì (0ms) & Giữ vị trí cuộn:** Toàn bộ kho phim được nạp sẵn trong bộ nhớ. Bạn có thể chuyển qua lại giữa **`Tất cả`**, **`Phim Bộ`** (lưới Thẻ Bộ Phim), **`Phim Chiếu Rạp`** (tự động lọc Anime Movie / Bản điện ảnh / OVA / Special hoặc phim lẻ $\ge 65$ phút kèm badge **`CHIẾU RẠP`**), **`Phim Full`**, **`Đang Cày Dở`** và **`Xem sau`** tức thì mà không bị tải lại hay mất vị trí đang cuộn.
+- **Bộ lọc nhanh & Sắp xếp thông minh:** Lọc theo **`Phim AI` / `HH2D` / `Phim Chiếu Rạp`**, sắp xếp theo **`Mới nhất`**, **`Dài nhất`** (tìm nhanh bản tổng hợp nhiều giờ), **`Tên A-Z`**, hoặc bật nút **`Chưa xem`** để ẩn toàn bộ phim đã xem xong ($\ge 90\%$).
 - **Thanh "Xem Tiếp" (Continue Watching):** Nằm ngay đầu rạp chiếu (tối đa 6 phim gần nhất đang xem dở), hiển thị thời gian còn lại — bấm vào là tua thẳng đến đúng giây đang dở.
-- **⭐ Theo dõi & Ẩn bộ phim:** Tại tab **`Tập mới`** hoặc trong header Danh Sách Tập, bấm **`⭐ Theo dõi`** để ghim những bộ đang cày lên nhóm đầu tiên; bấm **`Ẩn`** để giấu những bộ không thích (có thể khôi phục qua nút *"Hiện X bộ đã ẩn"* ở cuối trang).
+- **⭐ Theo dõi & Ẩn bộ phim:** Tại tab **`Phim Bộ`** hoặc trong header Danh Sách Tập, bấm **`⭐ Theo dõi`** để ghim những bộ đang cày lên nhóm đầu tiên; bấm **`Ẩn`** để giấu những bộ không thích (có thể khôi phục qua nút *"Hiện X bộ đã ẩn"* ở cuối trang).
 - **Lưu Xem Sau (Bookmark):** Bấm biểu tượng **Bookmark** trên góc thẻ phim hoặc trên trình phát để lưu vào mục **`Xem sau`** trên thanh điều hướng.
-- **Trình phát `TheaterStage` thông minh:**
+- **Trình phát `TheaterStage` 2 cột & AI Cinema Insight:**
+  - **Bố cục 2 cột ngang hàng:** Cột trái giữ trình phát video cố định tầm nhìn; cột phải hiển thị **Bảng Phân Tích & Khung Chat AI** (hoặc **Danh Sách Tập Series Playlist**) với thanh cuộn độc lập.
+  - **AI Cinema Insight & Trợ lý Hỏi Đáp:** Tự động đọc lời thoại/phụ đề thực tế bên trong video (`Transcript` kèm mốc `[MM:SS]` bấm để tua nhanh), quét 25 bình luận nhiều like nhất từ YouTube, chấm điểm thang **100** (kèm 4 chỉ số *Cốt truyện, Hình ảnh, Âm thanh, Nhịp độ*), tổng hợp *Điểm cộng / Điểm trừ cộng đồng*, và cho phép **Chat hỏi đáp trực tiếp với AI** theo ngữ cảnh tập phim (cache 7 ngày trên Supabase).
   - **Tua bỏ Intro 1 chạm:** Các nút `+30s`, **`+60s (Bỏ Intro)`** (phím **`S`**), `+90s`.
   - **Khóa tốc độ phát (`1x` – `2x`):** Chọn tốc độ ưa thích một lần, AniSub tự lưu và giữ nguyên tốc độ đó cho mọi tập kế tiếp khi **Auto-Next**.
   - **Floating Mini-Player:** Khi đang xem mà cuộn xuống tìm phim khác, khung video tự thu nhỏ nổi góc dưới bên phải và phát liên tục không bị gián đoạn.
-  - **Tóm tắt nhanh bằng AI:** Bấm **"Tóm tắt AI"** để xem 3 ý chính không spoil trước khi cày.
   - **Điều khiển Media hệ thống:** Hỗ trợ phím Play/Pause/Next/Prev trên bàn phím và màn hình khóa điện thoại qua Web Media Session API.
 - **Cập nhật tập mới tự động:** Mỗi khi mở web sau $\ge 60$ phút, AniSub âm thầm quét tập mới từ các kênh bạn bật và báo nhẹ bằng Toast. Bạn cũng có thể bấm nút **"Cập nhật tập mới"** trên thanh Command Hub bất cứ lúc nào.
 
@@ -100,7 +103,7 @@ AniSub là rạp chiếu phim riêng tư dành cho chủ sở hữu và nhóm b�
 
 - **Framework:** Next.js 16 (App Router, React 19, TypeScript, Tailwind CSS v4)
 - **Database & Auth:** Supabase (PostgreSQL, Row Level Security, Google OAuth)
-- **AI Engine:** Google Gemini API (`@google/genai` trên `v1beta` — ưu tiên `gemini-2.5-flash`, dự phòng `gemini-2.5-flash-lite`)
+- **AI Engine:** Google Gemini API (`@google/genai` trên `v1beta` — chuỗi fallback tự động `gemini-2.5-flash` → `gemini-3.5-flash-lite` → `gemini-3.8-flash` với timeout 4.5s/model)
 - **Video & Metadata:** YouTube Data API v3 + YouTube IFrame Player API
 - **UI & Components:** Radix/Base UI, Lucide Icons, Sonner Toast, 4 bộ Theme CSS Variables (`midnight-void`, `deep-abyss`, `velvet-espresso`, `crisp-daylight`)
 

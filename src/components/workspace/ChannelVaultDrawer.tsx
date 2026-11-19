@@ -14,6 +14,8 @@ import {
   Sparkles,
   Check,
   History,
+  Clapperboard,
+  Plus,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,6 +27,38 @@ import {
   type PrimaryGenreTag,
 } from '@/types/workspace';
 
+interface LicensedSuggestedChannel {
+  handle: string;
+  title: string;
+  subtitle: string;
+  matchKeywords: string[];
+  defaultTags: PrimaryGenreTag[];
+}
+
+const LICENSED_ANIME_CHANNELS: LicensedSuggestedChannel[] = [
+  {
+    handle: '@MuseVietNam',
+    title: 'Muse Việt Nam',
+    subtitle: 'Anime bản quyền & Movie chiếu rạp Vietsub chính hãng',
+    matchKeywords: ['muse viet nam', 'muse việt nam', '@musevietnam'],
+    defaultTags: ['HH2D'],
+  },
+  {
+    handle: '@AniOneVietnam',
+    title: 'Ani-One Vietnam',
+    subtitle: 'Kho Anime & Movie điện ảnh bản quyền miễn phí',
+    matchKeywords: ['ani-one vietnam', 'anionevietnam', '@anionevietnam'],
+    defaultTags: ['HH2D'],
+  },
+  {
+    handle: '@POPSAnime',
+    title: 'POPS Anime',
+    subtitle: 'Anime thuyết minh & Vietsub bản quyền tại Việt Nam',
+    matchKeywords: ['pops anime', 'popsanime', '@popsanime'],
+    defaultTags: ['HH2D'],
+  },
+];
+
 interface ChannelVaultDrawerProps {
   open: boolean;
   onClose: () => void;
@@ -33,12 +67,18 @@ interface ChannelVaultDrawerProps {
   isSyncing: boolean;
   isReclassifyingAll?: boolean;
   busyChannelId?: string | null;
+  quickAddingHandle?: string | null;
   onSyncFromYouTube: () => void;
   onReclassifyAll: () => void;
   onToggleChannel: (channelId: string, nextSelected: boolean) => void;
   onToggleChannelGenreTag: (channelId: string, tag: PrimaryGenreTag) => void;
   onReclassifyChannel: (channelId: string) => void;
   onLoadMoreChannelVideos: (channelId: string) => void;
+  onQuickAddChannel?: (
+    handleOrUrl: string,
+    channelTitle?: string,
+    genreTags?: PrimaryGenreTag[],
+  ) => Promise<void> | void;
 }
 
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
@@ -51,14 +91,17 @@ export function ChannelVaultDrawer({
   isSyncing,
   isReclassifyingAll = false,
   busyChannelId = null,
+  quickAddingHandle = null,
   onSyncFromYouTube,
   onReclassifyAll,
   onToggleChannel,
   onToggleChannelGenreTag,
   onReclassifyChannel,
   onLoadMoreChannelVideos,
+  onQuickAddChannel,
 }: ChannelVaultDrawerProps) {
   const [drawerSearch, setDrawerSearch] = useState('');
+  const [quickAddInput, setQuickAddInput] = useState('');
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [channelAction, setChannelAction] = useState<{
     channelId: string;
@@ -237,10 +280,142 @@ export function ChannelVaultDrawer({
                 type="search"
                 value={drawerSearch}
                 onChange={(e) => setDrawerSearch(e.target.value)}
-                placeholder="Tìm kênh theo tên hoặc @handle..."
+                placeholder="Tìm kênh đã đồng bộ theo tên hoặc @handle..."
                 className="h-10 rounded-xl border-[var(--border-subtle)] bg-[var(--bg-canvas)] pl-9 text-sm text-[var(--text-primary)]"
               />
             </div>
+
+            {/* Mục Gợi ý kênh Anime Bản Quyền Miễn Phí (Nhiều Movie Chiếu Rạp) */}
+            {onQuickAddChannel && (
+              <div className="mb-3 rounded-xl border border-amber-500/30 bg-[var(--bg-canvas)] p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text-primary)]">
+                    <Clapperboard className="size-3.5 shrink-0 text-amber-500 dark:text-amber-400" />
+                    <span>
+                      Gợi ý kênh Anime Bản Quyền Miễn Phí (Nhiều Movie Chiếu Rạp)
+                    </span>
+                  </div>
+                </div>
+
+                {/* Ô nhập @handle hoặc URL kênh để thêm trực tiếp */}
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const val = quickAddInput.trim();
+                    if (!val || Boolean(quickAddingHandle)) return;
+                    void onQuickAddChannel(val, undefined, ['HH2D']);
+                  }}
+                  className="mt-2 flex items-center gap-1.5"
+                >
+                  <Input
+                    type="text"
+                    value={quickAddInput}
+                    onChange={(e) => setQuickAddInput(e.target.value)}
+                    placeholder="Nhập @handle hoặc URL kênh (vd: @MuseVietNam)..."
+                    className="h-8 flex-1 rounded-lg border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 text-xs text-[var(--text-primary)]"
+                  />
+                  <Button
+                    type="submit"
+                    disabled={!quickAddInput.trim() || Boolean(quickAddingHandle)}
+                    className="h-8 shrink-0 rounded-lg bg-[var(--accent-primary)] px-2.5 text-xs font-semibold text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
+                  >
+                    {quickAddingHandle &&
+                    quickAddingHandle.toLowerCase() ===
+                      quickAddInput.trim().toLowerCase() ? (
+                      <Loader2 className="mr-1 size-3 animate-spin" />
+                    ) : (
+                      <Plus className="mr-1 size-3" />
+                    )}
+                    <span>Thêm kênh</span>
+                  </Button>
+                </form>
+
+                {/* Danh sách 3 kênh Anime Bản Quyền Chính Hãng */}
+                <div className="mt-2.5 grid grid-cols-1 gap-1.5">
+                  {LICENSED_ANIME_CHANNELS.map((item) => {
+                    const matchedExisting = channels.find((ch) => {
+                      const titleLower = ch.title.toLowerCase();
+                      const customLower = (ch.custom_url || '').toLowerCase();
+                      return item.matchKeywords.some(
+                        (kw) =>
+                          titleLower.includes(kw) || customLower.includes(kw),
+                      );
+                    });
+                    const isAlreadyActive = Boolean(
+                      matchedExisting?.is_selected,
+                    );
+                    const isThisAdding =
+                      quickAddingHandle === item.handle ||
+                      (matchedExisting &&
+                        busyChannelId === matchedExisting.channel_id);
+
+                    return (
+                      <div
+                        key={item.handle}
+                        className="flex items-center justify-between gap-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 py-2"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="truncate text-xs font-semibold text-[var(--text-primary)]">
+                              {item.title}
+                            </span>
+                            <span className="shrink-0 rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-secondary)]">
+                              {item.handle}
+                            </span>
+                          </div>
+                          <p className="truncate text-[11px] text-[var(--text-secondary)]">
+                            {item.subtitle}
+                          </p>
+                        </div>
+
+                        {isAlreadyActive ? (
+                          <span className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg border border-emerald-500/35 bg-emerald-500/12 px-2.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                            <Check className="size-3" />
+                            <span>Đã bật</span>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={
+                              Boolean(isThisAdding) ||
+                              Boolean(quickAddingHandle)
+                            }
+                            onClick={() => {
+                              setQuickAddInput(item.handle);
+                              if (matchedExisting) {
+                                onToggleChannel(
+                                  matchedExisting.channel_id,
+                                  true,
+                                );
+                              } else {
+                                void onQuickAddChannel(
+                                  item.handle,
+                                  item.title,
+                                  item.defaultTags,
+                                );
+                              }
+                            }}
+                            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-2.5 text-[11px] font-semibold text-[var(--accent-foreground)] transition-opacity hover:opacity-90 disabled:opacity-60 cursor-pointer"
+                          >
+                            {isThisAdding ? (
+                              <>
+                                <Loader2 className="size-3 animate-spin" />
+                                <span>Đang đồng bộ...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Plus className="size-3" />
+                                <span>Thêm nhanh</span>
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <div className="flex-1 overflow-y-auto pr-1">
               {filteredChannels.length === 0 ? (

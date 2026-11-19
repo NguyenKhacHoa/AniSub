@@ -21,26 +21,33 @@ Toàn bộ trải nghiệm rạp chiếu phim được hợp nhất trên **1 m�
 - **Vùng A — Trạng thái 1 (`Command Hub`, khi chưa chọn video):**
   - Ô tìm kiếm nhanh hỗ trợ phím tắt `Ctrl + K` / `⌘K`.
   - Chỉ báo trạng thái kết nối `WebSub Live`, nút xoay **"Cập nhật tập mới"** (Smart Delta Sync) ngay cạnh bộ đếm phim.
-  - Tabs lọc dạng video: `Tất cả` | `Tập mới` | `Phim Full`.
-  - Công tắc gạt `Hiện Trailer`, các pill lọc thể loại (`Tất cả thể loại`, `Phim AI`, `HH2D`), bộ chọn sắp xếp nhanh (**`Mới nhất`** | **`Dài nhất`** | **`Tên A-Z`**) và nút bật/tắt **`Chưa xem`** (ẩn phim đã xem $\ge 90\%$).
-  - **Thanh "Xem Tiếp" (`ContinueWatchingShelf`):** Hàng thẻ ngang tối đa 6 video xem dở (`> 30s`, `< 92%`) ngay dưới Command Hub ở tab `Tất cả` & `Tập mới`, gồm thanh tiến độ đáy ảnh, thời gian còn lại và nút xóa nhanh.
+  - Tabs lọc dạng video: `Tất cả` | `Phim Bộ` | `Phim Chiếu Rạp` (icon `Clapperboard`) | `Phim Full`.
+  - Công tắc gạt `Hiện Trailer`, các pill lọc danh mục/thể loại (`Tất cả thể loại`, `Phim AI`, `HH2D`, `Phim Chiếu Rạp`), bộ chọn sắp xếp nhanh (**`Mới nhất`** | **`Dài nhất`** | **`Tên A-Z`**) và nút bật/tắt **`Chưa xem`** (ẩn phim đã xem $\ge 90\%$).
+  - **Thanh "Xem Tiếp" (`ContinueWatchingShelf`):** Hàng thẻ ngang tối đa 6 video xem dở (`> 30s`, `< 92%`) ngay dưới Command Hub ở tab `Tất cả` & `Phim Bộ`, gồm thanh tiến độ đáy ảnh, thời gian còn lại và nút xóa nhanh.
 - **Vùng A — Trạng thái 2 (`Theater Stage`, khi bấm vào một khe phim hoặc Thẻ Bộ Phim):**
-  - Mở rộng mượt mà thành sân khấu trình chiếu 2 cột:
-    - *Cột trái:* Khung YouTube IFrame Player API `16:9` hỗ trợ đồng bộ tiến độ thực từng giây, **Auto-Next** khi `YT.PlayerState.ENDED`, **Full Screen (phím `F`)**, **Theater Wide Mode / Rạp rộng (phím `T`)**, nút **Bookmark Xem sau**, **Floating Mini-Player** (chuyển class `fixed bottom-4 right-4` qua `IntersectionObserver` không unmount player khi cuộn xuống kèm 3 nút Phóng to / Tập tiếp theo / Đóng), **Web Media Session API (`navigator.mediaSession`)**, và thanh công cụ nhanh bên dưới: **Tua Bỏ Intro (`+30s`, `+60s` phím `S`, `+90s`)** + **Khóa Tốc Độ Phát (`1x` – `2x`)**.
-    - *Cột phải (Video lẻ):* Thông tin tập đang chiếu, tiến độ thời gian thực, nút **Tập tiếp theo**, nút **Tóm tắt nhanh bằng AI** (hiển thị 3 gạch đầu dòng từ cache `ai_summary`), và nút **Đóng trình phát (`X` / `Esc`)**.
-    - *Cột phải (Chế độ Danh sách phát Bộ phim — Series Playlist):* Bảng cuộn dọc có chiều cao cố định khớp khung video, hiển thị tên bộ phim, tổng số tập, nút **`⭐ Theo dõi`**, **`Ẩn`**, nút đảo chiều (**Mới nhất** ↔ **Từ Tập 1**), đánh dấu nổi bật tập đang phát (`▶`), badge **`MỚI`**, và dấu tích đã xem (`✓`) đồng bộ từ `watch_progress`.
+  - Thiết kế bố cục 2 cột chuẩn rạp chiếu trên Desktop (`lg:grid-cols-12`, chiều cao cột phải khớp khung video, không làm trôi màn hình phim):
+    - *Cột trái (chiếm ~65–70% chiều rộng / 8 cột — hoặc 12 cột khi bật Rạp rộng `T`):* Khung YouTube IFrame Player API `16:9` cố định ở trên cùng, hỗ trợ đồng bộ tiến độ thực từng giây, **Auto-Next** khi `YT.PlayerState.ENDED`, **Full Screen (phím `F`)**, **Theater Wide Mode / Rạp rộng (phím `T`)**, nút **Bookmark Xem sau**, **Floating Mini-Player** (chuyển class `fixed bottom-4 right-4` qua `IntersectionObserver` không unmount player khi cuộn xuống kèm 3 nút Phóng to / Tập tiếp theo / Đóng), **Web Media Session API (`navigator.mediaSession`)**, thanh công cụ nhanh (**Tua Bỏ Intro `+30s`, `+60s` phím `S`, `+90s`** + **Khóa Tốc Độ Phát `1x` – `2x`**), và thanh thông tin tập đang chiếu bên dưới kèm nút bật/tắt **"Phân tích & Đánh giá AI"** (có `AbortController` timeout 20s).
+    - *Cột phải (chiếm ~30–35% chiều rộng / 4 cột, chiều cao cố định `lg:h-[540px]` với thanh cuộn nội bộ độc lập):*
+      1. **Chế độ AI Cinema Insight & Trợ lý Hỏi Đáp (`AiCinemaInsightPanel`):** Gồm 2 tab chuyển đổi mượt (**`Tổng quan & Điểm 100`** với vòng tròn điểm SVG `/100`, 4 thanh chỉ số Cốt truyện/Hình ảnh/Âm thanh/Nhịp độ, mốc thời gian `[MM:SS]` bấm để tua video, Điểm cộng/Điểm trừ cộng đồng, 3 bình luận tiêu biểu; và **`Chat với AI`** với 4 gợi ý hỏi nhanh + khung chat cuộn độc lập).
+      2. **Chế độ Danh sách phát Bộ phim (`Series Playlist`):** Bảng cuộn dọc hiển thị tên bộ phim, tổng số tập, nút **`⭐ Theo dõi`**, **`Ẩn`**, nút đảo chiều (**Mới nhất** ↔ **Từ Tập 1**), đánh dấu nổi bật tập đang phát (`▶`), badge **`MỚI`**, và dấu tích đã xem (`✓`).
 - **Vùng B — Dòng Chảy Nội Dung Cấu Trúc (`Structured Cinema Rows` & `Series Grid`):**
-  - Tại tab **`Tập mới`**: hiển thị **Lưới Thẻ Bộ Phim (`SeriesGrid`)** trượt dọc với hiệu ứng xếp lớp danh sách phát, ghim nhóm **`⭐ THEO DÕI`** lên đầu, badge góc trái **`🔥 TẬP MỚI`** hoặc **`Đã xem Tập X`**, badge góc phải **`≡ N tập`**, nút **`⭐ Theo dõi`** / **`Ẩn`** và nút khôi phục *"Hiện X bộ đã ẩn"* ở cuối trang.
-  - Tại các tab khác: hiển thị khung giữ chỗ cấu trúc sắc nét (không ảnh giả) cho 3 trạng thái thực tế hoặc lưới thẻ video thực từ **Full-Catalog In-Memory Store** (`allVideos`):
-    - Tải **100% toàn bộ video** trong kho 1 lần duy nhất khi mở ứng dụng (phân đoạn 1.000 dòng phía server), loại bỏ hoàn toàn phân trang nhỏ lẻ `limit=60` và Infinite Scroll phân mảnh.
-    - Chuyển Tab (`Tất cả`, `Tập mới`, `Phim Full`, `Đang cày dở`), đổi thể loại (`Phim AI` / `HH2D`) hoặc tìm kiếm đều lọc tức thì **0ms** bằng `useMemo` ngay trong bộ nhớ, đồng thời tự động **lưu và khôi phục vị trí cuộn của từng Tab (`scrollPositionsRef`)**.
-  - Tại không gian **Khám phá YouTube (`Explore`)**: gắn **Cuộn Vô Hạn (`IntersectionObserver` + `exploreSentinelRef`)** và nút dự phòng **"Khám phá thêm phim mới"** để tự động nối tiếp gợi ý mới qua `/api/youtube/explore?page=...` (lọc trùng `video_id`, có khóa chống gọi trùng `isLoadingMoreExplore`), kèm nút **"+ Đăng ký kênh"** 1 chạm chuyển ngay sang **"Đã theo dõi"**.
+  - Tự động hiển thị badge **`CHIẾU RẠP`** (icon `Clapperboard` màu vàng hổ phách trên nền tối) trên góc trái poster của các bộ phim / video thỏa điều kiện **Phim Chiếu Rạp** (chứa từ khóa `movie`, `chiếu rạp`, `the movie`, `bản điện ảnh`, `phim lẻ`, `full movie`, `ova`, `special`, `bản full` hoặc thời lượng $\ge 65$ phút).
+  - Tại tab **`Phim Bộ`**: hiển thị **Lưới Thẻ Bộ Phim (`SeriesGrid`)** trượt dọc với hiệu ứng xếp lớp danh sách phát, ghim nhóm **`⭐ THEO DÕI`** lên đầu, badge góc trái **`🔥 TẬP MỚI`** hoặc **`Đã xem Tập X`**, badge góc phải **`≡ N tập`**, nút **`⭐ Theo dõi`** / **`Ẩn`** và nút khôi phục *"Hiện X bộ đã ẩn"* ở cuối trang.
+  - Tại các tab khác (`Tất cả`, `Phim Chiếu Rạp`, `Phim Full`, `Đang cày dở`, `Xem sau`): hiển thị lưới thẻ video thực từ **Full-Catalog In-Memory Store** (`allVideos`), lọc tức thì **0ms** bằng `useMemo` và tự động **lưu/khôi phục vị trí cuộn của từng Tab (`scrollPositionsRef`)**.
+  - Tại không gian **Khám phá YouTube (`Explore`)**: gắn **Cuộn Vô Hạn (`IntersectionObserver` + `exploreSentinelRef`)** và nút dự phòng **"Khám phá thêm phim mới"** kèm nút **"+ Đăng ký kênh"** 1 chạm chuyển ngay sang **"Đã theo dõi"**.
 
 ### 1.3. Ngăn Kéo Quản Lý Kênh Trượt Ngang (`Slide-over Channel Vault Drawer`)
 - Trượt mượt từ cạnh phải vào (`500ms` vào / `350ms` ra) chiếm **75% chiều rộng màn hình** trên Desktop (`w-full lg:w-[75vw]`), làm mờ nền phía sau (`backdrop-blur-md`).
 - Chia 2 cột:
-  - *Cột trái:* Danh sách kênh đồng bộ từ YouTube, nút **"Đồng bộ kênh từ YouTube"** kèm bộ đếm cooldown 6 tiếng (`last_synced_at`) ở production và nút **"Quét lại nhãn AI"** toàn bộ.
-  - *Cột phải:* Danh sách kênh đang kích hoạt trên AniSub kèm cụm **2 nút Pill Multi-Tag** (`Phim AI`, `HH2D`, bắt buộc giữ tối thiểu 1 nhãn), nút **"+50 video cũ"** (kéo trang tiếp theo qua `next_page_token`) và nút **"Quét AI lại"** riêng cho từng kênh đa nhãn.
+  - *Cột trái:*
+    - Mục **"Gợi ý kênh Anime Bản Quyền Miễn Phí (Nhiều Movie Chiếu Rạp)"** với ô nhập `@handle` / URL kênh bất kỳ và nút **"Thêm nhanh"** 1 chạm cho 3 kênh chính hãng (**Muse Việt Nam** `@MuseVietNam`, **Ani-One Vietnam** `@AniOneVietnam`, **POPS Anime** `@POPSAnime`) để tự động phân giải Channel ID thật và đồng bộ video từ YouTube Data API v3.
+    - Danh sách kênh đồng bộ từ YouTube, nút **"Đồng bộ kênh từ YouTube"** kèm bộ đếm cooldown 6 tiếng (`last_synced_at`) ở production và nút **"Quét lại nhãn AI"** toàn bộ.
+  - *Cột phải:* Danh sách kênh đang kích hoạt trên AniSub kèm cụm **2 nút Pill Multi-Tag** (`Phim AI`, `HH2D`, bắt buộc giữ tối thiểu 1 nhãn), nút **"Đồng bộ đủ video"** và nút **"Quét AI lại"** riêng cho từng kênh đa nhãn.
+
+### 1.5. Hệ Thống Phản Hồi Tải Toàn Cục (Global Loading Feedback)
+- **Thanh tiến trình chuyển trang (`NextTopLoader` trong `src/app/layout.tsx`):** Màu `#14B8A6` (teal), cao `3px`, không hiển thị spinner góc màn hình, tự động kích hoạt khi điều hướng `<Link>` giữa `/`, `/admin`, `/login`.
+- **Màn hình khung xương (`src/app/loading.tsx` & `src/app/admin/loading.tsx`):** Skeleton UI đồng bộ 100% bố cục rạp phim và trang quản trị trong lúc Server Component tải dữ liệu.
+- **Trạng thái chờ trên nút bấm (Button Pending States):** Mọi nút hành động bất đồng bộ đều hiển thị spinner `Loader2 animate-spin`, đổi nhãn trạng thái và khóa `disabled` chống bấm đúp.
 
 ### 1.4. Cổng Đăng Nhập (`/login`), Luồng Xin Duyệt & Bảng Điều Khiển Admin (`/admin`)
 - **Màn hình `/login`:** Thiết kế tối giản theo phong cách rạp chiếu phim sử dụng đầy đủ CSS Variables của Theme hiện tại, kèm nút đổi nhanh Theme ở góc trên.

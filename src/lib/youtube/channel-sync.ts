@@ -22,6 +22,7 @@ type ClassificationRecord = {
   detectedGenre: PrimaryGenreTag;
   seriesName: string | null;
   episodeNumber: number | null;
+  isMovie?: boolean;
 };
 
 /**
@@ -61,6 +62,7 @@ function normalizeClassificationMap(
         Number.isFinite(item.episodeNumber)
           ? Math.floor(item.episodeNumber)
           : null,
+      isMovie: Boolean(item.isMovie),
     };
   };
 
@@ -445,6 +447,8 @@ async function persistAndClassifyFetchedVideos(options: {
 
   const insertPayload = brandNewVideos.map((v) => {
     const cls = classificationMap.get(v.video_id);
+    const resolvedVideoType =
+      cls?.isMovie && v.video_type !== 'trailer' ? 'full_movie' : v.video_type;
     return {
       video_id: v.video_id,
       channel_id: v.channel_id,
@@ -454,7 +458,7 @@ async function persistAndClassifyFetchedVideos(options: {
       published_at: v.published_at,
       duration_seconds: v.duration_seconds,
       is_short: v.is_short,
-      video_type: v.video_type,
+      video_type: resolvedVideoType,
       detected_genre: cls?.detectedGenre ?? primaryGenre,
       series_name: cls?.seriesName ?? null,
       episode_number: cls?.episodeNumber ?? null,

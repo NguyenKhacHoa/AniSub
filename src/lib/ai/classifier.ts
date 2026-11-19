@@ -8,7 +8,10 @@ import {
   isRetryableGeminiModelError,
 } from '@/lib/gemini/client';
 import { extractSeriesInfo, parseEpisodeInfo } from '@/lib/series-parser';
-import type { PrimaryGenreTag } from '@/types/workspace';
+import {
+  isTheatricalMovieVideo,
+  type PrimaryGenreTag,
+} from '@/types/workspace';
 
 export const GEMINI_VISION_MODELS = GEMINI_FALLBACK_MODELS;
 
@@ -33,6 +36,7 @@ export interface MultimodalClassificationResult {
   detectedGenre: PrimaryGenreTag;
   seriesName: string | null;
   episodeNumber: number | null;
+  isMovie?: boolean;
   confidence: number;
   source: 'fixed' | 'gemini' | 'fallback';
 }
@@ -70,7 +74,7 @@ Quy tắc đầu ra:
 - Mỗi video trong batch là 1 tập đại diện cho cả bộ phim (Series).
 - Trả về ĐÚNG 1 phần tử JSON cho mỗi videoId trong batch.
 - Chỉ được chọn \`detectedGenre\` nằm trong danh sách \`allowedTags\` được cung cấp ("Phim AI" hoặc "HH2D").
-- Trích xuất \`seriesName\` (tên bộ phim sạch, bỏ số tập và tên kênh) và \`episodeNumber\` (số nguyên hoặc null).`;
+- Trích xuất \`seriesName\` (tên bộ phim sạch, bỏ số tập và tên kênh), \`episodeNumber\` (số nguyên hoặc null), và cờ \`isMovie\` (true nếu đây là Anime Movie / Bản điện ảnh chiếu rạp / OVA / Special / Phim lẻ, ngược lại là false).`;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -190,6 +194,10 @@ Thumbnail attached: ${imagePart ? 'YES' : 'NO'}`,
           type: Type.INTEGER,
           nullable: true,
         },
+        isMovie: {
+          type: Type.BOOLEAN,
+          nullable: true,
+        },
         confidence: {
           type: Type.NUMBER,
         },
@@ -199,6 +207,7 @@ Thumbnail attached: ${imagePart ? 'YES' : 'NO'}`,
         'detectedGenre',
         'seriesName',
         'episodeNumber',
+        'isMovie',
         'confidence',
       ],
     },
@@ -232,6 +241,7 @@ Thumbnail attached: ${imagePart ? 'YES' : 'NO'}`,
         detectedGenre: PrimaryGenreTag;
         seriesName: string | null;
         episodeNumber: number | null;
+        isMovie?: boolean | null;
         confidence: number;
       }>;
 
@@ -239,8 +249,15 @@ Thumbnail attached: ${imagePart ? 'YES' : 'NO'}`,
         throw new Error(`Model ${modelName} không trả về mảng JSON hợp lệ.`);
       }
 
+      const chunkById = new Map(chunk.map((v) => [v.video_id, v]));
+
       for (const item of parsed) {
         if (item.videoId && allowedTags.includes(item.detectedGenre)) {
+          const matchedVideo = chunkById.get(item.videoId);
+          const isMovie =
+            Boolean(item.isMovie) ||
+            (matchedVideo ? isTheatricalMovieVideo(matchedVideo) : false);
+
           chunkMap.set(item.videoId, {
             videoId: item.videoId,
             detectedGenre: item.detectedGenre,
@@ -249,6 +266,7 @@ Thumbnail attached: ${imagePart ? 'YES' : 'NO'}`,
               typeof item.episodeNumber === 'number'
                 ? Math.floor(item.episodeNumber)
                 : null,
+            isMovie,
             confidence:
               typeof item.confidence === 'number'
                 ? Math.max(0, Math.min(1, item.confidence))
@@ -265,13 +283,14 @@ Thumbnail attached: ${imagePart ? 'YES' : 'NO'}`,
             detectedGenre: defaultTag,
             seriesName: null,
             episodeNumber: null,
+            isMovie: isTheatricalMovieVideo(video),
             confidence: 0.4,
             source: 'fallback',
           });
         }
         const res = chunkMap.get(video.video_id)!;
         console.log(
-          `[AI Classifier] (${modelName}) Series Rep: ${video.title} | Allowed: ${allowedTags.join(', ')} | Thumbnail loaded: ${Boolean(thumbnails[idx])} -> Result: ${res.detectedGenre}`,
+          `[AI Classifier] (${modelName}) Series Rep: ${video.title} | Allowed: ${allowedTags.join(', ')} | Thumbnail loaded: ${Boolean(thumbnails[idx])} -> Result: ${res.detectedGenre}${res.isMovie ? ' [CHIẾU RẠP]' : ''}`,
         );
       });
 
@@ -303,6 +322,7 @@ Thumbnail attached: ${imagePart ? 'YES' : 'NO'}`,
       detectedGenre: defaultTag,
       seriesName: null,
       episodeNumber: null,
+      isMovie: isTheatricalMovieVideo(video),
       confidence: 0,
       source: 'fallback',
     });
@@ -343,6 +363,7 @@ export async function classifyVideosMultimodalBatch(
         detectedGenre: fixedTag,
         seriesName: v.series_name ?? null,
         episodeNumber: parseEpisodeInfo(v.title, null).episodeStart,
+        isMovie: isTheatricalMovieVideo(v),
         confidence: 1,
         source: 'fixed',
       });
@@ -427,14 +448,28 @@ export async function classifyVideosMultimodalBatch(
       for (const member of group.members) {
         const isRep = member.video_id === rep.video_id;
         const parsedEp = parseEpisodeInfo(member.title, null).episodeStart;
+        const memberIsMovie =
+          Boolean(repRes.isMovie) || isTheatricalMovieVideo(member);
+        const baseSeriesName =
+          repRes.seriesName || member.series_name || group.seriesTitle || null;
+        const enrichedSeriesName =
+          memberIsMovie &&
+          baseSeriesName &&
+          !isTheatricalMovieVideo({
+            title: baseSeriesName,
+            duration_seconds: 0,
+          })
+            ? `${baseSeriesName} (Chiếu Rạp)`
+            : baseSeriesName;
+
         results.set(member.video_id, {
           videoId: member.video_id,
           detectedGenre: repRes.detectedGenre,
-          seriesName:
-            repRes.seriesName || member.series_name || group.seriesTitle || null,
+          seriesName: enrichedSeriesName,
           episodeNumber: isRep
             ? (repRes.episodeNumber ?? parsedEp)
             : parsedEp,
+          isMovie: memberIsMovie,
           confidence: repRes.confidence,
           source: repRes.source,
         });

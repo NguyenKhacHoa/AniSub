@@ -6,6 +6,7 @@ import {
   Radio,
   X,
   Compass,
+  Clapperboard,
   Film,
   RefreshCw,
   Sparkles,
@@ -222,6 +223,13 @@ export function CommandHub({
                   Phim Bộ
                 </TabsTrigger>
                 <TabsTrigger
+                  value="theatrical"
+                  className="inline-flex items-center gap-1.5 rounded-lg px-3 text-xs font-medium data-[state=active]:bg-[var(--accent-primary)] data-[state=active]:text-[var(--accent-foreground)] cursor-pointer"
+                >
+                  <Clapperboard className="size-3.5 shrink-0" />
+                  <span>Phim Chiếu Rạp</span>
+                </TabsTrigger>
+                <TabsTrigger
                   value="full_movie"
                   className="rounded-lg px-3 text-xs font-medium data-[state=active]:bg-[var(--accent-primary)] data-[state=active]:text-[var(--accent-foreground)] cursor-pointer"
                 >
@@ -242,7 +250,7 @@ export function CommandHub({
         )}
       </div>
 
-      {/* Hàng 2: 2 Pill Thể loại chuẩn ('Phim AI' | 'HH2D') hoặc Từ khóa AI đang săn ở chế độ Khám phá */}
+      {/* Hàng 2: Các Pill Thể loại & Danh mục ('Tất cả', 'Phim AI', 'HH2D', 'Phim Chiếu Rạp') hoặc Từ khóa AI đang săn ở chế độ Khám phá */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border-subtle)] pt-3">
         {isExplore ? (
           <div className="flex flex-wrap items-center gap-2">
@@ -298,6 +306,27 @@ export function CommandHub({
                 </button>
               );
             })}
+
+            {/* Pill lọc nhanh Phim Chiếu Rạp (Movie / Bản điện ảnh / OVA / >= 65 phút) */}
+            <button
+              type="button"
+              aria-pressed={videoType === 'theatrical'}
+              onClick={() =>
+                startFilterTransition(() =>
+                  onChangeVideoType(
+                    videoType === 'theatrical' ? 'all' : 'theatrical',
+                  ),
+                )
+              }
+              className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors cursor-pointer ${
+                videoType === 'theatrical'
+                  ? 'border-amber-500/45 bg-amber-500/15 text-amber-600 dark:text-amber-300 ring-1 ring-current'
+                  : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              <Clapperboard className="size-3.5 shrink-0 text-amber-500 dark:text-amber-400" />
+              <span>Phim Chiếu Rạp</span>
+            </button>
 
             {/* Bộ chọn Sắp xếp nhanh (Mới nhất / Dài nhất / Tên A-Z) */}
             {onChangeSortBy && (

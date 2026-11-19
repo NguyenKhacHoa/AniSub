@@ -2,6 +2,7 @@
 
 import React, { useMemo, useState } from 'react';
 import {
+  Clapperboard,
   ListVideo,
   Play,
   Flame,
@@ -15,7 +16,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { VideoThumbnail } from '@/components/workspace/VideoThumbnail';
 import { GENRE_DOT_STYLES, type SortOption } from '@/types/workspace';
-import type { SeriesGroup } from '@/lib/series-parser';
+import { isTheatricalSeries, type SeriesGroup } from '@/lib/series-parser';
 import type { UserSeriesStatus } from '@/types/database';
 
 interface SeriesGridProps {
@@ -175,12 +176,18 @@ export function SeriesGrid({
               </div>
             </div>
 
-            {/* Badge góc trái: ⭐ Theo dõi / 🔥 TẬP MỚI / Đã xem */}
+            {/* Badge góc trái: ⭐ Theo dõi / 🎬 CHIẾU RẠP / 🔥 TẬP MỚI / Đã xem */}
             <div className="absolute left-2 top-2 flex flex-wrap items-center gap-1">
               {isFollowing && (
                 <span className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-1.5 py-0.5 text-[11px] font-bold text-black shadow-sm">
                   <Star className="size-3 fill-current" />
                   <span>THEO DÕI</span>
+                </span>
+              )}
+              {isTheatricalSeries(series) && (
+                <span className="inline-flex items-center gap-1 rounded-md border border-amber-400/50 bg-black/85 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-amber-300 shadow-sm backdrop-blur-sm">
+                  <Clapperboard className="size-3 shrink-0 text-amber-400" />
+                  <span>CHIẾU RẠP</span>
                 </span>
               )}
               {series.hasNewEpisode ? (
