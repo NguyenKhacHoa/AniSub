@@ -6,6 +6,7 @@ import {
   fetchYouTubeTranscript,
   generateCinemaInsightWithGemini,
 } from '@/lib/ai/cinema-insight';
+import { formatFriendlyGeminiError } from '@/lib/gemini/client';
 import type { CinemaInsightData } from '@/types/ai-insight';
 import type { Json } from '@/types/database';
 
@@ -199,12 +200,9 @@ export async function POST(request: Request) {
     console.error('[POST /api/ai/summary] Lỗi phân tích Gemini:', err);
     return NextResponse.json(
       {
-        error:
-          err instanceof Error
-            ? `Không thể phân tích tập phim lúc này: ${err.message}`
-            : 'Không thể phân tích tập phim bằng Gemini AI lúc này.',
+        error: formatFriendlyGeminiError(err),
       },
-      { status: 500 },
+      { status: 503 },
     );
   }
 }

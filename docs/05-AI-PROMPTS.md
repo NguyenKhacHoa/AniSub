@@ -7,9 +7,12 @@ Sử dụng SDK chính thức `@google/genai` phía server trên endpoint `v1bet
   1. `gemini-2.5-flash` (ưu tiên 1 — ổn định, hỗ trợ JSON mode chuẩn)
   2. `gemini-3.5-flash-lite` (ưu tiên 2 — phản hồi cực nhanh, ít nghẽn)
   3. `gemini-3.8-flash` (ưu tiên 3 — dự phòng khi 2 model trên chạm rate limit)
-- **Timeout & Tự động xoay model (`callGeminiWithFallback`):**
+- **Timeout, Tự động xoay model & Retry khi `503` High Demand (`callGeminiWithFallback`):**
+  - Dùng chung một nguồn duy nhất cho cả `/api/ai/summary` và `/api/ai/chat`.
   - Mỗi lượt gọi model có `AbortSignal.timeout(4500)` kết hợp `Promise.race` (tối đa **4.5 giây**).
-  - Nếu gặp lỗi `404` (Not Found), `503` (High Demand / Unavailable), `429` (Resource Exhausted) hoặc quá `4.5s` (`504` Timeout), hệ thống lập tức hủy request hiện tại và chuyển sang model dự phòng kế tiếp.
+  - Nếu gặp lỗi `404` (Not Found), `503` (High Demand / Unavailable), `429` (Resource Exhausted) hoặc quá `4.5s` (`504` Timeout), hệ thống lập tức hủy request hiện tại và chuyển sang model dự phòng kế tiếp (`gemini-2.5-flash` $\rightarrow$ `gemini-3.5-flash-lite` $\rightarrow$ `gemini-3.8-flash`).
+  - **Auto-Retry 1 lần (`1200ms`):** Nếu toàn bộ chuỗi model trong lượt đầu gặp lỗi quá tải tạm thời (`503` / `429` / `504`), hệ thống tự động nghỉ ngắn `1200ms` (1.2 giây) rồi gọi lại `gemini-2.5-flash` thêm 1 lần nữa trước khi dừng.
+  - **Thông báo lỗi tiếng Việt thân thiện (`formatFriendlyGeminiError`):** Nếu sau khi retry vẫn quá tải, luôn trả về thông điệp *"Máy chủ AI Google đang quá tải tạm thời, bạn bấm gửi lại sau vài giây nhé!"*, tuyệt đối không hiển thị chuỗi JSON lỗi thô của Google ra giao diện.
 
 ## 2. Phân loại Đa Phương Thức Series-Aware Gemini Vision (`src/lib/ai/classifier.ts`)
 - **Áp dụng:** Chỉ chạy cho các video thuộc kênh bật **từ 2 nhãn trở lên** (`['Phim AI', 'HH2D']`) và **chưa kế thừa được nhãn** từ các tập cùng `(channel_id, seriesKey)` đã có trong DB (kênh 1 nhãn được gán thẳng 100%, và luôn bỏ qua các video đã khóa thủ công `is_manual_tag = true`).
@@ -20,7 +23,10 @@ Sử dụng SDK chính thức `@google/genai` phía server trên endpoint `v1bet
 - **Tiêu chí nhận diện thị giác (2 nhãn thể loại + cờ `isMovie` Phim Chiếu Rạp):**
   - **`Phim AI`:** Đồ họa tả thực, 3D AI rendering (Midjourney, Kling, Flux, Hailuo, Vidu, Sora...), ánh sáng volumetric/cinematic, da và tóc có độ khối mịn, **KHÔNG** có nét viền mực đen kiểu vẽ tay.
   - **`HH2D`:** Tranh vẽ 2D Manhua / Manhwa / Motion Comic / Anime 2D, tô màu mảng phẳng (cel-shading), **CÓ** đường viền nét vẽ (lineart) rõ ràng quanh nhân vật và bối cảnh truyện tranh.
-  - **`isMovie` (Phim Chiếu Rạp):** `true` nếu nội dung là Anime Movie / Bản điện ảnh chiếu rạp / OVA / Special / Phim lẻ (kết hợp cùng bộ lọc từ khóa `isTheatricalMovieVideo` và thời lượng `>= 3900s`).
+  - **`isMovie` (Phim Chiếu Rạp — Xác minh qua Google Search Grounding):**
+    - **Cấm tuyệt đối** tự gắn mác `Chiếu Rạp` dựa trên thời lượng (`duration >= 3900`) hoặc từ khóa chung (`full`, `bản full`, `trọn bộ`, `ova`, `special`).
+    - **Loại trừ cứng 100%:** Mọi video thuộc `Phim AI` hoặc tiêu đề chứa dấu hiệu tổng hợp/ghép tập (`giờ`, `tiếng`, `tập 1`, `trọn bộ`, `tổng hợp`, `review`, `tóm tắt`) đều trả về `isMovie = false`.
+    - Chỉ kích hoạt hàm `verifyTheatricalReleaseWithGoogleSearch` (gọi Gemini `v1beta` kèm **`tools: [{ googleSearch: {} }]`** / `google_search`) với các ứng viên có dấu hiệu bản điện ảnh thực thụ (`The Movie`, `Bản Điện Ảnh`, `Chiếu Rạp` hoặc thuộc kênh bản quyền *Muse Việt Nam*, *Ani-One Vietnam*, *POPS Anime*, *Bilibili*). Chỉ trả về `isTheatricalMovie: true` và gắn dấu xác minh `[CHIẾU RẠP]` vào DB khi kết quả tra cứu Google xác nhận đây đúng là phim chiếu rạp thật kèm `originalTitle` (tên tiếng Anh/Nhật gốc) và `releaseYear` (năm công chiếu rạp).
 - **Structured Output Schema (`Type.ARRAY`):**
   Trả về đúng 1 phần tử JSON cho mỗi `videoId`:
   `{ videoId, detectedGenre: 'Phim AI' | 'HH2D', seriesName: string | null, episodeNumber: integer | null, isMovie: boolean | null, confidence: number }`.

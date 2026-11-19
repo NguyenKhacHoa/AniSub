@@ -14,42 +14,119 @@ export type PrimaryGenreTag = GenreTag;
 export type SortOption = 'newest' | 'longest' | 'title_asc';
 
 /**
- * Từ khóa nhận diện tự động Phim Chiếu Rạp / Bản Điện Ảnh / Anime Movie / OVA / Special
+ * Dấu hiệu xác minh chính thức trong DB sau khi Gemini + Google Search Grounding
+ * xác nhận bộ phim là Anime Movie / Bản điện ảnh đã phát hành chiếu rạp (Theatrical Release).
  */
-export const THEATRICAL_MOVIE_KEYWORDS_RE =
-  /\b(the\s*movie|full\s*movie|anime\s*movie|movie|chiếu\s*rạp|chieu\s*rap|bản\s*điện\s*ảnh|ban\s*dien\s*anh|phim\s*điện\s*ảnh|phim\s*lẻ|phim\s*le|ova|oad|special|bản\s*full|ban\s*full)\b|劇場版/i;
-
-export const THEATRICAL_MIN_DURATION_SECONDS = 3900; // 65 phút
+export const VERIFIED_THEATRICAL_TAG = '[CHIẾU RẠP]' as const;
 
 /**
- * Kiểm tra một video có thuộc danh mục "Phim Chiếu Rạp" hay không:
- * 1. Tiêu đề, series_name hoặc thẻ phân loại chứa các từ khóa đặc trưng:
- *    `movie`, `chiếu rạp`, `the movie`, `bản điện ảnh`, `phim lẻ`, `full movie`, `ova`, `special`, `bản full`.
- * 2. Hoặc thời lượng video từ 65 phút trở lên (`duration_seconds >= 3900` giây) thuộc nhóm phim lẻ/bản điện ảnh.
+ * Từ khóa LOẠI TRỪ CỨNG: Mọi video chứa dấu hiệu ghép tập, tổng hợp nhiều giờ,
+ * trọn bộ, tập lẻ, review, tóm tắt, OVA/Special hoặc thuộc danh mục `Phim AI`
+ * đều KHÔNG BAO GIỜ được gắn mác `Chiếu Rạp`.
+ */
+export const THEATRICAL_HARD_EXCLUSION_RE =
+  /\b(trọn\s*bộ|tron\s*bo|tổng\s*hợp|tong\s*hop|full\s*bộ|full\s*bo|full\s*mùa|full\s*mua|full\s*tập|full\s*tap|tất\s*cả\s*các\s*tập|all\s*episodes|review|tóm\s*tắt|tom\s*tat|tập|tap|ep|episode|chương|chuong|mùa\s*\d|mua\s*\d|phần\s*\d|phan\s*\d|season\s*\d|ss\s*\d|ova|oad|ona|special|trailer|teaser|preview)\b|\b\d{1,2}\s*(?:h\d{0,2}p?|giờ|gio|tiếng|tieng)\b/i;
+
+/**
+ * Từ khóa ứng viên cần kiểm tra Google Search Grounding xem có phải Bản Điện Ảnh Chiếu Rạp thật không.
+ * (Tuyệt đối KHÔNG chứa từ khóa chung chung như `full`, `bản full`, `ova`, `special`).
+ */
+export const THEATRICAL_CANDIDATE_KEYWORDS_RE =
+  /\b(the\s*movie|anime\s*movie|bản\s*điện\s*ảnh|ban\s*dien\s*anh|phim\s*điện\s*ảnh|chiếu\s*rạp|chieu\s*rap|theatrical)\b|劇場版/i;
+
+export const LICENSED_DISTRIBUTOR_CHANNEL_RE =
+  /\b(muse\s*việt\s*nam|muse\s*viet\s*nam|muse\s*asia|ani-one|anione|pops\s*anime|bilibili|tropics\s*anime)\b/i;
+
+/**
+ * Kiểm tra xem video có bị loại trừ cứng khỏi danh mục Phim Chiếu Rạp hay không:
+ * - Thuộc thể loại `Phim AI`
+ * - Là YouTube Shorts hoặc Trailer
+ * - Tiêu đề chứa dấu hiệu tổng hợp/ghép tập (`giờ`, `tiếng`, `tập 1`, `trọn bộ`, `tổng hợp`, `review`, `tóm tắt`, `ova`, `special`...)
+ */
+export function isHardExcludedFromTheatrical(video: {
+  title: string;
+  series_name?: string | null;
+  detected_genre?: string | null;
+  episode_number?: number | null;
+  video_type?: string | null;
+  is_short?: boolean;
+}): boolean {
+  if (video.is_short) return true;
+  if (video.video_type === 'trailer') return true;
+  if (video.detected_genre === 'Phim AI') return true;
+  if (
+    typeof video.episode_number === 'number' &&
+    Number.isFinite(video.episode_number)
+  ) {
+    return true;
+  }
+  if (THEATRICAL_HARD_EXCLUSION_RE.test(video.title)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Kiểm tra xem video có đủ điều kiện đưa vào bước xác minh Google Search Grounding của AI Classifier không.
+ */
+export function isPotentialTheatricalCandidate(video: {
+  title: string;
+  channel_title?: string | null;
+  series_name?: string | null;
+  detected_genre?: string | null;
+  episode_number?: number | null;
+  video_type?: string | null;
+  is_short?: boolean;
+}): boolean {
+  if (isHardExcludedFromTheatrical(video)) return false;
+
+  if (THEATRICAL_CANDIDATE_KEYWORDS_RE.test(video.title)) {
+    return true;
+  }
+
+  if (
+    video.channel_title &&
+    LICENSED_DISTRIBUTOR_CHANNEL_RE.test(video.channel_title) &&
+    /\b(movie|điện\s*ảnh|dien\s*anh|chiếu\s*rạp|chieu\s*rap)\b|劇場版/i.test(
+      video.title,
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Giao diện Frontend CHỈ hiển thị video trong tab "Phim Chiếu Rạp" và gắn badge `CHIẾU RẠP`
+ * khi bản ghi trong database thực sự đã được xác minh cờ/tag `[CHIẾU RẠP]` hợp lệ
+ * (tuyệt đối KHÔNG tự suy diễn theo thời lượng >= 65 phút hay chữ "Full").
  */
 export function isTheatricalMovieVideo(video: {
   title: string;
   series_name?: string | null;
   description?: string | null;
-  duration_seconds: number;
+  duration_seconds?: number;
+  detected_genre?: string | null;
+  episode_number?: number | null;
   video_type?: string | null;
   is_short?: boolean;
 }): boolean {
-  if (video.is_short) return false;
-  if (video.video_type === 'trailer') return false;
+  if (isHardExcludedFromTheatrical(video)) {
+    return false;
+  }
 
-  if (THEATRICAL_MOVIE_KEYWORDS_RE.test(video.title)) {
-    return true;
-  }
-  if (video.series_name && THEATRICAL_MOVIE_KEYWORDS_RE.test(video.series_name)) {
-    return true;
-  }
   if (video.video_type === 'theatrical') {
     return true;
   }
-  if (video.duration_seconds >= THEATRICAL_MIN_DURATION_SECONDS) {
+
+  if (
+    typeof video.series_name === 'string' &&
+    video.series_name.includes(VERIFIED_THEATRICAL_TAG)
+  ) {
     return true;
   }
+
   return false;
 }
 

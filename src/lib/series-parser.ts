@@ -1,6 +1,5 @@
 import {
   PRIMARY_GENRE_OPTIONS,
-  THEATRICAL_MOVIE_KEYWORDS_RE,
   isTheatricalMovieVideo,
   type CinemaVideoItem,
   type PrimaryGenreTag,
@@ -44,12 +43,11 @@ export interface SeriesGroup {
 }
 
 /**
- * Kiểm tra một Bộ phim (SeriesGroup) có thuộc nhóm Phim Chiếu Rạp / Movie / OVA / Special không
+ * Kiểm tra một Bộ phim (SeriesGroup) đã được xác minh là Phim Chiếu Rạp trong DB chưa
+ * (Tuyệt đối không tự suy diễn ở frontend theo từ khóa tiêu đề hay thời lượng)
  */
 export function isTheatricalSeries(series: SeriesGroup): boolean {
-  if (THEATRICAL_MOVIE_KEYWORDS_RE.test(series.seriesTitle)) {
-    return true;
-  }
+  if (series.detectedGenre === 'Phim AI') return false;
   return series.episodes.some((ep) => isTheatricalMovieVideo(ep.video));
 }
 

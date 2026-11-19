@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { verifyWhitelistedUser } from '@/lib/auth/whitelist';
 import { chatWithCinemaAssistant } from '@/lib/ai/cinema-insight';
+import {
+  GEMINI_FALLBACK_MODELS,
+  formatFriendlyGeminiError,
+} from '@/lib/gemini/client';
 import type {
   CinemaChatMessage,
   CinemaInsightData,
@@ -61,6 +65,7 @@ export async function POST(request: Request) {
       videoDescription: body.videoDescription,
       insightContext: body.insightContext,
       messages: validMessages,
+      models: GEMINI_FALLBACK_MODELS,
     });
 
     return NextResponse.json({ reply });
@@ -68,12 +73,9 @@ export async function POST(request: Request) {
     console.error('[POST /api/ai/chat] Lỗi chat Gemini:', err);
     return NextResponse.json(
       {
-        error:
-          err instanceof Error
-            ? `Trợ lý AI gặp lỗi: ${err.message}`
-            : 'Không thể nhận phản hồi từ trợ lý AI lúc này.',
+        error: formatFriendlyGeminiError(err),
       },
-      { status: 500 },
+      { status: 503 },
     );
   }
 }

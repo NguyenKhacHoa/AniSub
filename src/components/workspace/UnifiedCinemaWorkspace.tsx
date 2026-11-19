@@ -135,6 +135,7 @@ export function UnifiedCinemaWorkspace({
   const scrollPositionsRef = useRef<Record<string, number>>({});
   const skipNextScrollRestoreRef = useRef(false);
   const hasTriggeredAutoDeltaRef = useRef(false);
+  const hasTriggeredCleanCinemaRef = useRef(false);
 
   const [authStatus, setAuthStatus] =
     useState<WorkspaceAuthStatus>(initialAuthStatus);
@@ -1362,6 +1363,48 @@ export function UnifiedCinemaWorkspace({
     },
     [authStatus, selectedChannelIds.size, isDeltaSyncing],
   );
+
+  // Tự động dọn sạch các nhãn (Chiếu Rạp) bị gắn nhầm theo heuristic cũ trong DB
+  useEffect(() => {
+    if (
+      hasTriggeredCleanCinemaRef.current ||
+      authStatus !== 'authenticated' ||
+      allVideos.length === 0
+    ) {
+      return;
+    }
+
+    const hasLegacyMistagged = allVideos.some(
+      (v) =>
+        typeof v.series_name === 'string' &&
+        /\(Chiếu\s*Rạp\)/i.test(v.series_name),
+    );
+
+    if (!hasLegacyMistagged) return;
+    hasTriggeredCleanCinemaRef.current = true;
+
+    void fetch('/api/admin/clean-cinema-tags', { method: 'POST' })
+      .then((res) => {
+        if (!res.ok) return;
+        setAllVideos((prev) =>
+          prev.map((v) => {
+            if (
+              typeof v.series_name === 'string' &&
+              /\(Chiếu\s*Rạp\)/i.test(v.series_name)
+            ) {
+              return {
+                ...v,
+                series_name:
+                  v.series_name.replace(/\s*\(Chiếu\s*Rạp\)\s*/gi, ' ').trim() ||
+                  null,
+              };
+            }
+            return v;
+          }),
+        );
+      })
+      .catch(() => {});
+  }, [authStatus, allVideos]);
 
   // Tự động chạy ngầm Smart Delta Sync khi mở app nếu đã quá >= 60 phút từ lần quét trước
   useEffect(() => {

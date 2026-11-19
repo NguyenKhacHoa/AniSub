@@ -1,5 +1,8 @@
 import { Type, type Schema } from '@google/genai';
-import { callGeminiWithFallback } from '@/lib/gemini/client';
+import {
+  GEMINI_FALLBACK_MODELS,
+  callGeminiWithFallback,
+} from '@/lib/gemini/client';
 import type {
   CinemaChatMessage,
   CinemaInsightData,
@@ -635,6 +638,7 @@ export async function chatWithCinemaAssistant(input: {
   videoDescription?: string | null;
   insightContext?: Partial<CinemaInsightData> | null;
   messages: CinemaChatMessage[];
+  models?: readonly string[];
 }): Promise<string> {
   const ctx = input.insightContext;
 
@@ -662,7 +666,7 @@ NGUYÊN TẮC BẮT BUỘC:
 Tổng quan: ${ctx?.overview || '(Chưa có)'}
 
 Chi tiết nội dung & diễn biến (storyContext):
-${ctx?.storyContext || '(Chưa có)'}
+${(ctx?.storyContext || '(Chưa có)').slice(0, 2200)}
 
 Điểm cộng từ cộng đồng:
 ${(ctx?.communityPros ?? []).map((p) => `- ${p}`).join('\n') || '(Không có)'}
@@ -673,14 +677,15 @@ ${(ctx?.communityCons ?? []).map((c) => `- ${c}`).join('\n') || '(Không có)'}
 Bình luận tiêu biểu:
 ${commentsSnippet || '(Không có)'}`;
 
-  const recentMessages = input.messages.slice(-16);
+  const recentMessages = input.messages.slice(-12);
   const contents = recentMessages.map((msg) => ({
     role: msg.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: msg.content.slice(0, 1200) }],
+    parts: [{ text: msg.content.slice(0, 1000) }],
   }));
 
   const { text } = await callGeminiWithFallback({
     contents,
+    models: input.models ?? GEMINI_FALLBACK_MODELS,
     config: {
       systemInstruction,
       temperature: 0.4,

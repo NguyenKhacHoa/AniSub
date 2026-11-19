@@ -5,11 +5,16 @@ import {
 } from '@/lib/youtube/api';
 import {
   classifyVideosMultimodalBatch,
+  verifyTheatricalReleaseWithGoogleSearch,
   type MultimodalClassificationResult,
 } from '@/lib/ai/classifier';
 import { extractSeriesInfo, parseEpisodeInfo } from '@/lib/series-parser';
 import type { Database } from '@/types/database';
-import type { PrimaryGenreTag } from '@/types/workspace';
+import {
+  VERIFIED_THEATRICAL_TAG,
+  isPotentialTheatricalCandidate,
+  type PrimaryGenreTag,
+} from '@/types/workspace';
 
 type VideoInsertRow = Database['public']['Tables']['videos']['Insert'] & {
   is_manual_tag?: boolean;
@@ -236,21 +241,78 @@ async function persistAndClassifyFetchedVideos(options: {
     (v) => !existingIds.has(v.video_id),
   );
 
-  // Kênh chỉ bật 1 tag -> gán thẳng 100% (0 API call)
+  // Kênh chỉ bật 1 tag -> gán thẳng 100% thể loại; riêng với HH2D có ứng viên Bản Điện Ảnh thì xác minh qua Google Search Grounding
   if (genreTags.length === 1) {
     if (brandNewVideos.length > 0) {
-      const insertPayload = brandNewVideos.map((v) => ({
-        video_id: v.video_id,
-        channel_id: v.channel_id,
-        title: v.title,
-        description: v.description,
-        thumbnail_url: v.thumbnail_url,
-        published_at: v.published_at,
-        duration_seconds: v.duration_seconds,
-        is_short: v.is_short,
-        video_type: v.video_type,
-        detected_genre: primaryGenre,
-      }));
+      const { data: chRow } = await admin
+        .from('channels')
+        .select('title')
+        .eq('channel_id', channelId)
+        .maybeSingle();
+      const chTitle = chRow?.title ?? undefined;
+
+      const verifiedMovieIds = new Set<string>();
+      if (primaryGenre === 'HH2D' && process.env.GEMINI_API_KEY?.trim()) {
+        for (const v of brandNewVideos) {
+          if (v.is_short || v.video_type === 'trailer') continue;
+          const parsedEp = parseEpisodeInfo(v.title, null).episodeStart;
+          if (
+            isPotentialTheatricalCandidate({
+              title: v.title,
+              channel_title: chTitle,
+              detected_genre: primaryGenre,
+              episode_number: parsedEp,
+              video_type: v.video_type,
+              is_short: v.is_short,
+            })
+          ) {
+            const check = await verifyTheatricalReleaseWithGoogleSearch(
+              {
+                video_id: v.video_id,
+                channel_id: v.channel_id,
+                channel_title: chTitle,
+                title: v.title,
+                description: v.description,
+                thumbnail_url: v.thumbnail_url,
+                duration_seconds: v.duration_seconds,
+              },
+              primaryGenre,
+            );
+            if (check.isTheatricalMovie) {
+              verifiedMovieIds.add(v.video_id);
+            }
+          }
+        }
+      }
+
+      const insertPayload = brandNewVideos.map((v) => {
+        const isVerifiedTheatrical = verifiedMovieIds.has(v.video_id);
+        const seriesInfo = isVerifiedTheatrical
+          ? extractSeriesInfo({
+              videoId: v.video_id,
+              channelId: v.channel_id,
+              title: v.title,
+              channelTitle: chTitle,
+            })
+          : null;
+        return {
+          video_id: v.video_id,
+          channel_id: v.channel_id,
+          title: v.title,
+          description: v.description,
+          thumbnail_url: v.thumbnail_url,
+          published_at: v.published_at,
+          duration_seconds: v.duration_seconds,
+          is_short: v.is_short,
+          video_type: v.video_type,
+          detected_genre: primaryGenre,
+          ...(isVerifiedTheatrical && seriesInfo
+            ? {
+                series_name: `${seriesInfo.seriesTitle} ${VERIFIED_THEATRICAL_TAG}`,
+              }
+            : {}),
+        };
+      });
       await upsertVideosChunked(admin, insertPayload);
     }
 

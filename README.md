@@ -62,7 +62,7 @@ AniSub là rạp chiếu phim riêng tư dành cho chủ sở hữu và nhóm b�
 
 ## 4. Cày phim chuẩn rạp chiếu trên Unified Cinema Workspace
 
-- **Chuyển Tab tức thì (0ms) & Giữ vị trí cuộn:** Toàn bộ kho phim được nạp sẵn trong bộ nhớ. Bạn có thể chuyển qua lại giữa **`Tất cả`**, **`Phim Bộ`** (lưới Thẻ Bộ Phim), **`Phim Chiếu Rạp`** (tự động lọc Anime Movie / Bản điện ảnh / OVA / Special hoặc phim lẻ $\ge 65$ phút kèm badge **`CHIẾU RẠP`**), **`Phim Full`**, **`Đang Cày Dở`** và **`Xem sau`** tức thì mà không bị tải lại hay mất vị trí đang cuộn.
+- **Chuyển Tab tức thì (0ms) & Giữ vị trí cuộn:** Toàn bộ kho phim được nạp sẵn trong bộ nhớ. Bạn có thể chuyển qua lại giữa **`Tất cả`**, **`Phim Bộ`** (lưới Thẻ Bộ Phim), **`Phim Chiếu Rạp`** (chỉ hiển thị các bộ Anime Movie / Bản điện ảnh đã được AI xác minh thông tin phát hành rạp thực tế qua Google Search Grounding kèm badge **`CHIẾU RẠP`**, loại trừ 100% `Phim AI` và video tổng hợp/ghép tập), **`Phim Full`**, **`Đang Cày Dở`** và **`Xem sau`** tức thì mà không bị tải lại hay mất vị trí đang cuộn.
 - **Bộ lọc nhanh & Sắp xếp thông minh:** Lọc theo **`Phim AI` / `HH2D` / `Phim Chiếu Rạp`**, sắp xếp theo **`Mới nhất`**, **`Dài nhất`** (tìm nhanh bản tổng hợp nhiều giờ), **`Tên A-Z`**, hoặc bật nút **`Chưa xem`** để ẩn toàn bộ phim đã xem xong ($\ge 90\%$).
 - **Thanh "Xem Tiếp" (Continue Watching):** Nằm ngay đầu rạp chiếu (tối đa 6 phim gần nhất đang xem dở), hiển thị thời gian còn lại — bấm vào là tua thẳng đến đúng giây đang dở.
 - **⭐ Theo dõi & Ẩn bộ phim:** Tại tab **`Phim Bộ`** hoặc trong header Danh Sách Tập, bấm **`⭐ Theo dõi`** để ghim những bộ đang cày lên nhóm đầu tiên; bấm **`Ẩn`** để giấu những bộ không thích (có thể khôi phục qua nút *"Hiện X bộ đã ẩn"* ở cuối trang).

@@ -16,6 +16,7 @@ import {
   UserCircle2,
   CheckCircle2,
   RefreshCw,
+  Sparkles,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -60,6 +61,32 @@ export function AdminDashboardClient({
   } | null>(null);
   const [togglingEmail, setTogglingEmail] = useState<string | null>(null);
   const [isRefreshingRequests, setIsRefreshingRequests] = useState(false);
+  const [isCleaningCinemaTags, setIsCleaningCinemaTags] = useState(false);
+
+  const handleCleanCinemaTags = async () => {
+    setIsCleaningCinemaTags(true);
+    try {
+      const res = await fetch('/api/admin/clean-cinema-tags', {
+        method: 'POST',
+      });
+      const payload = (await res.json().catch(() => ({}))) as {
+        cleanedCount?: number;
+        scannedCount?: number;
+        error?: string;
+      };
+      if (!res.ok) {
+        toast.error(payload.error || 'Không thể dọn nhãn Chiếu Rạp.');
+        return;
+      }
+      toast.success(
+        `Đã quét ${payload.scannedCount ?? 0} video và gỡ bỏ ${payload.cleanedCount ?? 0} nhãn Chiếu Rạp gắn nhầm!`,
+      );
+    } catch {
+      toast.error('Lỗi kết nối khi dọn nhãn Chiếu Rạp.');
+    } finally {
+      setIsCleaningCinemaTags(false);
+    }
+  };
 
   const handleRefreshRequests = async () => {
     setIsRefreshingRequests(true);
@@ -259,14 +286,35 @@ export function AdminDashboardClient({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={cycleTheme}
-            className="inline-flex h-9 items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] cursor-pointer"
-          >
-            <Palette className="size-4 text-[var(--accent-primary)]" />
-            <span>{themeMeta.label}</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={isCleaningCinemaTags}
+              onClick={() => void handleCleanCinemaTags()}
+              title="Gỡ bỏ toàn bộ nhãn Chiếu Rạp bị gắn nhầm khỏi video Phim AI và video tổng hợp nhiều giờ"
+              className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 text-xs font-medium text-amber-500 dark:text-amber-300 hover:bg-amber-500/20 disabled:opacity-60 cursor-pointer"
+            >
+              {isCleaningCinemaTags ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="size-3.5" />
+              )}
+              <span>
+                {isCleaningCinemaTags
+                  ? 'Đang dọn nhãn...'
+                  : 'Dọn nhãn Chiếu Rạp sai'}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={cycleTheme}
+              className="inline-flex h-9 items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] cursor-pointer"
+            >
+              <Palette className="size-4 text-[var(--accent-primary)]" />
+              <span>{themeMeta.label}</span>
+            </button>
+          </div>
         </div>
       </header>
 

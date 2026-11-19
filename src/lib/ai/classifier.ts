@@ -9,7 +9,9 @@ import {
 } from '@/lib/gemini/client';
 import { extractSeriesInfo, parseEpisodeInfo } from '@/lib/series-parser';
 import {
-  isTheatricalMovieVideo,
+  VERIFIED_THEATRICAL_TAG,
+  isHardExcludedFromTheatrical,
+  isPotentialTheatricalCandidate,
   type PrimaryGenreTag,
 } from '@/types/workspace';
 
@@ -39,6 +41,130 @@ export interface MultimodalClassificationResult {
   isMovie?: boolean;
   confidence: number;
   source: 'fixed' | 'gemini' | 'fallback';
+}
+
+export interface TheatricalVerificationResult {
+  isTheatricalMovie: boolean;
+  originalTitle: string | null;
+  releaseYear: number | null;
+}
+
+/**
+ * Xác minh thực tế qua Google Search Grounding (`tools: [{ googleSearch: {} }]` / `google_search` trên `v1beta`):
+ * - Chỉ kích hoạt với các video có dấu hiệu bản điện ảnh thực thụ (`The Movie`, `Bản Điện Ảnh`, `Chiếu Rạp`
+ *   hoặc thuộc các kênh phát hành chính hãng *Muse Việt Nam*, *Ani-One Vietnam*, *POPS Anime*, *Bilibili*)
+ *   và KHÔNG thuộc danh sách loại trừ cứng (`Phim AI`, `giờ`, `tiếng`, `tập 1`, `trọn bộ`, `tổng hợp`, `review`, `tóm tắt`...).
+ * - Tra cứu Google xem tác phẩm có thực sự là Anime Movie / Phim điện ảnh từng công chiếu tại rạp (Theatrical Release)
+ *   kèm tên gốc tiếng Anh/Nhật và năm công chiếu rạp hay không.
+ */
+export async function verifyTheatricalReleaseWithGoogleSearch(
+  video: MultimodalVideoInput,
+  detectedGenre: PrimaryGenreTag = 'HH2D',
+): Promise<TheatricalVerificationResult> {
+  if (
+    detectedGenre === 'Phim AI' ||
+    isHardExcludedFromTheatrical({
+      title: video.title,
+      series_name: video.series_name,
+      detected_genre: detectedGenre,
+    }) ||
+    !isPotentialTheatricalCandidate({
+      title: video.title,
+      channel_title: video.channel_title,
+      series_name: video.series_name,
+      detected_genre: detectedGenre,
+    })
+  ) {
+    return {
+      isTheatricalMovie: false,
+      originalTitle: null,
+      releaseYear: null,
+    };
+  }
+
+  if (!process.env.GEMINI_API_KEY?.trim()) {
+    return {
+      isTheatricalMovie: false,
+      originalTitle: null,
+      releaseYear: null,
+    };
+  }
+
+  const ai = getGeminiClient();
+  const prompt = `Hãy sử dụng công cụ Google Search để tra cứu thông tin thực tế về video sau:
+- Tiêu đề video YouTube: "${video.title}"
+- Kênh đăng tải: "${video.channel_title || 'Không rõ'}"
+- Mô tả ngắn: "${(video.description || '').slice(0, 300)}"
+
+Nhiệm vụ kiểm chứng nghiêm ngặt:
+1. Tra cứu trên Google xem tác phẩm trong video này có phải là một bộ **Anime Movie / Phim hoạt hình điện ảnh đã từng phát hành chiếu rạp chính thức (Theatrical Release)** hay không.
+2. Tìm chính xác tên tiếng Anh hoặc tiếng Nhật gốc của bản Movie điện ảnh đó (originalTitle) và năm công chiếu tại rạp (releaseYear).
+3. Nếu đây chỉ là TV Series nhiều tập, Web Drama, Hoạt hình 3D/AI, OVA, ONA, Special, hoặc video ghép/tổng hợp nhiều tập phim truyền hình thì BẮT BUỘC đặt "isTheatricalMovie": false.
+
+Trả về DUY NHẤT 1 đối tượng JSON hợp lệ theo định dạng sau (không thêm markdown hay giải thích ngoài JSON):
+{"isTheatricalMovie": boolean, "originalTitle": string | null, "releaseYear": number | null}`;
+
+  for (const modelName of GEMINI_VISION_MODELS) {
+    try {
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: prompt,
+        config: {
+          tools: [{ googleSearch: {} }],
+          temperature: 0.1,
+          abortSignal: AbortSignal.timeout(4500),
+        },
+      });
+
+      const raw = response.text?.trim() || '';
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) continue;
+
+      const parsed = JSON.parse(jsonMatch[0]) as {
+        isTheatricalMovie?: boolean;
+        originalTitle?: string | null;
+        releaseYear?: number | null;
+      };
+
+      const year =
+        typeof parsed.releaseYear === 'number' &&
+        parsed.releaseYear >= 1970 &&
+        parsed.releaseYear <= 2028
+          ? Math.floor(parsed.releaseYear)
+          : null;
+      const origTitle =
+        typeof parsed.originalTitle === 'string' &&
+        parsed.originalTitle.trim().length >= 2
+          ? parsed.originalTitle.trim()
+          : null;
+
+      const verified =
+        parsed.isTheatricalMovie === true &&
+        origTitle !== null &&
+        year !== null;
+
+      console.log(
+        `[Google Search Grounding] (${modelName}) "${video.title}" -> isTheatricalMovie=${verified} (Original: ${origTitle ?? 'N/A'}, Year: ${year ?? 'N/A'})`,
+      );
+
+      return {
+        isTheatricalMovie: verified,
+        originalTitle: verified ? origTitle : null,
+        releaseYear: verified ? year : null,
+      };
+    } catch (err) {
+      if (isRetryableGeminiModelError(err)) {
+        continue;
+      }
+      break;
+    }
+  }
+
+  return {
+    isTheatricalMovie: false,
+    originalTitle: null,
+    releaseYear: null,
+  };
 }
 
 export interface BatchClassificationOutcome {
@@ -249,15 +375,8 @@ Thumbnail attached: ${imagePart ? 'YES' : 'NO'}`,
         throw new Error(`Model ${modelName} không trả về mảng JSON hợp lệ.`);
       }
 
-      const chunkById = new Map(chunk.map((v) => [v.video_id, v]));
-
       for (const item of parsed) {
         if (item.videoId && allowedTags.includes(item.detectedGenre)) {
-          const matchedVideo = chunkById.get(item.videoId);
-          const isMovie =
-            Boolean(item.isMovie) ||
-            (matchedVideo ? isTheatricalMovieVideo(matchedVideo) : false);
-
           chunkMap.set(item.videoId, {
             videoId: item.videoId,
             detectedGenre: item.detectedGenre,
@@ -266,7 +385,7 @@ Thumbnail attached: ${imagePart ? 'YES' : 'NO'}`,
               typeof item.episodeNumber === 'number'
                 ? Math.floor(item.episodeNumber)
                 : null,
-            isMovie,
+            isMovie: false,
             confidence:
               typeof item.confidence === 'number'
                 ? Math.max(0, Math.min(1, item.confidence))
@@ -276,21 +395,43 @@ Thumbnail attached: ${imagePart ? 'YES' : 'NO'}`,
         }
       }
 
-      chunk.forEach((video, idx) => {
+      // Chỉ kích hoạt xác minh Google Search Grounding với các ứng viên có dấu hiệu Bản Điện Ảnh thực thụ
+      for (const video of chunk) {
         if (!chunkMap.has(video.video_id)) {
           chunkMap.set(video.video_id, {
             videoId: video.video_id,
             detectedGenre: defaultTag,
             seriesName: null,
             episodeNumber: null,
-            isMovie: isTheatricalMovieVideo(video),
+            isMovie: false,
             confidence: 0.4,
             source: 'fallback',
           });
         }
+
+        const res = chunkMap.get(video.video_id)!;
+        if (
+          res.detectedGenre !== 'Phim AI' &&
+          isPotentialTheatricalCandidate({
+            title: video.title,
+            channel_title: video.channel_title,
+            series_name: res.seriesName ?? video.series_name,
+            detected_genre: res.detectedGenre,
+            episode_number: res.episodeNumber,
+          })
+        ) {
+          const verified = await verifyTheatricalReleaseWithGoogleSearch(
+            video,
+            res.detectedGenre,
+          );
+          res.isMovie = verified.isTheatricalMovie;
+        }
+      }
+
+      chunk.forEach((video, idx) => {
         const res = chunkMap.get(video.video_id)!;
         console.log(
-          `[AI Classifier] (${modelName}) Series Rep: ${video.title} | Allowed: ${allowedTags.join(', ')} | Thumbnail loaded: ${Boolean(thumbnails[idx])} -> Result: ${res.detectedGenre}${res.isMovie ? ' [CHIẾU RẠP]' : ''}`,
+          `[AI Classifier] (${modelName}) Series Rep: ${video.title} | Allowed: ${allowedTags.join(', ')} | Thumbnail loaded: ${Boolean(thumbnails[idx])} -> Result: ${res.detectedGenre}${res.isMovie ? ' [VERIFIED CHIẾU RẠP]' : ''}`,
         );
       });
 
@@ -322,7 +463,7 @@ Thumbnail attached: ${imagePart ? 'YES' : 'NO'}`,
       detectedGenre: defaultTag,
       seriesName: null,
       episodeNumber: null,
-      isMovie: isTheatricalMovieVideo(video),
+      isMovie: false,
       confidence: 0,
       source: 'fallback',
     });
@@ -333,7 +474,7 @@ Thumbnail attached: ${imagePart ? 'YES' : 'NO'}`,
 
 /**
  * Series-Aware Gemini Vision Batching:
- * - Kênh chỉ bật 1 tag -> gán thẳng (0 API call).
+ * - Kênh chỉ bật 1 tag -> gán thẳng (0 API call, trừ khi video là ứng viên Bản Điện Ảnh cần xác minh Google Search Grounding).
  * - Kênh bật >= 2 tag -> gom nhóm theo `seriesKey`, chỉ gửi ĐÚNG 1 video đại diện
  *   mỗi bộ phim (4 series / batch, xoay vòng 3 model dự phòng) rồi lan truyền kết quả
  *   cho toàn bộ các tập cùng bộ.
@@ -354,16 +495,52 @@ export async function classifyVideosMultimodalBatch(
     };
   }
 
-  // Kênh chỉ bật 1 tag -> gán cố định (0 API call)
+  // Kênh chỉ bật 1 tag -> gán cố định thể loại, chỉ kiểm tra Google Search Grounding nếu có ứng viên Bản Điện Ảnh
   if (allowedTags.length === 1) {
     const fixedTag = allowedTags[0];
     for (const v of videos) {
+      const parsedEp = parseEpisodeInfo(v.title, null).episodeStart;
+      let isVerifiedMovie = false;
+      if (
+        fixedTag !== 'Phim AI' &&
+        isPotentialTheatricalCandidate({
+          title: v.title,
+          channel_title: v.channel_title,
+          series_name: v.series_name,
+          detected_genre: fixedTag,
+          episode_number: parsedEp,
+        })
+      ) {
+        const verified = await verifyTheatricalReleaseWithGoogleSearch(
+          v,
+          fixedTag,
+        );
+        isVerifiedMovie = verified.isTheatricalMovie;
+      }
+
+      const baseSeries =
+        v.series_name ??
+        extractSeriesInfo({
+          videoId: v.video_id,
+          channelId: v.channel_id ?? 'default',
+          title: v.title,
+          channelTitle: v.channel_title,
+          seriesName: v.series_name,
+        }).seriesTitle;
+
+      const finalSeriesName =
+        isVerifiedMovie &&
+        baseSeries &&
+        !baseSeries.includes(VERIFIED_THEATRICAL_TAG)
+          ? `${baseSeries} ${VERIFIED_THEATRICAL_TAG}`
+          : v.series_name ?? null;
+
       results.set(v.video_id, {
         videoId: v.video_id,
         detectedGenre: fixedTag,
-        seriesName: v.series_name ?? null,
-        episodeNumber: parseEpisodeInfo(v.title, null).episodeStart,
-        isMovie: isTheatricalMovieVideo(v),
+        seriesName: finalSeriesName,
+        episodeNumber: parsedEp,
+        isMovie: isVerifiedMovie,
         confidence: 1,
         source: 'fixed',
       });
@@ -449,18 +626,28 @@ export async function classifyVideosMultimodalBatch(
         const isRep = member.video_id === rep.video_id;
         const parsedEp = parseEpisodeInfo(member.title, null).episodeStart;
         const memberIsMovie =
-          Boolean(repRes.isMovie) || isTheatricalMovieVideo(member);
-        const baseSeriesName =
-          repRes.seriesName || member.series_name || group.seriesTitle || null;
+          repRes.detectedGenre !== 'Phim AI' &&
+          Boolean(repRes.isMovie) &&
+          !isHardExcludedFromTheatrical({
+            title: member.title,
+            series_name: member.series_name,
+            detected_genre: repRes.detectedGenre,
+            episode_number: parsedEp,
+          });
+        const baseSeriesName = (
+          repRes.seriesName ||
+          member.series_name ||
+          group.seriesTitle ||
+          ''
+        )
+          .replace(/\s*\(Chiếu Rạp\)\s*/gi, ' ')
+          .replace(/\s*\[CHIẾU RẠP\]\s*/gi, ' ')
+          .trim();
+
         const enrichedSeriesName =
-          memberIsMovie &&
-          baseSeriesName &&
-          !isTheatricalMovieVideo({
-            title: baseSeriesName,
-            duration_seconds: 0,
-          })
-            ? `${baseSeriesName} (Chiếu Rạp)`
-            : baseSeriesName;
+          memberIsMovie && baseSeriesName
+            ? `${baseSeriesName} ${VERIFIED_THEATRICAL_TAG}`
+            : baseSeriesName || null;
 
         results.set(member.video_id, {
           videoId: member.video_id,
