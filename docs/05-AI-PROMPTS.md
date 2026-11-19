@@ -23,10 +23,13 @@ Sử dụng SDK chính thức `@google/genai` phía server trên endpoint `v1bet
 - **Tiêu chí nhận diện thị giác (2 nhãn thể loại + cờ `isMovie` Phim Chiếu Rạp):**
   - **`Phim AI`:** Đồ họa tả thực, 3D AI rendering (Midjourney, Kling, Flux, Hailuo, Vidu, Sora...), ánh sáng volumetric/cinematic, da và tóc có độ khối mịn, **KHÔNG** có nét viền mực đen kiểu vẽ tay.
   - **`HH2D`:** Tranh vẽ 2D Manhua / Manhwa / Motion Comic / Anime 2D, tô màu mảng phẳng (cel-shading), **CÓ** đường viền nét vẽ (lineart) rõ ràng quanh nhân vật và bối cảnh truyện tranh.
-  - **`isMovie` (Phim Chiếu Rạp — Xác minh qua Google Search Grounding):**
-    - **Cấm tuyệt đối** tự gắn mác `Chiếu Rạp` dựa trên thời lượng (`duration >= 3900`) hoặc từ khóa chung (`full`, `bản full`, `trọn bộ`, `ova`, `special`).
-    - **Loại trừ cứng 100%:** Mọi video thuộc `Phim AI` hoặc tiêu đề chứa dấu hiệu tổng hợp/ghép tập (`giờ`, `tiếng`, `tập 1`, `trọn bộ`, `tổng hợp`, `review`, `tóm tắt`) đều trả về `isMovie = false`.
-    - Chỉ kích hoạt hàm `verifyTheatricalReleaseWithGoogleSearch` (gọi Gemini `v1beta` kèm **`tools: [{ googleSearch: {} }]`** / `google_search`) với các ứng viên có dấu hiệu bản điện ảnh thực thụ (`The Movie`, `Bản Điện Ảnh`, `Chiếu Rạp` hoặc thuộc kênh bản quyền *Muse Việt Nam*, *Ani-One Vietnam*, *POPS Anime*, *Bilibili*). Chỉ trả về `isTheatricalMovie: true` và gắn dấu xác minh `[CHIẾU RẠP]` vào DB khi kết quả tra cứu Google xác nhận đây đúng là phim chiếu rạp thật kèm `originalTitle` (tên tiếng Anh/Nhật gốc) và `releaseYear` (năm công chiếu rạp).
+  - **`isMovie` / `is_theatrical_movie` (Phim Chiếu Rạp — Auto-Discover, Google Search Grounding & Scoped Anti-Horror Policy):**
+    - **Cấm tuyệt đối** tự gắn mác `Chiếu Rạp` dựa trên thời lượng hay từ khóa chung (`full`, `bản full`, `trọn bộ`, `ova`, `special`).
+    - **Loại trừ cứng 100%:** Mọi video thuộc `Phim AI`, có thời lượng ngoài ngưỡng **65–165 phút (`3900s–9900s`)**, hoặc tiêu đề chứa dấu hiệu tổng hợp/ghép tập (`giờ`, `tiếng`, `tập 1`, `trọn bộ`, `tổng hợp`, `review`, `tóm tắt`) đều trả về `false`.
+    - **Chính sách Chặn Kinh Dị 2 Lớp (Scoped Anti-Horror Policy — CHỈ ÁP DỤNG RIÊNG CHO PHIM CHIẾU RẠP):**
+      1. *Lớp 1 (Pre-filter từ khóa trong `/api/cinema/discover` & `isHardExcludedFromTheatrical`):* Loại bỏ ngay video chiếu rạp có tiêu đề/mô tả chứa `kinh dị`, `horror`, `ma ám`, `quỷ ám`, `trừ tà`, `exorcist`, `ác quỷ`, `xác sống`, `zombie`, `ma cà rồng`, `slasher`, `giết người hàng loạt`, `máu me`, `gore`, `creepy`, `rùng rợn`, `ma quái`, `linh dị`, `cương thi`.
+      2. *Lớp 2 (Google Search Grounding trên `v1beta` kèm `tools: [{ googleSearch: {} }]`):* Tra cứu Google xác nhận đồng thời `isTheatricalMovie === true` (đã từng công chiếu thương mại ngoài rạp kèm `canonicalTitle` và `releaseYear`) VÀ `isHorrorOrGore === false`.
+      3. *Phạm vi cô lập:* Tuyệt đối **không** áp dụng bộ lọc kinh dị/linh dị/ma quái lên luồng phân loại `HH2D`, `2D` và `Phim AI` thông thường.
 - **Structured Output Schema (`Type.ARRAY`):**
   Trả về đúng 1 phần tử JSON cho mỗi `videoId`:
   `{ videoId, detectedGenre: 'Phim AI' | 'HH2D', seriesName: string | null, episodeNumber: integer | null, isMovie: boolean | null, confidence: number }`.

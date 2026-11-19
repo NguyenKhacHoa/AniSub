@@ -117,10 +117,23 @@ export async function POST() {
         .update({
           series_name: cleanedSeriesName,
           video_type: restoredVideoType,
+          is_theatrical_movie: false,
+          theatrical_release_year: null,
         })
         .eq('video_id', row.video_id);
 
-      if (!updateErr) {
+      if (updateErr) {
+        const { error: fallbackErr } = await admin
+          .from('videos')
+          .update({
+            series_name: cleanedSeriesName,
+            video_type: restoredVideoType,
+          })
+          .eq('video_id', row.video_id);
+        if (!fallbackErr) {
+          cleanedCount += 1;
+        }
+      } else {
         cleanedCount += 1;
       }
     }

@@ -230,8 +230,12 @@ export function StructuredCinemaRows({
     );
   }
 
-  // 3b. Trạng thái: Đã đăng nhập nhưng chưa chọn kênh theo dõi nào (chỉ áp dụng ngoài tab Khám phá)
-  if (viewMode !== 'explore' && selectedChannelCount === 0) {
+  // 3b. Trạng thái: Đã đăng nhập nhưng chưa chọn kênh theo dõi nào và không có phim hiển thị (chỉ áp dụng ngoài tab Khám phá)
+  if (
+    viewMode !== 'explore' &&
+    selectedChannelCount === 0 &&
+    videos.length === 0
+  ) {
     return (
       <section
         aria-label="Chưa chọn kênh theo dõi"

@@ -64,6 +64,7 @@ export type ProfileRow = {
   full_name: string | null;
   avatar_url: string | null;
   last_synced_at: string | null;
+  last_cinema_sync_at?: string | null;
   created_at: string;
 };
 
@@ -104,6 +105,8 @@ export type VideoRow = {
   ai_summary: string | null;
   insight_data?: Json | null;
   is_manual_tag?: boolean;
+  is_theatrical_movie?: boolean | null;
+  theatrical_release_year?: number | null;
   created_at: string;
 };
 
@@ -143,6 +146,7 @@ export type Database = {
           full_name?: string | null;
           avatar_url?: string | null;
           last_synced_at?: string | null;
+          last_cinema_sync_at?: string | null;
           created_at?: string;
         };
         Update: {
@@ -151,6 +155,7 @@ export type Database = {
           full_name?: string | null;
           avatar_url?: string | null;
           last_synced_at?: string | null;
+          last_cinema_sync_at?: string | null;
           created_at?: string;
         };
         Relationships: [];
@@ -234,6 +239,8 @@ export type Database = {
           ai_summary?: string | null;
           insight_data?: Json | null;
           is_manual_tag?: boolean;
+          is_theatrical_movie?: boolean | null;
+          theatrical_release_year?: number | null;
           created_at?: string;
         };
         Update: {
@@ -252,6 +259,8 @@ export type Database = {
           ai_summary?: string | null;
           insight_data?: Json | null;
           is_manual_tag?: boolean;
+          is_theatrical_movie?: boolean | null;
+          theatrical_release_year?: number | null;
           created_at?: string;
         };
         Relationships: [

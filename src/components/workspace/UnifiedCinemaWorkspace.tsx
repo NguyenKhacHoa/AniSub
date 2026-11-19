@@ -32,6 +32,8 @@ import type { UserSeriesStatus } from '@/types/database';
 
 const DELTA_SYNC_STORAGE_KEY = 'anisub_last_delta_sync_at';
 const DELTA_SYNC_INTERVAL_MS = 60 * 60 * 1000; // 60 phút
+const CINEMA_DISCOVER_STORAGE_KEY = 'anisub_last_cinema_discover_at';
+const CINEMA_DISCOVER_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12 giờ
 
 export interface InitialWorkspaceUser {
   id: string;
@@ -234,7 +236,14 @@ export function UnifiedCinemaWorkspace({
     const query = searchQuery.trim().toLowerCase();
     const matched = allVideos.filter((v) => {
       if (v.is_short) return false;
-      if (selectedChannelIds.size > 0 && !selectedChannelIds.has(v.channel_id)) {
+      // Ở tab Phim Chiếu Rạp, hiển thị toàn bộ phim chiếu rạp đã xác minh mà không yêu cầu phải subscribe kênh trước
+      const isTheatricalTab =
+        viewMode === 'cinema' && videoType === 'theatrical';
+      if (
+        !isTheatricalTab &&
+        selectedChannelIds.size > 0 &&
+        !selectedChannelIds.has(v.channel_id)
+      ) {
         return false;
       }
       if (viewMode === 'watch_later') {
@@ -1405,6 +1414,84 @@ export function UnifiedCinemaWorkspace({
       })
       .catch(() => {});
   }, [authStatus, allVideos]);
+
+  // Tự động chạy ngầm Background Auto-Sync cho kho Phim Chiếu Rạp (chu kỳ 12 giờ hoặc khi kho trống)
+  // Hoàn toàn chạy nền (keepalive: true), không chặn giao diện, không hiện toast lỗi làm phiền người dùng
+  useEffect(() => {
+    if (authStatus !== 'authenticated') return;
+
+    const currentTheatricalCount = allVideos.filter((v) =>
+      isTheatricalMovieVideo(v),
+    ).length;
+
+    let isStaleOrEmpty = currentTheatricalCount === 0;
+    try {
+      const rawTs = window.localStorage.getItem(CINEMA_DISCOVER_STORAGE_KEY);
+      const lastTs = rawTs ? Number(rawTs) : 0;
+      if (
+        !Number.isFinite(lastTs) ||
+        lastTs <= 0 ||
+        Date.now() - lastTs >= CINEMA_DISCOVER_INTERVAL_MS
+      ) {
+        isStaleOrEmpty = true;
+      }
+    } catch {
+      // Fallback sang server check
+    }
+
+    if (!isStaleOrEmpty) return;
+
+    // Ghi nhận mốc thời gian ngay lập tức để tránh gọi lặp lại
+    try {
+      window.localStorage.setItem(
+        CINEMA_DISCOVER_STORAGE_KEY,
+        String(Date.now()),
+      );
+    } catch {
+      // Ignore storage error
+    }
+
+    void fetch('/api/cinema/discover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force: false }),
+      keepalive: true,
+    })
+      .then(async (res) => {
+        if (!res.ok) return;
+        const payload = (await res.json().catch(() => ({}))) as {
+          movies?: CinemaVideoItem[];
+        };
+        const incoming = payload.movies ?? [];
+        if (incoming.length === 0) return;
+
+        setAllVideos((prev) => {
+          const map = new Map(prev.map((v) => [v.video_id, v]));
+          let hasNew = false;
+          for (const item of incoming) {
+            if (!map.has(item.video_id)) {
+              map.set(item.video_id, item);
+              hasNew = true;
+            } else {
+              const existing = map.get(item.video_id)!;
+              if (!isTheatricalMovieVideo(existing)) {
+                map.set(item.video_id, {
+                  ...existing,
+                  series_name: item.series_name,
+                  is_theatrical_movie: true,
+                  theatrical_release_year: item.theatrical_release_year,
+                });
+                hasNew = true;
+              }
+            }
+          }
+          return hasNew ? Array.from(map.values()) : prev;
+        });
+      })
+      .catch(() => {
+        // Silent background fail — không hiển thị toast lỗi làm phiền người xem
+      });
+  }, [authStatus, videoType, allVideos]);
 
   // Tự động chạy ngầm Smart Delta Sync khi mở app nếu đã quá >= 60 phút từ lần quét trước
   useEffect(() => {

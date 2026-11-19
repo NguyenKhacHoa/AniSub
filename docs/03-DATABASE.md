@@ -25,8 +25,12 @@ CREATE TABLE public.profiles (
   full_name TEXT,
   avatar_url TEXT,
   last_synced_at TIMESTAMPTZ,
+  last_cinema_sync_at TIMESTAMPTZ, -- Mốc thời gian Background Auto-Sync kho Phim Chiếu Rạp (chu kỳ 12 giờ)
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Migration bổ sung cột last_cinema_sync_at cho bảng profiles:
+-- ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS last_cinema_sync_at TIMESTAMPTZ;
 
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Users can view and update own profile"
@@ -115,12 +119,16 @@ CREATE TABLE public.videos (
   ai_summary TEXT, -- Cache tóm tắt nội dung từ Gemini
   insight_data JSONB, -- Cache phân tích đa nguồn AI Cinema Insight (thang 100, transcript, bình luận, storyContext)
   is_manual_tag BOOLEAN DEFAULT FALSE, -- TRUE = Người dùng chỉnh tay (AI bỏ qua khi quét lại)
+  is_theatrical_movie BOOLEAN DEFAULT FALSE, -- TRUE = Đã xác minh phát hành rạp thực tế qua Google Search Grounding (và isHorrorOrGore = false)
+  theatrical_release_year INTEGER, -- Năm công chiếu tại rạp
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Migration bổ sung cột is_manual_tag và insight_data cho DB đã khởi tạo trước đó:
+-- Migration bổ sung cột is_manual_tag, insight_data, is_theatrical_movie và theatrical_release_year cho DB đã khởi tạo trước đó:
 -- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS is_manual_tag BOOLEAN DEFAULT FALSE;
 -- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS insight_data JSONB;
+-- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS is_theatrical_movie BOOLEAN DEFAULT FALSE;
+-- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS theatrical_release_year INTEGER;
 
 CREATE INDEX idx_videos_channel_published ON public.videos(channel_id, published_at DESC);
 CREATE INDEX idx_videos_type ON public.videos(video_type, is_short);

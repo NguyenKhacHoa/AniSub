@@ -1,8 +1,7 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
     {
-      "path": "/api/cron/renew-websub",
+      "path": "/api/cinema/discover",
       "schedule": "0 2 * * *"
     }
   ]

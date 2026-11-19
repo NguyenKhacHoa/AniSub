@@ -55,7 +55,41 @@ interface RawVideoRow {
   episode_number: number | null;
   ai_summary: string | null;
   is_manual_tag?: boolean;
+  is_theatrical_movie?: boolean | null;
+  theatrical_release_year?: number | null;
   created_at: string;
+}
+
+/**
+ * Tải thêm các bộ Phim Chiếu Rạp đã được xác minh (`is_theatrical_movie = true` hoặc `series_name` có `[CHIẾU RẠP]`)
+ * trên toàn hệ thống mà không yêu cầu người dùng phải subscribe kênh đó trước.
+ */
+async function fetchGlobalTheatricalVideos(
+  admin: ReturnType<typeof createAdminClient>,
+): Promise<RawVideoRow[]> {
+  const withCol = await admin
+    .from('videos')
+    .select(
+      'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, is_manual_tag, is_theatrical_movie, theatrical_release_year, created_at',
+    )
+    .or('is_theatrical_movie.eq.true,series_name.ilike.%[CHIẾU RẠP]%')
+    .order('published_at', { ascending: false })
+    .limit(120);
+
+  if (!withCol.error) {
+    return (withCol.data ?? []) as RawVideoRow[];
+  }
+
+  const fallbackRes = await admin
+    .from('videos')
+    .select(
+      'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, created_at',
+    )
+    .ilike('series_name', '%[CHIẾU RẠP]%')
+    .order('published_at', { ascending: false })
+    .limit(120);
+
+  return (fallbackRes.data ?? []) as RawVideoRow[];
 }
 
 /**
@@ -66,18 +100,19 @@ async function fetchAllSelectedVideos(
   admin: ReturnType<typeof createAdminClient>,
   selectedChannelIds: string[],
 ): Promise<RawVideoRow[]> {
+  if (selectedChannelIds.length === 0) return [];
   const allRows: RawVideoRow[] = [];
   let from = 0;
-  let supportsManualColumn = true;
+  let supportsExtendedColumns = true;
 
   while (true) {
     const to = from + DB_FETCH_BATCH_SIZE - 1;
 
-    if (supportsManualColumn) {
+    if (supportsExtendedColumns) {
       const res = await admin
         .from('videos')
         .select(
-          'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, is_manual_tag, created_at',
+          'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, is_manual_tag, is_theatrical_movie, theatrical_release_year, created_at',
         )
         .in('channel_id', selectedChannelIds)
         .eq('is_short', false)
@@ -85,7 +120,7 @@ async function fetchAllSelectedVideos(
         .range(from, to);
 
       if (res.error) {
-        supportsManualColumn = false;
+        supportsExtendedColumns = false;
         continue;
       }
 
@@ -160,18 +195,6 @@ export async function loadWorkspaceDataForUser(
   const profileRes = await profilePromise;
   const lastSyncedAt = profileRes.data?.last_synced_at ?? null;
 
-  if (userChannels.length === 0) {
-    return {
-      channels: [],
-      videos: [],
-      seriesStatuses: {},
-      watchLaterIds: [],
-      totalVideosCount: 0,
-      hasMoreVideos: false,
-      lastSyncedAt,
-    };
-  }
-
   const allChannelIds = userChannels.map((uc) => uc.channel_id);
 
   let channelRows: Array<{
@@ -185,23 +208,25 @@ export async function loadWorkspaceDataForUser(
     updated_at: string;
   }> = [];
 
-  const channelsWithToken = await admin
-    .from('channels')
-    .select(
-      'channel_id, title, thumbnail_url, custom_url, websub_status, websub_expires_at, next_page_token, updated_at',
-    )
-    .in('channel_id', allChannelIds);
-
-  if (channelsWithToken.error) {
-    const channelsFallback = await admin
+  if (allChannelIds.length > 0) {
+    const channelsWithToken = await admin
       .from('channels')
       .select(
-        'channel_id, title, thumbnail_url, custom_url, websub_status, websub_expires_at, updated_at',
+        'channel_id, title, thumbnail_url, custom_url, websub_status, websub_expires_at, next_page_token, updated_at',
       )
       .in('channel_id', allChannelIds);
-    channelRows = channelsFallback.data ?? [];
-  } else {
-    channelRows = channelsWithToken.data ?? [];
+
+    if (channelsWithToken.error) {
+      const channelsFallback = await admin
+        .from('channels')
+        .select(
+          'channel_id, title, thumbnail_url, custom_url, websub_status, websub_expires_at, updated_at',
+        )
+        .in('channel_id', allChannelIds);
+      channelRows = channelsFallback.data ?? [];
+    } else {
+      channelRows = channelsWithToken.data ?? [];
+    }
   }
 
   const channelMap = new Map(channelRows.map((row) => [row.channel_id, row]));
@@ -226,36 +251,30 @@ export async function loadWorkspaceDataForUser(
     .filter((c) => c.is_selected)
     .map((c) => c.channel_id);
 
-  if (selectedChannelIds.length === 0) {
-    return {
-      channels: mergedChannels,
-      videos: [],
-      seriesStatuses: {},
-      watchLaterIds: [],
-      totalVideosCount: 0,
-      hasMoreVideos: false,
-      lastSyncedAt,
-    };
-  }
-
-  // Tải 100% toàn bộ video, watch_progress, user_series_status và user_watch_later song song
-  const [fetchedVideos, progressRes, seriesStatusRes, watchLaterRes] =
-    await Promise.all([
-      fetchAllSelectedVideos(admin, selectedChannelIds),
-      admin
-        .from('watch_progress')
-        .select('video_id, progress_seconds, is_completed, last_watched_at')
-        .eq('user_id', userId),
-      admin
-        .from('user_series_status')
-        .select('series_key, status')
-        .eq('user_id', userId),
-      admin
-        .from('user_watch_later')
-        .select('video_id')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false }),
-    ]);
+  // Tải 100% toàn bộ video kênh đã chọn, kho Phim Chiếu Rạp toàn cục, watch_progress, user_series_status và user_watch_later song song
+  const [
+    selectedVideos,
+    globalTheatricalVideos,
+    progressRes,
+    seriesStatusRes,
+    watchLaterRes,
+  ] = await Promise.all([
+    fetchAllSelectedVideos(admin, selectedChannelIds),
+    fetchGlobalTheatricalVideos(admin),
+    admin
+      .from('watch_progress')
+      .select('video_id, progress_seconds, is_completed, last_watched_at')
+      .eq('user_id', userId),
+    admin
+      .from('user_series_status')
+      .select('series_key, status')
+      .eq('user_id', userId),
+    admin
+      .from('user_watch_later')
+      .select('video_id')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false }),
+  ]);
 
   const seriesStatuses: Record<string, UserSeriesStatus> = {};
   if (!seriesStatusRes.error && Array.isArray(seriesStatusRes.data)) {
@@ -276,6 +295,18 @@ export async function loadWorkspaceDataForUser(
       ? watchLaterRes.data.map((r) => r.video_id)
       : [];
 
+  // Hợp nhất không trùng lặp giữa video thuộc kênh đã chọn và kho Phim Chiếu Rạp đã xác minh
+  const videoById = new Map<string, RawVideoRow>();
+  for (const v of selectedVideos) {
+    videoById.set(v.video_id, v);
+  }
+  for (const v of globalTheatricalVideos) {
+    if (!videoById.has(v.video_id)) {
+      videoById.set(v.video_id, v);
+    }
+  }
+  const fetchedVideos = Array.from(videoById.values());
+
   if (fetchedVideos.length === 0) {
     return {
       channels: mergedChannels,
@@ -286,6 +317,24 @@ export async function loadWorkspaceDataForUser(
       hasMoreVideos: false,
       lastSyncedAt,
     };
+  }
+
+  // Bổ sung thông tin tên kênh cho các Phim Chiếu Rạp từ kênh người dùng chưa subscribe
+  const missingChannelIds = Array.from(
+    new Set(
+      fetchedVideos
+        .map((v) => v.channel_id)
+        .filter((cid) => !channelMap.has(cid)),
+    ),
+  );
+  if (missingChannelIds.length > 0) {
+    const { data: extraChannels } = await admin
+      .from('channels')
+      .select('channel_id, title, thumbnail_url, custom_url, websub_status, websub_expires_at, updated_at')
+      .in('channel_id', missingChannelIds);
+    for (const ch of extraChannels ?? []) {
+      channelMap.set(ch.channel_id, ch);
+    }
   }
 
   const progressMap = new Map(

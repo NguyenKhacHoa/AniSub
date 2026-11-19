@@ -20,12 +20,26 @@ export type SortOption = 'newest' | 'longest' | 'title_asc';
 export const VERIFIED_THEATRICAL_TAG = '[CHIẾU RẠP]' as const;
 
 /**
+ * Giới hạn thời lượng chuẩn cho Phim Chiếu Rạp (65 phút = 3900s đến 165 phút = 9900s).
+ * Loại bỏ tuyệt đối các video tổng hợp 3-12 tiếng và các clip ngắn/trailer.
+ */
+export const THEATRICAL_MIN_DURATION_SECONDS = 3900; // 65 phút
+export const THEATRICAL_MAX_DURATION_SECONDS = 9900; // 165 phút
+
+/**
+ * Bộ lọc Chặn Kinh Dị Lớp 1 — CHỈ ÁP DỤNG RIÊNG CHO CHUYÊN MỤC PHIM CHIẾU RẠP:
+ * Tuyệt đối KHÔNG áp dụng cho HH2D, 2D hay Phim AI thông thường.
+ */
+export const CINEMA_HORROR_PREFILTER_RE =
+  /\b(kinh\s*dị|kinh\s*di|horror|ma\s*ám|ma\s*am|quỷ\s*ám|quy\s*am|trừ\s*tà|tru\s*ta|exorcist|ác\s*quỷ|ac\s*quy|xác\s*sống|xac\s*song|zombie|ma\s*cà\s*rồng|ma\s*ca\s*rong|slasher|giết\s*người\s*hàng\s*loạt|giet\s*nguoi\s*hang\s*loat|máu\s*me|mau\s*me|gore|creepy|rùng\s*rợn|rung\s*ron|ma\s*quái|ma\s*quai|linh\s*dị|linh\s*di|cương\s*thi|cuong\s*thi)\b/i;
+
+/**
  * Từ khóa LOẠI TRỪ CỨNG: Mọi video chứa dấu hiệu ghép tập, tổng hợp nhiều giờ,
  * trọn bộ, tập lẻ, review, tóm tắt, OVA/Special hoặc thuộc danh mục `Phim AI`
  * đều KHÔNG BAO GIỜ được gắn mác `Chiếu Rạp`.
  */
 export const THEATRICAL_HARD_EXCLUSION_RE =
-  /\b(trọn\s*bộ|tron\s*bo|tổng\s*hợp|tong\s*hop|full\s*bộ|full\s*bo|full\s*mùa|full\s*mua|full\s*tập|full\s*tap|tất\s*cả\s*các\s*tập|all\s*episodes|review|tóm\s*tắt|tom\s*tat|tập|tap|ep|episode|chương|chuong|mùa\s*\d|mua\s*\d|phần\s*\d|phan\s*\d|season\s*\d|ss\s*\d|ova|oad|ona|special|trailer|teaser|preview)\b|\b\d{1,2}\s*(?:h\d{0,2}p?|giờ|gio|tiếng|tieng)\b/i;
+  /\b(trọn\s*bộ|tron\s*bo|tổng\s*hợp|tong\s*hop|full\s*bộ|full\s*bo|full\s*mùa|full\s*mua|full\s*tập|full\s*tap|tất\s*cả\s*các\s*tập|all\s*episodes|review|tóm\s*tắt|tom\s*tat|tập|tap|ep|episode|chương|chuong|mùa\s*\d|mua\s*\d|phần\s*\d|phan\s*\d|season\s*\d|ss\s*\d|ova|oad|ona|special|trailer|teaser|preview|phim\s*ai|3d\s*ai)\b|\b\d{1,2}\s*(?:h\d{0,2}p?|giờ|gio|tiếng|tieng)\b/i;
 
 /**
  * Từ khóa ứng viên cần kiểm tra Google Search Grounding xem có phải Bản Điện Ảnh Chiếu Rạp thật không.
@@ -41,13 +55,17 @@ export const LICENSED_DISTRIBUTOR_CHANNEL_RE =
  * Kiểm tra xem video có bị loại trừ cứng khỏi danh mục Phim Chiếu Rạp hay không:
  * - Thuộc thể loại `Phim AI`
  * - Là YouTube Shorts hoặc Trailer
- * - Tiêu đề chứa dấu hiệu tổng hợp/ghép tập (`giờ`, `tiếng`, `tập 1`, `trọn bộ`, `tổng hợp`, `review`, `tóm tắt`, `ova`, `special`...)
+ * - Thời lượng ngoài ngưỡng chuẩn rạp (nhỏ hơn 65 phút hoặc lớn hơn 165 phút)
+ * - Chứa từ khóa Kinh dị / Máu me (Scoped Anti-Horror Policy dành riêng cho Phim Chiếu Rạp)
+ * - Tiêu đề chứa dấu hiệu tổng hợp/ghép tập (`giờ`, `tiếng`, `tập 1`, `trọn bộ`, `tổng hợp`, `review`, `tóm tắt`...)
  */
 export function isHardExcludedFromTheatrical(video: {
   title: string;
+  description?: string | null;
   series_name?: string | null;
   detected_genre?: string | null;
   episode_number?: number | null;
+  duration_seconds?: number;
   video_type?: string | null;
   is_short?: boolean;
 }): boolean {
@@ -60,7 +78,22 @@ export function isHardExcludedFromTheatrical(video: {
   ) {
     return true;
   }
+  if (
+    typeof video.duration_seconds === 'number' &&
+    video.duration_seconds > 0 &&
+    (video.duration_seconds < THEATRICAL_MIN_DURATION_SECONDS ||
+      video.duration_seconds > THEATRICAL_MAX_DURATION_SECONDS)
+  ) {
+    return true;
+  }
   if (THEATRICAL_HARD_EXCLUSION_RE.test(video.title)) {
+    return true;
+  }
+  // Lớp 1 Chặn Kinh Dị (chỉ áp dụng riêng cho Phim Chiếu Rạp)
+  if (
+    CINEMA_HORROR_PREFILTER_RE.test(video.title) ||
+    (video.description && CINEMA_HORROR_PREFILTER_RE.test(video.description))
+  ) {
     return true;
   }
   return false;
@@ -71,10 +104,12 @@ export function isHardExcludedFromTheatrical(video: {
  */
 export function isPotentialTheatricalCandidate(video: {
   title: string;
+  description?: string | null;
   channel_title?: string | null;
   series_name?: string | null;
   detected_genre?: string | null;
   episode_number?: number | null;
+  duration_seconds?: number;
   video_type?: string | null;
   is_short?: boolean;
 }): boolean {
@@ -99,7 +134,7 @@ export function isPotentialTheatricalCandidate(video: {
 
 /**
  * Giao diện Frontend CHỈ hiển thị video trong tab "Phim Chiếu Rạp" và gắn badge `CHIẾU RẠP`
- * khi bản ghi trong database thực sự đã được xác minh cờ/tag `[CHIẾU RẠP]` hợp lệ
+ * khi bản ghi trong database thực sự đã được xác minh cờ `is_theatrical_movie = true` hoặc tag `[CHIẾU RẠP]` hợp lệ
  * (tuyệt đối KHÔNG tự suy diễn theo thời lượng >= 65 phút hay chữ "Full").
  */
 export function isTheatricalMovieVideo(video: {
@@ -111,12 +146,13 @@ export function isTheatricalMovieVideo(video: {
   episode_number?: number | null;
   video_type?: string | null;
   is_short?: boolean;
+  is_theatrical_movie?: boolean | null;
 }): boolean {
   if (isHardExcludedFromTheatrical(video)) {
     return false;
   }
 
-  if (video.video_type === 'theatrical') {
+  if (video.is_theatrical_movie === true) {
     return true;
   }
 

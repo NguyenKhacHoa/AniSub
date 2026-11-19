@@ -98,11 +98,12 @@ export async function verifyTheatricalReleaseWithGoogleSearch(
 
 Nhiệm vụ kiểm chứng nghiêm ngặt:
 1. Tra cứu trên Google xem tác phẩm trong video này có phải là một bộ **Anime Movie / Phim hoạt hình điện ảnh đã từng phát hành chiếu rạp chính thức (Theatrical Release)** hay không.
-2. Tìm chính xác tên tiếng Anh hoặc tiếng Nhật gốc của bản Movie điện ảnh đó (originalTitle) và năm công chiếu tại rạp (releaseYear).
-3. Nếu đây chỉ là TV Series nhiều tập, Web Drama, Hoạt hình 3D/AI, OVA, ONA, Special, hoặc video ghép/tổng hợp nhiều tập phim truyền hình thì BẮT BUỘC đặt "isTheatricalMovie": false.
+2. Kiểm tra xem tác phẩm có thuộc thể loại **Kinh dị / Máu me (Horror / Gore / Supernatural Horror)** hay không ("isHorrorOrGore": boolean).
+3. Tìm chính xác tên tiếng Anh hoặc tiếng Nhật gốc của bản Movie điện ảnh đó (originalTitle) và năm công chiếu tại rạp (releaseYear).
+4. Nếu đây chỉ là TV Series nhiều tập, Web Drama, Hoạt hình 3D/AI, OVA, ONA, Special, hoặc video ghép/tổng hợp nhiều tập phim truyền hình thì BẮT BUỘC đặt "isTheatricalMovie": false.
 
 Trả về DUY NHẤT 1 đối tượng JSON hợp lệ theo định dạng sau (không thêm markdown hay giải thích ngoài JSON):
-{"isTheatricalMovie": boolean, "originalTitle": string | null, "releaseYear": number | null}`;
+{"isTheatricalMovie": boolean, "isHorrorOrGore": boolean, "originalTitle": string | null, "releaseYear": number | null}`;
 
   for (const modelName of GEMINI_VISION_MODELS) {
     try {
@@ -122,6 +123,7 @@ Trả về DUY NHẤT 1 đối tượng JSON hợp lệ theo định dạng sau 
 
       const parsed = JSON.parse(jsonMatch[0]) as {
         isTheatricalMovie?: boolean;
+        isHorrorOrGore?: boolean;
         originalTitle?: string | null;
         releaseYear?: number | null;
       };
@@ -140,6 +142,7 @@ Trả về DUY NHẤT 1 đối tượng JSON hợp lệ theo định dạng sau 
 
       const verified =
         parsed.isTheatricalMovie === true &&
+        parsed.isHorrorOrGore !== true &&
         origTitle !== null &&
         year !== null;
 
