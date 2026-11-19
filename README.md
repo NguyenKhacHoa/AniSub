@@ -100,7 +100,7 @@ AniSub là rạp chiếu phim riêng tư dành cho chủ sở hữu và nhóm b�
 
 - **Framework:** Next.js 16 (App Router, React 19, TypeScript, Tailwind CSS v4)
 - **Database & Auth:** Supabase (PostgreSQL, Row Level Security, Google OAuth)
-- **AI Engine:** Google Gemini API (`@google/genai` — xoay vòng 3 model `gemini-2.5-flash` → `gemini-2.5-flash-lite` → `gemini-2.0-flash`)
+- **AI Engine:** Google Gemini API (`@google/genai` trên `v1beta` — ưu tiên `gemini-2.5-flash`, dự phòng `gemini-2.5-flash-lite`)
 - **Video & Metadata:** YouTube Data API v3 + YouTube IFrame Player API
 - **UI & Components:** Radix/Base UI, Lucide Icons, Sonner Toast, 4 bộ Theme CSS Variables (`midnight-void`, `deep-abyss`, `velvet-espresso`, `crisp-daylight`)
 

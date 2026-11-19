@@ -98,7 +98,6 @@ export function TheaterStage({
 }: TheaterStageProps) {
   const playerAnchorRef = useRef<HTMLDivElement>(null);
   const fullscreenContainerRef = useRef<HTMLDivElement>(null);
-  const aiPanelRef = useRef<HTMLDivElement>(null);
   const [isTheaterWide, setIsTheaterWide] = useState(false);
   const [isMiniPlayer, setIsMiniPlayer] = useState(false);
   const [insightState, setInsightState] = useState<{
@@ -447,12 +446,6 @@ export function TheaterStage({
       open: true,
       data: prev.videoId === video.video_id ? prev.data : null,
     }));
-    requestAnimationFrame(() => {
-      aiPanelRef.current?.scrollIntoView({
-        behavior: 'smooth',
-        block: 'nearest',
-      });
-    });
 
     if (insightData) return;
     await fetchAiInsight(false);
@@ -729,10 +722,128 @@ export function TheaterStage({
               </div>
             </div>
           </div>
+
+          {/* Khi mở AI Insight ở cột phải: giữ Tiêu đề, Tiến độ & Nút hành động ngay dưới trình phát */}
+          {showAiInsight && (
+            <div className="flex flex-col gap-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3.5 py-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <h1 className="line-clamp-2 text-sm font-semibold leading-snug text-[var(--text-primary)] sm:text-base">
+                    {video.title}
+                  </h1>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] tabular-nums text-[var(--text-secondary)]">
+                    <span className="inline-flex items-center gap-1">
+                      <Clock
+                        className={`size-3 ${
+                          isPlaying
+                            ? 'text-[var(--accent-primary)]'
+                            : 'text-[var(--text-secondary)]'
+                        }`}
+                      />
+                      <span>
+                        {formatDuration(currentTime)} /{' '}
+                        {formatDuration(effectiveDuration)} ({progressPercent}%)
+                      </span>
+                    </span>
+                    {isCompletedLive && (
+                      <span className="inline-flex items-center gap-1 font-medium text-emerald-500 dark:text-emerald-400">
+                        <CheckCircle2 className="size-3" />
+                        <span>Đã xem</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                  {!isChannelSubscribed && onSubscribeChannel && (
+                    <Button
+                      type="button"
+                      disabled={isSubscribingChannel}
+                      onClick={() =>
+                        onSubscribeChannel(
+                          video.channel_id,
+                          video.channel_title,
+                        )
+                      }
+                      className="h-8 rounded-lg bg-[var(--accent-primary)] px-2.5 text-xs font-semibold text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
+                    >
+                      {isSubscribingChannel ? (
+                        <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                      ) : (
+                        <Plus className="mr-1.5 size-3.5" />
+                      )}
+                      <span>
+                        {isSubscribingChannel
+                          ? 'Đang đăng ký...'
+                          : 'Đăng ký kênh'}
+                      </span>
+                    </Button>
+                  )}
+
+                  {effectiveNextVideo && (
+                    <Button
+                      type="button"
+                      onClick={() => onSelectVideo(effectiveNextVideo)}
+                      className="h-8 rounded-lg bg-[var(--accent-primary)] px-2.5 text-xs font-medium text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
+                    >
+                      <span>Tập tiếp theo</span>
+                      <SkipForward className="ml-1.5 size-3.5" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              <div className="h-1 w-full overflow-hidden rounded-full bg-[var(--bg-elevated)]">
+                <div
+                  className="h-full bg-[var(--accent-primary)] transition-[width] duration-300"
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+
+              <p className="text-[11px] text-[var(--text-secondary)]">
+                Tự động lưu tiến độ mỗi 10s • <kbd className="font-mono">S</kbd>{' '}
+                Bỏ Intro (+60s) • <kbd className="font-mono">F</kbd> Toàn màn
+                hình • <kbd className="font-mono">T</kbd> Rạp rộng •{' '}
+                <kbd className="font-mono">Esc</kbd> Đóng
+              </p>
+            </div>
+          )}
         </div>
 
-        {/* CỘT PHẢI: Chế độ Playlist Bộ phim (cuộn dọc cố định chiều cao) HOẶC Thông tin video lẻ */}
-        {activeSeries ? (
+        {/* CỘT PHẢI (~33% trên Desktop, chiều cao khớp cột trái): AI Insight & Chat HOẶC Playlist Bộ phim HOẶC Thông tin video lẻ */}
+        {showAiInsight ? (
+          <div
+            className={`${
+              isTheaterWide ? 'w-full' : 'lg:relative lg:col-span-4'
+            }`}
+          >
+            <div
+              className={`${
+                isTheaterWide
+                  ? 'h-[540px]'
+                  : 'h-[540px] lg:absolute lg:inset-0 lg:h-auto'
+              }`}
+            >
+              <AiCinemaInsightPanel
+                key={video.video_id}
+                video={video}
+                insight={insightData}
+                isLoading={isLoadingInsight}
+                isRefreshing={isRefreshingInsight}
+                hasSeriesPlaylist={Boolean(activeSeries)}
+                onRefresh={() => void fetchAiInsight(true)}
+                onClosePanel={() =>
+                  setInsightState((prev) => ({
+                    videoId: video.video_id,
+                    open: false,
+                    data: prev.videoId === video.video_id ? prev.data : null,
+                  }))
+                }
+                onSeekToSeconds={seekTo}
+              />
+            </div>
+          </div>
+        ) : activeSeries ? (
           <div
             className={`${isTheaterWide
               ? 'w-full'
@@ -1143,21 +1254,6 @@ export function TheaterStage({
               <kbd className="font-mono">Esc</kbd> Đóng
             </p>
           </div>
-        )}
-      </div>
-
-      {/* Khu vực AI Cinema Insight & Trợ lý Hỏi Đáp (Hiển thị rộng thoáng ngay dưới trình phát) */}
-      <div ref={aiPanelRef}>
-        {showAiInsight && (
-          <AiCinemaInsightPanel
-            key={video.video_id}
-            video={video}
-            insight={insightData}
-            isLoading={isLoadingInsight}
-            isRefreshing={isRefreshingInsight}
-            onRefresh={() => void fetchAiInsight(true)}
-            onSeekToSeconds={seekTo}
-          />
         )}
       </div>
     </section>

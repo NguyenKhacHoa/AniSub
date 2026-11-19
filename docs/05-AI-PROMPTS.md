@@ -7,8 +7,8 @@ Sử dụng SDK chính thức `@google/genai` phía server hợp nhất tại m�
 - **Series-Representative Batching & Rate Limit Protection:**
   - Gom nhóm theo `(channel_id, seriesKey)` (`extractSeriesInfo`), chỉ gửi **1 video đại diện / 1 bộ phim** rồi lan truyền kết quả cho toàn bộ các tập cùng bộ (giảm tới ~90% lượng gọi API).
   - Gom **4 bộ phim đại diện / 1 request**, sử dụng ảnh thumbnail `hqdefault.jpg` (480×360, fallback `mqdefault.jpg`) để nhìn rõ nét viền lineart vs khối da/tóc 3D AI.
-  - Xoay vòng tuần tự 3 model dự phòng khi gặp `429` hoặc `404`:
-    `['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash']`.
+  - Xoay vòng tuần tự model dự phòng trên endpoint `v1beta` khi gặp `429` hoặc `404`:
+    `['gemini-2.5-flash', 'gemini-2.5-flash-lite']`.
   - Nghỉ `2s` giữa các batch; nghỉ `8s` trước khi xoay model khi bị `429`.
 - **Tiêu chí nhận diện thị giác (2 nhãn duy nhất — KHÔNG đoán mò theo từ khóa cốt truyện):**
   - **`Phim AI`:** Đồ họa tả thực, 3D AI rendering (Midjourney, Kling, Flux, Hailuo, Vidu, Sora...), ánh sáng volumetric/cinematic, da và tóc có độ khối mịn, **KHÔNG** có nét viền mực đen kiểu vẽ tay.
