@@ -12,32 +12,33 @@ Toàn bộ trải nghiệm rạp chiếu phim được hợp nhất trên **1 m�
 - **Desktop / Tablet (`md` trở lên):** Thanh nổi cạnh trái rộng `64px` (có nút mở rộng lên `224px`), bo góc `16px`, đặt trên nền `--bg-surface` với viền `--border-subtle`.
 - **Mobile (`< md`):** Tự động chuyển thành thanh **Bottom Bar** cố định dưới đáy màn hình (`h-16`, `pb-[env(safe-area-inset-bottom)]`).
 - **Thành phần bên trong:**
-  1. Logo **AniSub** (reset về chế độ Rạp Phim).
-  2. Chuyển chế độ xem: **Rạp Phim**, **Đang Cày Dở**, và nút mở **Kho Kênh Đăng Ký**.
-  3. Cụm chấm lọc nhanh thể loại: `Phim AI`, `HH2D`, `Hoạt hình cát`.
-  4. Cụm đáy: Nút **Đổi Theme** (chọn nhanh 4 bộ Theme) + nút **Tài khoản Google** (hiển thị trạng thái đăng nhập / Whitelist).
+  1. Logo **AniSub** (reset về không gian Đã đăng ký).
+  2. Chuyển không gian & chế độ xem: **Đã đăng ký (Rạp Phim)**, **Khám phá YouTube (Explore)**, **Đang Cày Dở**, nút mở **Kho Kênh Đăng Ký**, và nút **Khiên Quản Trị** (dành riêng Admin).
+  3. Cụm chấm lọc nhanh 2 thể loại chuẩn: `Phim AI`, `HH2D`.
+  4. Cụm đáy: Nút **Đổi Theme** (chọn nhanh 4 bộ Theme) + nút **Tài khoản Google** (Avatar + tên thật, Popover quản lý Whitelist & Đăng xuất).
 
 ### 1.2. Không Gian Trung Tâm Biến Hình (Vùng A & Vùng B)
 - **Vùng A — Trạng thái 1 (`Command Hub`, khi chưa chọn video):**
   - Ô tìm kiếm nhanh hỗ trợ phím tắt `Ctrl + K` / `⌘K`.
   - Chỉ báo trạng thái kết nối `WebSub Live`.
   - Tabs lọc dạng video: `Tất cả` | `Tập mới` | `Phim Full`.
-  - Công tắc gạt `Hiện Trailer` và các pill lọc thể loại (`Tất cả thể loại`, `Phim AI`, `HH2D`, `Hoạt hình cát`).
-- **Vùng A — Trạng thái 2 (`Theater Stage`, khi bấm vào một khe phim):**
+  - Công tắc gạt `Hiện Trailer` và các pill lọc thể loại (`Tất cả thể loại`, `Phim AI`, `HH2D`).
+- **Vùng A — Trạng thái 2 (`Theater Stage`, khi bấm vào một khe phim hoặc Thẻ Bộ Phim):**
   - Mở rộng mượt mà thành sân khấu trình chiếu 2 cột:
-    - *Cột trái:* Khung YouTube IFrame `16:9` (`youtube-nocookie.com`) hỗ trợ **Full Screen (phím `F`)** và **Theater Wide Mode / Rạp rộng (phím `T`)** để bung rộng video tràn khung làm việc.
-    - *Cột phải:* Thông tin tập đang chiếu, nút **Tập tiếp theo**, nút **Tóm tắt nhanh bằng AI** (hiển thị 3 gạch đầu dòng từ cache `ai_summary`), và nút **Đóng trình phát (`X` / `Esc`)** để thu gọn về Trạng thái 1.
-- **Vùng B — Dòng Chảy Nội Dung Cấu Trúc (`Structured Cinema Rows`):**
-  - Hiển thị khung giữ chỗ cấu trúc sắc nét (không ảnh giả) cho 3 trạng thái thực tế:
-    1. *Chưa đăng nhập Google* (kèm nút đăng nhập & ghi chú `youtube.readonly`).
-    2. *Chưa chọn kênh theo dõi* (kèm nút mở Kho Kênh Đăng Ký).
-    3. *Sẵn sàng nhận dữ liệu Real-time từ Backend* (các khe chờ `16:9` cho `Tập mới`, `Đang cày dở`, `Phim Full`). Khi có dữ liệu thực từ `public.videos`, tự động render thành các khe phim tương tác.
+    - *Cột trái:* Khung YouTube IFrame Player API `16:9` hỗ trợ đồng bộ tiến độ thực từng giây, **Auto-Next** khi `YT.PlayerState.ENDED`, **Full Screen (phím `F`)** và **Theater Wide Mode / Rạp rộng (phím `T`)**.
+    - *Cột phải (Video lẻ):* Thông tin tập đang chiếu, tiến độ thời gian thực, nút **Tập tiếp theo**, nút **Tóm tắt nhanh bằng AI** (hiển thị 3 gạch đầu dòng từ cache `ai_summary`), và nút **Đóng trình phát (`X` / `Esc`)**.
+    - *Cột phải (Chế độ Danh sách phát Bộ phim — Series Playlist):* Bảng cuộn dọc có chiều cao cố định khớp khung video, hiển thị tên bộ phim, tổng số tập, nút đảo chiều (**Mới nhất** ↔ **Từ Tập 1**), đánh dấu nổi bật tập đang phát (`▶`), badge **`MỚI`**, và dấu tích đã xem (`✓`) đồng bộ từ `watch_progress`.
+- **Vùng B — Dòng Chảy Nội Dung Cấu Trúc (`Structured Cinema Rows` & `Series Grid`):**
+  - Tại tab **`Tập mới`**: hiển thị **Lưới Thẻ Bộ Phim (`SeriesGrid`)** trượt dọc với hiệu ứng xếp lớp danh sách phát, badge góc trái **`🔥 TẬP MỚI`** hoặc **`Đã xem Tập X`**, badge góc phải **`≡ N tập`**, tên gốc bộ phim, nhãn **`Mới nhất: ...`**, thể loại (`Phim AI` / `HH2D`) và tên kênh.
+  - Tại các tab khác: hiển thị khung giữ chỗ cấu trúc sắc nét (không ảnh giả) cho 3 trạng thái thực tế hoặc lưới thẻ video thực từ `public.videos` kèm **Two-Stage Infinite Scroll (DB Pagination → YouTube History Auto-Fetch)**:
+    - *Giai đoạn 1:* `IntersectionObserver` tự động nạp 60 phim/lần từ `/api/videos` theo đúng bộ lọc đang xem + nút dự phòng **"Tải thêm phim"** và bộ đếm `Đang hiển thị X / Y phim`.
+    - *Giai đoạn 2:* Khi đã chạm đáy kho DB (`loadedCount >= totalCount`) và vẫn còn kênh chưa cạn lịch sử YouTube, tự động gọi `POST /api/channels/load-more-all` (có khóa chống gọi trùng & nút thủ công **"📥 Kéo thêm phim cũ từ YouTube"**) để tiếp tục mở rộng kho phim vô tận, chỉ dừng khi hiển thị *"Đã tải toàn bộ video từ tất cả các kênh"*.
 
 ### 1.3. Ngăn Kéo Quản Lý Kênh Trượt Ngang (`Slide-over Channel Vault Drawer`)
 - Trượt mượt từ cạnh phải vào (`500ms` vào / `350ms` ra) chiếm **75% chiều rộng màn hình** trên Desktop (`w-full lg:w-[75vw]`), làm mờ nền phía sau (`backdrop-blur-md`).
 - Chia 2 cột:
-  - *Cột trái:* Danh sách kênh đồng bộ từ YouTube, nút **"Đồng bộ kênh từ YouTube"** kèm bộ đếm cooldown 6 tiếng (`last_synced_at`).
-  - *Cột phải:* Danh sách kênh đang kích hoạt trên AniSub kèm dropdown chọn thể loại mặc định (`Phim AI`, `HH2D`, `Hoạt hình cát`, `Khác`).
+  - *Cột trái:* Danh sách kênh đồng bộ từ YouTube, nút **"Đồng bộ kênh từ YouTube"** kèm bộ đếm cooldown 6 tiếng (`last_synced_at`) ở production và nút **"Quét lại nhãn AI"** toàn bộ.
+  - *Cột phải:* Danh sách kênh đang kích hoạt trên AniSub kèm cụm **2 nút Pill Multi-Tag** (`Phim AI`, `HH2D`, bắt buộc giữ tối thiểu 1 nhãn), nút **"+50 video cũ"** (kéo trang tiếp theo qua `next_page_token`) và nút **"Quét AI lại"** riêng cho từng kênh đa nhãn.
 
 ### 1.4. Cổng Đăng Nhập (`/login`), Luồng Xin Duyệt & Bảng Điều Khiển Admin (`/admin`)
 - **Màn hình `/login`:** Thiết kế tối giản theo phong cách rạp chiếu phim sử dụng đầy đủ CSS Variables của Theme hiện tại, kèm nút đổi nhanh Theme ở góc trên.
@@ -111,8 +112,6 @@ Mọi component UI **bắt buộc** sử dụng các biến CSS dưới đây (t
 - `--accent-primary`: `#0F766E`
 - `--accent-foreground`: `#FFFFFF`
 
-### 2.3. Nhãn thể loại (Genre Badges)
-- `Phim AI`: Tím (`bg-purple-500/15 text-purple-400 border-purple-500/35`, bản sáng dùng `text-purple-700`)
-- `HH2D`: Xanh dương (`bg-sky-500/15 text-sky-400 border-sky-500/35`, bản sáng dùng `text-sky-700`)
-- `Hoạt hình cát`: Vàng hổ phách (`bg-amber-500/15 text-amber-400 border-amber-500/35`, bản sáng dùng `text-amber-700`)
-- `Khác`: Trung tính (`bg-[var(--bg-elevated)] text-[var(--text-secondary)] border-[var(--border-subtle)]`)
+### 2.3. Nhãn thể loại chuẩn (2 Loại Duy Nhất)
+- `Phim AI`: Tím (`bg-purple-500/15 text-purple-700 dark:text-purple-300 border-purple-500/35`)
+- `HH2D`: Xanh dương (`bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/35`)

@@ -6,6 +6,7 @@ import Link from 'next/link';
 import {
   Clapperboard,
   Film,
+  Compass,
   Clock,
   FolderKanban,
   Palette,
@@ -50,9 +51,10 @@ interface FloatingRailProps {
   onSignOut: () => void;
 }
 
-const GENRE_DOTS: Array<
-  Extract<GenreFilter, 'Phim AI' | 'HH2D' | 'Hoạt hình cát'>
-> = ['Phim AI', 'HH2D', 'Hoạt hình cát'];
+const GENRE_DOTS: Array<Extract<GenreFilter, 'Phim AI' | 'HH2D'>> = [
+  'Phim AI',
+  'HH2D',
+];
 
 export function FloatingRail({
   viewMode,
@@ -100,7 +102,7 @@ export function FloatingRail({
   }, []);
 
   const handleToggleGenreDot = (
-    genre: Extract<GenreFilter, 'Phim AI' | 'HH2D' | 'Hoạt hình cát'>,
+    genre: Extract<GenreFilter, 'Phim AI' | 'HH2D'>,
   ) => {
     onChangeGenreFilter(genreFilter === genre ? 'all' : genre);
   };
@@ -180,7 +182,7 @@ export function FloatingRail({
               aria-current={
                 viewMode === 'cinema' && !isVaultOpen ? 'page' : undefined
               }
-              title="Rạp Phim"
+              title="Phim Đã Đăng Ký"
               className={`flex h-10 items-center rounded-xl transition-colors cursor-pointer ${
                 expanded ? 'w-full gap-3 px-3' : 'w-full justify-center'
               } ${
@@ -190,7 +192,28 @@ export function FloatingRail({
               }`}
             >
               <Film className="size-5 shrink-0" />
-              {expanded && <span className="truncate text-sm">Rạp Phim</span>}
+              {expanded && (
+                <span className="truncate text-sm">Đã đăng ký</span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onChangeViewMode('explore')}
+              aria-current={
+                viewMode === 'explore' && !isVaultOpen ? 'page' : undefined
+              }
+              title="Khám phá YouTube (Đề xuất cá nhân hóa)"
+              className={`flex h-10 items-center rounded-xl transition-colors cursor-pointer ${
+                expanded ? 'w-full gap-3 px-3' : 'w-full justify-center'
+              } ${
+                viewMode === 'explore' && !isVaultOpen
+                  ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)] font-medium'
+                  : 'text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              <Compass className="size-5 shrink-0" />
+              {expanded && <span className="truncate text-sm">Khám phá</span>}
             </button>
 
             <button
@@ -551,18 +574,18 @@ export function FloatingRail({
 
         <button
           type="button"
-          onClick={() => onChangeViewMode('continue')}
+          onClick={() => onChangeViewMode('explore')}
           aria-current={
-            viewMode === 'continue' && !isVaultOpen ? 'page' : undefined
+            viewMode === 'explore' && !isVaultOpen ? 'page' : undefined
           }
           className={`flex flex-col items-center justify-center gap-1 text-xs cursor-pointer ${
-            viewMode === 'continue' && !isVaultOpen
+            viewMode === 'explore' && !isVaultOpen
               ? 'text-[var(--accent-primary)] font-medium'
               : 'text-[var(--text-secondary)]'
           }`}
         >
-          <Clock className="size-5" />
-          <span>Cày Dở</span>
+          <Compass className="size-5" />
+          <span>Khám phá</span>
         </button>
 
         <button

@@ -169,7 +169,8 @@ function LoginGateContent() {
         provider: 'google',
         options: {
           redirectTo: `${window.location.origin}/auth/callback`,
-          scopes: 'https://www.googleapis.com/auth/youtube.readonly',
+          scopes:
+            'https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/youtube.force-ssl',
           queryParams: {
             access_type: 'offline',
             prompt: 'consent',

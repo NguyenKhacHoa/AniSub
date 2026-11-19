@@ -8,11 +8,18 @@ export type Json =
 
 export type WebSubStatus = 'pending' | 'active' | 'expired';
 
-export type GenreTag = 'Phim AI' | 'HH2D' | 'Hoạt hình cát' | 'Khác';
+export type GenreTag = 'Phim AI' | 'HH2D';
 
 export type VideoType = 'episode' | 'full_movie' | 'trailer';
 
 export type AccessRequestStatus = 'pending' | 'approved' | 'rejected';
+
+export type ExploreCacheRow = {
+  user_id: string;
+  keywords: string[];
+  items: Json;
+  updated_at: string;
+};
 
 export type AccessRequestRow = {
   id: string;
@@ -48,6 +55,7 @@ export type ChannelRow = {
   custom_url: string | null;
   websub_status: WebSubStatus;
   websub_expires_at: string | null;
+  next_page_token?: string | null;
   updated_at: string;
 };
 
@@ -57,6 +65,7 @@ export type UserChannelRow = {
   channel_id: string;
   is_selected: boolean;
   genre_tag: GenreTag;
+  genre_tags: GenreTag[] | null;
   created_at: string;
 };
 
@@ -74,6 +83,7 @@ export type VideoRow = {
   series_name: string | null;
   episode_number: number | null;
   ai_summary: string | null;
+  is_manual_tag?: boolean;
   created_at: string;
 };
 
@@ -134,6 +144,7 @@ export type Database = {
           custom_url?: string | null;
           websub_status?: WebSubStatus;
           websub_expires_at?: string | null;
+          next_page_token?: string | null;
           updated_at?: string;
         };
         Update: {
@@ -143,6 +154,7 @@ export type Database = {
           custom_url?: string | null;
           websub_status?: WebSubStatus;
           websub_expires_at?: string | null;
+          next_page_token?: string | null;
           updated_at?: string;
         };
         Relationships: [];
@@ -155,6 +167,7 @@ export type Database = {
           channel_id: string;
           is_selected?: boolean;
           genre_tag?: GenreTag;
+          genre_tags?: GenreTag[] | null;
           created_at?: string;
         };
         Update: {
@@ -163,6 +176,7 @@ export type Database = {
           channel_id?: string;
           is_selected?: boolean;
           genre_tag?: GenreTag;
+          genre_tags?: GenreTag[] | null;
           created_at?: string;
         };
         Relationships: [
@@ -198,6 +212,7 @@ export type Database = {
           series_name?: string | null;
           episode_number?: number | null;
           ai_summary?: string | null;
+          is_manual_tag?: boolean;
           created_at?: string;
         };
         Update: {
@@ -214,6 +229,7 @@ export type Database = {
           series_name?: string | null;
           episode_number?: number | null;
           ai_summary?: string | null;
+          is_manual_tag?: boolean;
           created_at?: string;
         };
         Relationships: [
@@ -284,6 +300,30 @@ export type Database = {
           created_at?: string;
         };
         Relationships: [];
+      };
+      explore_cache: {
+        Row: ExploreCacheRow;
+        Insert: {
+          user_id: string;
+          keywords?: string[];
+          items?: Json;
+          updated_at?: string;
+        };
+        Update: {
+          user_id?: string;
+          keywords?: string[];
+          items?: Json;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'explore_cache_user_id_fkey';
+            columns: ['user_id'];
+            isOneToOne: true;
+            referencedRelation: 'profiles';
+            referencedColumns: ['id'];
+          },
+        ];
       };
     };
     Views: Record<string, never>;

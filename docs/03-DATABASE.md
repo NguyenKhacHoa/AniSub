@@ -61,8 +61,12 @@ CREATE TABLE public.channels (
   custom_url TEXT,
   websub_status TEXT DEFAULT 'pending', -- 'pending' | 'active' | 'expired'
   websub_expires_at TIMESTAMPTZ,
+  next_page_token TEXT, -- Token phân trang YouTube playlistItems để kéo thêm 50 video cũ
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Migration bổ sung cột next_page_token cho DB đã khởi tạo trước đó:
+-- ALTER TABLE public.channels ADD COLUMN IF NOT EXISTS next_page_token TEXT;
 
 ALTER TABLE public.channels ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Authenticated users can read channels"
@@ -70,16 +74,22 @@ CREATE POLICY "Authenticated users can read channels"
   TO authenticated
   USING (TRUE);
 
--- 4. Bảng Kênh yêu thích của từng User (Whitelist cá nhân & Phân loại kênh)
+-- 4. Bảng Kênh yêu thích của từng User (Whitelist cá nhân & Phân loại đa nhãn kênh)
 CREATE TABLE public.user_channels (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   channel_id TEXT NOT NULL REFERENCES public.channels(channel_id) ON DELETE CASCADE,
   is_selected BOOLEAN DEFAULT FALSE, -- TRUE = Hiển thị trên bảng tin rạp phim
-  genre_tag TEXT DEFAULT 'HH2D', -- 'Phim AI' | 'HH2D' | 'Hoạt hình cát' | 'Khác'
+  genre_tag TEXT DEFAULT 'HH2D', -- Nhãn chính: 'Phim AI' | 'HH2D'
+  genre_tags TEXT[] DEFAULT ARRAY['HH2D']::TEXT[], -- Mảng đa nhãn: {'Phim AI','HH2D'}
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(user_id, channel_id)
 );
+
+-- Migration tinh gọn sang 2 nhãn ('Phim AI', 'HH2D') cho DB cũ:
+-- UPDATE public.videos SET detected_genre = 'HH2D' WHERE detected_genre NOT IN ('Phim AI', 'HH2D');
+-- UPDATE public.user_channels SET genre_tag = 'HH2D' WHERE genre_tag NOT IN ('Phim AI', 'HH2D');
+-- UPDATE public.user_channels SET genre_tags = ARRAY['HH2D']::TEXT[] WHERE genre_tags IS NULL OR array_length(genre_tags, 1) IS NULL;
 
 ALTER TABLE public.user_channels ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Users manage own channel selections"
@@ -99,12 +109,16 @@ CREATE TABLE public.videos (
   is_short BOOLEAN DEFAULT FALSE,
   -- Các trường được phân loại tự động bởi Gemini API:
   video_type TEXT DEFAULT 'episode', -- 'episode' (Tập mới) | 'full_movie' (Phim Full) | 'trailer' (Trailer/Khác)
-  detected_genre TEXT, -- 'Phim AI' | 'HH2D' | 'Hoạt hình cát' | 'Khác'
+  detected_genre TEXT, -- 'Phim AI' | 'HH2D'
   series_name TEXT, -- Tên bộ phim trích xuất từ tiêu đề (để gom nhóm các tập)
   episode_number INTEGER, -- Số tập trích xuất được (nếu có)
   ai_summary TEXT, -- Cache tóm tắt nội dung từ Gemini
+  is_manual_tag BOOLEAN DEFAULT FALSE, -- TRUE = Người dùng chỉnh tay (AI bỏ qua khi quét lại)
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Migration bổ sung cột is_manual_tag cho DB đã khởi tạo trước đó:
+-- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS is_manual_tag BOOLEAN DEFAULT FALSE;
 
 CREATE INDEX idx_videos_channel_published ON public.videos(channel_id, published_at DESC);
 CREATE INDEX idx_videos_type ON public.videos(video_type, is_short);
@@ -154,3 +168,17 @@ CREATE POLICY "Users can view own access request"
   ON public.access_requests FOR SELECT
   TO authenticated
   USING (email = auth.jwt() ->> 'email');
+
+-- 9. Bảng Cache đề xuất Khám Phá Cá Nhân Hóa (6 tiếng / user)
+CREATE TABLE public.explore_cache (
+  user_id UUID PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
+  keywords TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  items JSONB NOT NULL DEFAULT '[]'::JSONB,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.explore_cache ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users read own explore cache"
+  ON public.explore_cache FOR SELECT
+  TO authenticated
+  USING (auth.uid() = user_id);

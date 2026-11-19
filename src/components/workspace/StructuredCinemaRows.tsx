@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import Image from 'next/image';
 import {
   Clapperboard,
@@ -11,13 +11,20 @@ import {
   ShieldAlert,
   Clock,
   Film,
+  Lock,
+  Plus,
+  Check,
+  Loader2,
+  Compass,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   GENRE_DOT_STYLES,
+  PRIMARY_GENRE_OPTIONS,
   formatDuration,
   getProgressPercent,
   type CinemaVideoItem,
+  type PrimaryGenreTag,
   type WorkspaceAuthStatus,
   type WorkspaceViewMode,
 } from '@/types/workspace';
@@ -28,7 +35,22 @@ interface StructuredCinemaRowsProps {
   videos: CinemaVideoItem[];
   activeVideoId: string | null;
   viewMode: WorkspaceViewMode;
+  sectionHeading?: string;
+  sectionSubtitle?: string;
+  isLoadingExplore?: boolean;
+  selectedChannelIds?: Set<string>;
+  subscribingChannelId?: string | null;
+  totalVideosCount?: number;
+  hasMoreVideos?: boolean;
+  hasMoreYouTubeHistory?: boolean;
+  isLoadingFeed?: boolean;
+  isLoadingMoreVideos?: boolean;
+  isFetchingYouTubeHistory?: boolean;
+  onLoadMoreVideos?: () => void;
+  onFetchMoreFromYouTube?: () => void;
   onSelectVideo: (video: CinemaVideoItem) => void;
+  onCycleVideoGenre?: (video: CinemaVideoItem, nextGenre: PrimaryGenreTag) => void;
+  onSubscribeChannel?: (channelId: string, channelTitle?: string) => void;
   onOpenVault: () => void;
   onTriggerGoogleSignIn: () => void;
 }
@@ -63,10 +85,68 @@ export function StructuredCinemaRows({
   videos,
   activeVideoId,
   viewMode,
+  sectionHeading,
+  sectionSubtitle,
+  isLoadingExplore = false,
+  selectedChannelIds,
+  subscribingChannelId = null,
+  totalVideosCount,
+  hasMoreVideos = false,
+  hasMoreYouTubeHistory = false,
+  isLoadingFeed = false,
+  isLoadingMoreVideos = false,
+  isFetchingYouTubeHistory = false,
+  onLoadMoreVideos,
+  onFetchMoreFromYouTube,
   onSelectVideo,
+  onCycleVideoGenre,
+  onSubscribeChannel,
   onOpenVault,
   onTriggerGoogleSignIn,
 }: StructuredCinemaRowsProps) {
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (viewMode === 'explore' || viewMode === 'continue') return;
+    const canStage1 = hasMoreVideos && Boolean(onLoadMoreVideos);
+    const canStage2 =
+      !hasMoreVideos && hasMoreYouTubeHistory && Boolean(onFetchMoreFromYouTube);
+    if (!canStage1 && !canStage2) return;
+
+    const node = sentinelRef.current;
+    if (!node) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (
+          !entries[0]?.isIntersecting ||
+          isLoadingMoreVideos ||
+          isFetchingYouTubeHistory ||
+          isLoadingFeed
+        ) {
+          return;
+        }
+        if (canStage1) {
+          onLoadMoreVideos?.();
+        } else if (canStage2) {
+          onFetchMoreFromYouTube?.();
+        }
+      },
+      { rootMargin: '260px' },
+    );
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [
+    viewMode,
+    hasMoreVideos,
+    hasMoreYouTubeHistory,
+    isLoadingMoreVideos,
+    isFetchingYouTubeHistory,
+    isLoadingFeed,
+    onLoadMoreVideos,
+    onFetchMoreFromYouTube,
+  ]);
   // 1. Trạng thái: Chưa đăng nhập Google
   if (authStatus === 'unauthenticated') {
     return (
@@ -130,8 +210,27 @@ export function StructuredCinemaRows({
     );
   }
 
-  // 3. Trạng thái: Đã đăng nhập nhưng chưa chọn kênh theo dõi nào
-  if (selectedChannelCount === 0) {
+  // 3. Trạng thái: Đang tải Khám phá YouTube
+  if (viewMode === 'explore' && isLoadingExplore) {
+    return (
+      <section
+        aria-label="Đang tải đề xuất Khám phá YouTube"
+        className="flex flex-1 flex-col items-center justify-center rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-16 text-center"
+      >
+        <Loader2 className="size-7 animate-spin text-[var(--accent-primary)]" />
+        <h2 className="mt-3 text-base font-semibold text-[var(--text-primary)]">
+          Gemini AI đang phân tích gu xem & săn kênh mới cho bạn...
+        </h2>
+        <p className="mt-1 max-w-md text-xs text-[var(--text-secondary)]">
+          Đang tổng hợp lịch sử xem, video đã Like trên YouTube và lọc bỏ
+          YouTube Shorts.
+        </p>
+      </section>
+    );
+  }
+
+  // 3b. Trạng thái: Đã đăng nhập nhưng chưa chọn kênh theo dõi nào (chỉ áp dụng ngoài tab Khám phá)
+  if (viewMode !== 'explore' && selectedChannelCount === 0) {
     return (
       <section
         aria-label="Chưa chọn kênh theo dõi"
@@ -145,7 +244,7 @@ export function StructuredCinemaRows({
         </h2>
         <p className="mt-1.5 max-w-md text-sm text-[var(--text-secondary)] text-pretty">
           Mở ngăn kéo Kho Kênh Đăng Ký để đồng bộ danh sách kênh từ YouTube và
-          bật theo dõi các kênh Phim AI, HH2D hoặc Hoạt hình cát yêu thích.
+          bật theo dõi các kênh Phim AI hoặc HH2D yêu thích.
         </p>
         <Button
           type="button"
@@ -159,8 +258,40 @@ export function StructuredCinemaRows({
     );
   }
 
-  // 4. Trạng thái: Đã sẵn sàng nhận dữ liệu Real-time từ Backend (chưa có video thực trong DB)
+  // 3c. Trạng thái: Đang tải lô video theo bộ lọc mới
+  if (viewMode !== 'explore' && isLoadingFeed && videos.length === 0) {
+    return (
+      <section
+        aria-label="Đang tải danh sách phim"
+        className="flex flex-1 flex-col items-center justify-center rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-16 text-center"
+      >
+        <Loader2 className="size-7 animate-spin text-[var(--accent-primary)]" />
+        <p className="mt-3 text-sm font-medium text-[var(--text-primary)]">
+          Đang lọc và tải danh sách phim...
+        </p>
+      </section>
+    );
+  }
+
+  // 4. Trạng thái: Chưa có video (riêng Khám phá hiển thị empty gọn)
   if (videos.length === 0) {
+    if (viewMode === 'explore') {
+      return (
+        <section
+          aria-label="Chưa có video khám phá"
+          className="flex flex-1 flex-col items-center justify-center rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 py-14 text-center"
+        >
+          <Compass className="size-7 text-[var(--text-secondary)]" />
+          <h2 className="mt-3 text-base font-semibold text-[var(--text-primary)]">
+            Chưa có video đề xuất nào
+          </h2>
+          <p className="mt-1 max-w-md text-xs text-[var(--text-secondary)]">
+            Bấm nút &ldquo;Làm mới gợi ý&rdquo; trên thanh Command Hub để Gemini
+            AI săn kênh mới phù hợp với gu của bạn.
+          </p>
+        </section>
+      );
+    }
     const rowsToShow =
       viewMode === 'continue'
         ? STRUCTURAL_ROW_DEFINITIONS.filter((r) => r.id === 'continue-watching')
@@ -252,12 +383,27 @@ export function StructuredCinemaRows({
 
   return (
     <section aria-label="Danh sách khe phim" className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold text-[var(--text-primary)]">
-          {viewMode === 'continue' ? 'Đang cày dở' : 'Kho phim cập nhật'}
-        </h2>
-        <span className="text-xs tabular-nums text-[var(--text-secondary)]">
-          {displayVideos.length} video
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-base font-semibold text-[var(--text-primary)]">
+            {sectionHeading ||
+              (viewMode === 'continue' ? 'Đang cày dở' : 'Kho phim cập nhật')}
+          </h2>
+          {sectionSubtitle && (
+            <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+              {sectionSubtitle}
+            </p>
+          )}
+        </div>
+        <span className="inline-flex items-center gap-1.5 text-xs tabular-nums text-[var(--text-secondary)]">
+          {isLoadingFeed && (
+            <Loader2 className="size-3.5 animate-spin text-[var(--accent-primary)]" />
+          )}
+          <span>
+            {viewMode === 'explore'
+              ? `${displayVideos.length} video`
+              : `Đang hiển thị ${displayVideos.length} / ${Math.max(displayVideos.length, totalVideosCount ?? displayVideos.length)} phim`}
+          </span>
         </span>
       </div>
 
@@ -276,16 +422,32 @@ export function StructuredCinemaRows({
               video.progress_seconds,
               video.duration_seconds,
             );
-            const genreStyle =
-              video.detected_genre && video.detected_genre !== 'Khác'
-                ? GENRE_DOT_STYLES[video.detected_genre]
-                : null;
+            const currentPrimaryGenre: PrimaryGenreTag =
+              video.detected_genre &&
+              PRIMARY_GENRE_OPTIONS.includes(
+                video.detected_genre as PrimaryGenreTag,
+              )
+                ? (video.detected_genre as PrimaryGenreTag)
+                : 'HH2D';
+            const nextGenre: PrimaryGenreTag =
+              PRIMARY_GENRE_OPTIONS[
+                (PRIMARY_GENRE_OPTIONS.indexOf(currentPrimaryGenre) + 1) %
+                  PRIMARY_GENRE_OPTIONS.length
+              ];
+            const genreStyle = GENRE_DOT_STYLES[currentPrimaryGenre];
 
             return (
-              <button
+              <div
                 key={video.video_id}
-                type="button"
+                role="button"
+                tabIndex={0}
                 onClick={() => onSelectVideo(video)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onSelectVideo(video);
+                  }
+                }}
                 className={`group flex flex-col overflow-hidden rounded-xl border text-left transition-colors cursor-pointer ${
                   isPlaying
                     ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]'
@@ -329,28 +491,139 @@ export function StructuredCinemaRows({
 
                 <div className="flex flex-1 flex-col justify-between p-3.5">
                   <div>
-                    {genreStyle && (
-                      <span
-                        className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-medium ${genreStyle.badgeClass}`}
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onCycleVideoGenre?.(video, nextGenre);
+                        }}
+                        title={
+                          video.is_manual_tag
+                            ? `Đã khóa thủ công (${genreStyle.label}) — Bấm để đổi sang ${nextGenre}`
+                            : `Bấm để đổi nhanh sang ${nextGenre}`
+                        }
+                        className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-medium transition-opacity hover:opacity-85 cursor-pointer ${genreStyle.badgeClass}`}
                       >
-                        {genreStyle.label}
-                        {video.episode_number !== null
-                          ? ` • Tập ${video.episode_number}`
-                          : ''}
-                      </span>
-                    )}
+                        {video.is_manual_tag && (
+                          <Lock className="size-2.5 shrink-0" />
+                        )}
+                        <span>
+                          {genreStyle.label}
+                          {video.episode_number !== null
+                            ? ` • Tập ${video.episode_number}`
+                            : ''}
+                        </span>
+                      </button>
+                    </div>
                     <h3 className="mt-2 line-clamp-2 text-sm font-semibold text-[var(--text-primary)]">
                       {video.title}
                     </h3>
                   </div>
 
-                  <p className="mt-2 truncate text-xs text-[var(--text-secondary)]">
-                    {video.channel_title || video.channel_id}
-                  </p>
+                  <div className="mt-2.5 flex items-center justify-between gap-2">
+                    <p className="min-w-0 flex-1 truncate text-xs text-[var(--text-secondary)]">
+                      {video.channel_title || video.channel_id}
+                    </p>
+
+                    {viewMode === 'explore' &&
+                      (selectedChannelIds?.has(video.channel_id) ? (
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-emerald-500/35 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                          <Check className="size-3" />
+                          <span>Đã theo dõi</span>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={subscribingChannelId === video.channel_id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSubscribeChannel?.(
+                              video.channel_id,
+                              video.channel_title,
+                            );
+                          }}
+                          className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-2.5 text-[11px] font-semibold text-[var(--accent-foreground)] transition-opacity hover:opacity-90 disabled:opacity-60 cursor-pointer"
+                        >
+                          {subscribingChannelId === video.channel_id ? (
+                            <Loader2 className="size-3 animate-spin" />
+                          ) : (
+                            <Plus className="size-3" />
+                          )}
+                          <span>Đăng ký kênh</span>
+                        </button>
+                      ))}
+                  </div>
                 </div>
-              </button>
+              </div>
             );
           })}
+        </div>
+      )}
+
+      {viewMode === 'cinema' && displayVideos.length > 0 && (
+        <div
+          ref={sentinelRef}
+          className="flex flex-col items-center justify-center gap-2.5 pt-3 pb-4"
+        >
+          {hasMoreVideos && onLoadMoreVideos ? (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isLoadingMoreVideos}
+              onClick={onLoadMoreVideos}
+              className="h-10 rounded-xl border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] cursor-pointer"
+            >
+              {isLoadingMoreVideos ? (
+                <>
+                  <Loader2 className="mr-2 size-4 animate-spin text-[var(--accent-primary)]" />
+                  <span>Đang tự động tải thêm phim...</span>
+                </>
+              ) : (
+                <span>
+                  Tải thêm phim ({displayVideos.length} /{' '}
+                  {Math.max(
+                    displayVideos.length,
+                    totalVideosCount ?? displayVideos.length,
+                  )}
+                  )
+                </span>
+              )}
+            </Button>
+          ) : hasMoreYouTubeHistory && onFetchMoreFromYouTube ? (
+            <div className="flex flex-col items-center gap-2 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-5 py-3.5 text-center">
+              <p className="inline-flex items-center gap-2 text-xs font-medium text-[var(--text-secondary)]">
+                {isFetchingYouTubeHistory && (
+                  <Loader2 className="size-3.5 animate-spin text-[var(--accent-primary)]" />
+                )}
+                <span>
+                  {isFetchingYouTubeHistory
+                    ? `Đã hết ${Math.max(displayVideos.length, totalVideosCount ?? displayVideos.length)} phim lưu sẵn — Đang tự động kéo thêm phim cũ từ YouTube...`
+                    : `Đã hết ${Math.max(displayVideos.length, totalVideosCount ?? displayVideos.length)} phim lưu sẵn trong kho`}
+                </span>
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isFetchingYouTubeHistory}
+                onClick={onFetchMoreFromYouTube}
+                className="h-9 rounded-xl border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-4 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] cursor-pointer"
+              >
+                {isFetchingYouTubeHistory ? (
+                  <>
+                    <Loader2 className="mr-2 size-3.5 animate-spin text-[var(--accent-primary)]" />
+                    <span>Đang kéo từ YouTube...</span>
+                  </>
+                ) : (
+                  <span>📥 Kéo thêm phim cũ từ YouTube</span>
+                )}
+              </Button>
+            </div>
+          ) : (
+            <p className="py-2 text-xs text-[var(--text-secondary)]">
+              Đã tải toàn bộ video từ tất cả các kênh
+            </p>
+          )}
         </div>
       )}
     </section>

@@ -1,17 +1,21 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
-import { Search, Radio, X } from 'lucide-react';
+import { Search, Radio, X, Compass, Film, RefreshCw, Sparkles } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
+import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   GENRE_DOT_STYLES,
   type GenreFilter,
   type VideoTypeFilter,
+  type WorkspaceViewMode,
 } from '@/types/workspace';
 
 interface CommandHubProps {
+  viewMode: WorkspaceViewMode;
+  onChangeViewMode: (mode: WorkspaceViewMode) => void;
   searchQuery: string;
   onChangeSearch: (value: string) => void;
   videoType: VideoTypeFilter;
@@ -22,16 +26,20 @@ interface CommandHubProps {
   onChangeGenreFilter: (genre: GenreFilter) => void;
   isRealtimeConnected?: boolean;
   totalMatchingVideos: number;
+  exploreKeywords?: string[];
+  isLoadingExplore?: boolean;
+  onRefreshExplore?: () => void;
 }
 
 const GENRE_PILLS: Array<{ value: GenreFilter; label: string }> = [
   { value: 'all', label: 'Tất cả thể loại' },
   { value: 'Phim AI', label: 'Phim AI' },
   { value: 'HH2D', label: 'HH2D' },
-  { value: 'Hoạt hình cát', label: 'Hoạt hình cát' },
 ];
 
 export function CommandHub({
+  viewMode,
+  onChangeViewMode,
   searchQuery,
   onChangeSearch,
   videoType,
@@ -42,6 +50,9 @@ export function CommandHub({
   onChangeGenreFilter,
   isRealtimeConnected = true,
   totalMatchingVideos,
+  exploreKeywords = [],
+  isLoadingExplore = false,
+  onRefreshExplore,
 }: CommandHubProps) {
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -56,23 +67,59 @@ export function CommandHub({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  const isExplore = viewMode === 'explore';
+
   return (
     <section
       aria-label="Command Hub — Thanh điều khiển và lọc nhanh"
       className="flex flex-col gap-3 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3.5 sm:p-4"
     >
-      {/* Hàng 1: Tìm kiếm (Ctrl+K) + Trạng thái WebSub Live + Tabs Dạng phim + Switch Hiện Trailer */}
+      {/* Hàng 1: Chuyển 2 Không gian (Đã đăng ký / Khám phá) + Tìm kiếm (Ctrl+K) + WebSub Live / Làm mới */}
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-1 flex-wrap items-center gap-2.5">
+          {/* Chuyển 2 Không gian Rạp Chiếu */}
+          <div
+            role="group"
+            aria-label="Chuyển không gian rạp chiếu"
+            className="inline-flex h-10 items-center rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-1"
+          >
+            <button
+              type="button"
+              onClick={() => onChangeViewMode('cinema')}
+              aria-pressed={!isExplore}
+              className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors cursor-pointer ${
+                !isExplore
+                  ? 'bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              <Film className="size-3.5" />
+              <span>Đã đăng ký</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onChangeViewMode('explore')}
+              aria-pressed={isExplore}
+              className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors cursor-pointer ${
+                isExplore
+                  ? 'bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              <Compass className="size-3.5" />
+              <span>Khám phá YouTube</span>
+            </button>
+          </div>
+
           {/* Ô tìm kiếm nhanh Ctrl+K */}
-          <div className="relative min-w-[220px] flex-1 sm:max-w-sm">
+          <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--text-secondary)]" />
             <Input
               ref={searchRef}
               type="search"
               value={searchQuery}
               onChange={(e) => onChangeSearch(e.target.value)}
-              placeholder="Tìm nhanh phim, series hoặc kênh..."
+              placeholder="Tìm nhanh phim hoặc kênh..."
               aria-label="Tìm kiếm nhanh phim hoặc kênh"
               className="h-10 w-full rounded-xl border-[var(--border-subtle)] bg-[var(--bg-canvas)] pl-9 pr-16 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]"
             />
@@ -91,99 +138,142 @@ export function CommandHub({
               </kbd>
             )}
           </div>
+        </div>
 
-          {/* Trạng thái WebSub Live */}
-          <div className="inline-flex h-10 items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 text-xs font-medium">
-            <Radio
-              className={`size-3.5 ${
-                isRealtimeConnected
-                  ? 'text-emerald-500 dark:text-emerald-400 animate-pulse'
-                  : 'text-[var(--text-secondary)]'
-              }`}
-            />
-            <span className="text-[var(--text-primary)]">WebSub Live</span>
+        {/* Cụm phải: Ở chế độ Khám phá hiện nút Làm mới gợi ý; ở chế độ Đã đăng ký hiện Tabs + Trailer */}
+        {isExplore ? (
+          <div className="flex flex-wrap items-center gap-2.5">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isLoadingExplore}
+              onClick={onRefreshExplore}
+              className="h-10 rounded-xl border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3.5 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] cursor-pointer"
+            >
+              <RefreshCw
+                className={`mr-1.5 size-3.5 text-[var(--accent-primary)] ${
+                  isLoadingExplore ? 'animate-spin' : ''
+                }`}
+              />
+              <span>
+                {isLoadingExplore ? 'Đang săn kênh mới...' : 'Làm mới gợi ý'}
+              </span>
+            </Button>
           </div>
-        </div>
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-2.5 lg:justify-end">
+            <div className="hidden h-10 items-center gap-1.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 text-xs font-medium xl:inline-flex">
+              <Radio
+                className={`size-3.5 ${
+                  isRealtimeConnected
+                    ? 'text-emerald-500 dark:text-emerald-400 animate-pulse'
+                    : 'text-[var(--text-secondary)]'
+                }`}
+              />
+              <span className="text-[var(--text-primary)]">WebSub Live</span>
+            </div>
 
-        {/* Cụm Tab dạng phim + Switch Hiện Trailer */}
-        <div className="flex flex-wrap items-center justify-between gap-2.5 lg:justify-end">
-          <Tabs
-            value={videoType}
-            onValueChange={(val) => onChangeVideoType(val as VideoTypeFilter)}
-          >
-            <TabsList className="h-10 rounded-xl bg-[var(--bg-canvas)] p-1">
-              <TabsTrigger
-                value="all"
-                className="rounded-lg px-3 text-xs font-medium data-[state=active]:bg-[var(--accent-primary)] data-[state=active]:text-[var(--accent-foreground)] cursor-pointer"
-              >
-                Tất cả
-              </TabsTrigger>
-              <TabsTrigger
-                value="episode"
-                className="rounded-lg px-3 text-xs font-medium data-[state=active]:bg-[var(--accent-primary)] data-[state=active]:text-[var(--accent-foreground)] cursor-pointer"
-              >
-                Tập mới
-              </TabsTrigger>
-              <TabsTrigger
-                value="full_movie"
-                className="rounded-lg px-3 text-xs font-medium data-[state=active]:bg-[var(--accent-primary)] data-[state=active]:text-[var(--accent-foreground)] cursor-pointer"
-              >
-                Phim Full
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
+            <Tabs
+              value={videoType}
+              onValueChange={(val) => onChangeVideoType(val as VideoTypeFilter)}
+            >
+              <TabsList className="h-10 rounded-xl bg-[var(--bg-canvas)] p-1">
+                <TabsTrigger
+                  value="all"
+                  className="rounded-lg px-3 text-xs font-medium data-[state=active]:bg-[var(--accent-primary)] data-[state=active]:text-[var(--accent-foreground)] cursor-pointer"
+                >
+                  Tất cả
+                </TabsTrigger>
+                <TabsTrigger
+                  value="episode"
+                  className="rounded-lg px-3 text-xs font-medium data-[state=active]:bg-[var(--accent-primary)] data-[state=active]:text-[var(--accent-foreground)] cursor-pointer"
+                >
+                  Tập mới
+                </TabsTrigger>
+                <TabsTrigger
+                  value="full_movie"
+                  className="rounded-lg px-3 text-xs font-medium data-[state=active]:bg-[var(--accent-primary)] data-[state=active]:text-[var(--accent-foreground)] cursor-pointer"
+                >
+                  Phim Full
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
 
-          <label className="flex h-10 items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 text-xs font-medium text-[var(--text-secondary)] cursor-pointer">
-            <span>Hiện Trailer</span>
-            <Switch
-              checked={showTrailers}
-              onCheckedChange={onToggleTrailers}
-              aria-label="Hiện Trailer"
-            />
-          </label>
-        </div>
+            <label className="flex h-10 items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 text-xs font-medium text-[var(--text-secondary)] cursor-pointer">
+              <span>Hiện Trailer</span>
+              <Switch
+                checked={showTrailers}
+                onCheckedChange={onToggleTrailers}
+                aria-label="Hiện Trailer"
+              />
+            </label>
+          </div>
+        )}
       </div>
 
-      {/* Hàng 2: Các pill lọc thể loại + Bộ đếm video */}
+      {/* Hàng 2: 2 Pill Thể loại chuẩn ('Phim AI' | 'HH2D') hoặc Từ khóa AI đang săn ở chế độ Khám phá */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border-subtle)] pt-3">
-        <div
-          role="group"
-          aria-label="Lọc theo thể loại"
-          className="flex flex-wrap items-center gap-2"
-        >
-          {GENRE_PILLS.map((pill) => {
-            const active = genreFilter === pill.value;
-            const style =
-              pill.value !== 'all' ? GENRE_DOT_STYLES[pill.value] : null;
+        {isExplore ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--ai-accent)]">
+              <Sparkles className="size-3.5" />
+              <span>Từ khóa đúng gu:</span>
+            </span>
+            {exploreKeywords.length > 0 ? (
+              exploreKeywords.map((kw) => (
+                <span
+                  key={kw}
+                  className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 py-1 text-xs text-[var(--text-primary)]"
+                >
+                  {kw}
+                </span>
+              ))
+            ) : (
+              <span className="text-xs text-[var(--text-secondary)]">
+                Đang học từ lịch sử xem & Like YouTube của bạn...
+              </span>
+            )}
+          </div>
+        ) : (
+          <div
+            role="group"
+            aria-label="Lọc theo thể loại"
+            className="flex flex-wrap items-center gap-2"
+          >
+            {GENRE_PILLS.map((pill) => {
+              const active = genreFilter === pill.value;
+              const style =
+                pill.value !== 'all' ? GENRE_DOT_STYLES[pill.value] : null;
 
-            return (
-              <button
-                key={pill.value}
-                type="button"
-                aria-pressed={active}
-                onClick={() => onChangeGenreFilter(pill.value)}
-                className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors cursor-pointer ${
-                  active
-                    ? style
-                      ? `${style.badgeClass} ring-1 ring-current`
-                      : 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
-                    : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
-                }`}
-              >
-                {style && (
-                  <span className={`size-2 rounded-full ${style.dotClass}`} />
-                )}
-                <span>{pill.label}</span>
-              </button>
-            );
-          })}
-        </div>
+              return (
+                <button
+                  key={pill.value}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => onChangeGenreFilter(pill.value)}
+                  className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors cursor-pointer ${
+                    active
+                      ? style
+                        ? `${style.badgeClass} ring-1 ring-current`
+                        : 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
+                      : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+                  }`}
+                >
+                  {style && (
+                    <span className={`size-2 rounded-full ${style.dotClass}`} />
+                  )}
+                  <span>{pill.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         <span className="text-xs tabular-nums text-[var(--text-secondary)]">
           <strong className="font-semibold text-[var(--text-primary)]">
             {totalMatchingVideos}
           </strong>{' '}
-          khe phim sẵn sàng
+          {isExplore ? 'video đề xuất' : 'khe phim sẵn sàng'}
         </span>
       </div>
     </section>

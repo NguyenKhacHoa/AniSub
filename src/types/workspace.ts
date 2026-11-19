@@ -7,15 +7,18 @@ import type {
   WatchProgressRow,
 } from '@/types/database';
 
-export type WorkspaceViewMode = 'cinema' | 'continue';
+export type WorkspaceViewMode = 'cinema' | 'explore' | 'continue';
 export type VideoTypeFilter = 'all' | 'episode' | 'full_movie';
-export type GenreFilter =
-  | 'all'
-  | Extract<GenreTag, 'Phim AI' | 'HH2D' | 'Hoạt hình cát'>;
+export type GenreFilter = 'all' | GenreTag;
+export type PrimaryGenreTag = GenreTag;
+
+export const PRIMARY_GENRE_OPTIONS: PrimaryGenreTag[] = ['Phim AI', 'HH2D'];
+export const GENRE_OPTIONS: GenreTag[] = ['Phim AI', 'HH2D'];
 
 export interface ChannelWithSelection extends ChannelRow {
   is_selected: boolean;
   genre_tag: GenreTag;
+  genre_tags: PrimaryGenreTag[];
   user_channel_id?: UserChannelRow['id'];
 }
 
@@ -23,6 +26,7 @@ export interface CinemaVideoItem extends VideoRow {
   channel_title?: string;
   progress_seconds: WatchProgressRow['progress_seconds'];
   is_completed: WatchProgressRow['is_completed'];
+  matched_keyword?: string;
 }
 
 export type WorkspaceAuthStatus =
@@ -35,15 +39,8 @@ export interface WorkspaceUserState {
   profile: ProfileRow | null;
 }
 
-export const GENRE_OPTIONS: GenreTag[] = [
-  'Phim AI',
-  'HH2D',
-  'Hoạt hình cát',
-  'Khác',
-];
-
 export const GENRE_DOT_STYLES: Record<
-  Extract<GenreTag, 'Phim AI' | 'HH2D' | 'Hoạt hình cát'>,
+  PrimaryGenreTag,
   { dotClass: string; badgeClass: string; label: string }
 > = {
   'Phim AI': {
@@ -58,13 +55,14 @@ export const GENRE_DOT_STYLES: Record<
       'bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/35',
     label: 'HH2D',
   },
-  'Hoạt hình cát': {
-    dotClass: 'bg-amber-500 dark:bg-amber-400',
-    badgeClass:
-      'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/35',
-    label: 'Hoạt hình cát',
-  },
 };
+
+/**
+ * Chuẩn hóa nhãn cũ ('Hoạt hình cát', 'Khác', null) về 2 nhãn chuẩn ('Phim AI' | 'HH2D').
+ */
+export function normalizeGenreTag(value: string | null | undefined): GenreTag {
+  return value === 'Phim AI' ? 'Phim AI' : 'HH2D';
+}
 
 export function formatDuration(totalSeconds: number): string {
   const safeSeconds = Math.max(0, Math.floor(totalSeconds));
