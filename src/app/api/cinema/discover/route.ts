@@ -3,30 +3,42 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { verifyWhitelistedUser } from '@/lib/auth/whitelist';
 import { callGeminiWithFallback } from '@/lib/gemini/client';
 import { parseIso8601Duration } from '@/lib/youtube/api';
+import type { CinemaFormat } from '@/types/database';
 import {
   CINEMA_HORROR_PREFILTER_RE,
+  SAFE_CINEMA_GENRES,
   THEATRICAL_HARD_EXCLUSION_RE,
   THEATRICAL_MAX_DURATION_SECONDS,
   THEATRICAL_MIN_DURATION_SECONDS,
   VERIFIED_THEATRICAL_TAG,
   isTheatricalMovieVideo,
+  resolveCinemaFormat,
   type CinemaVideoItem,
 } from '@/types/workspace';
 
 export const maxDuration = 30;
 
 const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
+const DB_BATCH_SIZE = 1000;
+const MAX_CANDIDATES_PER_BATCH = 18;
 
 /**
- * Bộ từ khóa chuyên biệt để tự động săn Phim Chiếu Rạp miễn phí trên toàn YouTube
+ * Bộ từ khóa mở rộng bao quát cả Anime/Hoạt hình chiếu rạp lẫn Phim điện ảnh người đóng (Live-Action)
  */
 const CINEMA_DISCOVER_QUERIES = [
   'anime movie vietsub',
   'phim hoạt hình chiếu rạp vietsub',
-  'bản điện ảnh vietsub',
+  'phim điện ảnh chiếu rạp vietsub',
+  'bản điện ảnh full vietsub',
+  'phim lẻ chiếu rạp vietsub',
 ] as const;
 
+const YOUTUBE_SEARCH_ORDERS = ['relevance', 'date', 'viewCount'] as const;
+
+// Trạng thái phân trang tích lũy trên server (kết hợp nhận thêm từ client để bền vững trên serverless)
 let lastGlobalDiscoverAtMs = 0;
+let serverDiscoveryRound = 0;
+let serverPageTokens: Record<string, string> = {};
 
 interface CandidateMovieItem {
   videoId: string;
@@ -37,6 +49,7 @@ interface CandidateMovieItem {
   thumbnailUrl: string | null;
   publishedAt: string;
   durationSeconds: number;
+  isExistingBackfill?: boolean;
 }
 
 interface GroundedMovieVerification {
@@ -45,6 +58,73 @@ interface GroundedMovieVerification {
   isHorrorOrGore: boolean;
   canonicalTitle: string | null;
   releaseYear: number | null;
+  cinemaFormat: CinemaFormat;
+  cinemaGenres: string[];
+}
+
+function normalizeCinemaFormat(
+  raw: unknown,
+  candidate?: CandidateMovieItem,
+): CinemaFormat {
+  if (typeof raw === 'string') {
+    const lower = raw.toLowerCase();
+    if (
+      lower.includes('người đóng') ||
+      lower.includes('nguoi dong') ||
+      lower.includes('live-action') ||
+      lower.includes('live action')
+    ) {
+      return 'Phim Người Đóng';
+    }
+    if (
+      lower.includes('anime') ||
+      lower.includes('hoạt hình') ||
+      lower.includes('hoat hinh') ||
+      lower.includes('animation')
+    ) {
+      return 'Anime / Hoạt hình';
+    }
+  }
+  if (candidate) {
+    return resolveCinemaFormat({
+      title: candidate.title,
+      description: candidate.description,
+      channel_title: candidate.channelTitle,
+    });
+  }
+  return 'Anime / Hoạt hình';
+}
+
+function normalizeSafeCinemaGenres(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const validSet = new Set<string>();
+  const safeLowerMap = new Map<string, string>(
+    SAFE_CINEMA_GENRES.map((g) => [g.toLowerCase(), g]),
+  );
+
+  for (const item of raw) {
+    if (typeof item !== 'string') continue;
+    const trimmed = item.trim();
+    if (!trimmed) continue;
+    const lower = trimmed.toLowerCase();
+    // Tuyệt đối loại bỏ mọi tag kinh dị nếu lỡ lọt
+    if (CINEMA_HORROR_PREFILTER_RE.test(lower)) continue;
+
+    const exact = safeLowerMap.get(lower);
+    if (exact) {
+      validSet.add(exact);
+      continue;
+    }
+
+    for (const [k, canonical] of safeLowerMap.entries()) {
+      if (lower.includes(k) || k.includes(lower)) {
+        validSet.add(canonical);
+        break;
+      }
+    }
+  }
+
+  return Array.from(validSet).slice(0, 3);
 }
 
 /**
@@ -78,10 +158,10 @@ function passesCinemaLayer1PreFilter(candidate: CandidateMovieItem): boolean {
 }
 
 /**
- * Lớp 2: Xác minh thực tế qua Gemini + Google Search Grounding (`tools: [{ googleSearch: {} }]` / `google_search` trên `v1beta`)
- * - Kiểm tra 1: Có phải là Phim Điện Ảnh / Anime Movie từng công chiếu thương mại ngoài rạp (Theatrical Release) không?
- * - Kiểm tra 2: Có thuộc thể loại Kinh dị / Máu me (Horror / Gore / Supernatural Horror) không?
- * - Điều kiện lưu: isTheatricalMovie === true VÀ isHorrorOrGore === false.
+ * Lớp 2: Xác minh thực tế qua Gemini + Google Search Grounding (`tools: [{ googleSearch: {} }]` trên `v1beta`)
+ * - Đón nhận cả Anime/Hoạt hình chiếu rạp lẫn Phim điện ảnh người đóng (Live-Action)
+ * - Chặn tuyệt đối Kinh dị / Máu me (`isHorrorOrGore === false`)
+ * - Trả về đầy đủ `cinemaFormat` (`Anime / Hoạt hình` | `Phim Người Đóng`) và `cinemaGenres` an toàn
  */
 async function verifyCandidatesWithGoogleSearchGrounding(
   candidates: CandidateMovieItem[],
@@ -91,7 +171,9 @@ async function verifyCandidatesWithGoogleSearchGrounding(
     return verifiedMap;
   }
 
-  const batch = candidates.slice(0, 12);
+  const batch = candidates.slice(0, MAX_CANDIDATES_PER_BATCH);
+  const candidateById = new Map(batch.map((c) => [c.videoId, c]));
+
   const candidatesBlock = batch
     .map(
       (c, idx) =>
@@ -99,19 +181,23 @@ async function verifyCandidatesWithGoogleSearchGrounding(
    - Tiêu đề: "${c.title}"
    - Kênh: "${c.channelTitle}"
    - Thời lượng: ${Math.round(c.durationSeconds / 60)} phút
-   - Mô tả ngắn: "${c.description.slice(0, 220).replace(/\s+/g, ' ')}"`,
+   - Mô tả ngắn: "${c.description.slice(0, 200).replace(/\s+/g, ' ')}"`,
     )
     .join('\n\n');
 
-  const prompt = `Bạn là hệ thống kiểm duyệt Phim Chiếu Rạp của AniSub. Hãy sử dụng công cụ Google Search để tra cứu thông tin phát hành thực tế cho từng video ứng viên dưới đây:
+  const prompt = `Bạn là hệ thống kiểm duyệt & phân loại Phim Chiếu Rạp của AniSub. Hãy sử dụng công cụ Google Search để tra cứu thông tin phát hành thực tế cho từng video ứng viên dưới đây:
 
 ${candidatesBlock}
 
-YÊU CẦU KIỂM DUYỆT NGHIÊM NGẶT CHO TỪNG VIDEO:
-1. "isTheatricalMovie": Tra cứu Google xem tác phẩm này có phải là một bộ **Phim Điện Ảnh / Anime Movie đã từng công chiếu thương mại ngoài rạp (Theatrical Release)** hay không. Nếu chỉ là TV Series ghép tập, Web Drama, OVA, ONA, Phim AI 3D hoặc video tổng hợp thì BẮT BUỘC đặt false.
-2. "isHorrorOrGore": Kiểm tra xem bộ phim có thuộc thể loại **Kinh dị / Máu me / Rùng rợn / Ma ám / Xác sống (Horror / Gore / Supernatural Horror / Slasher)** hay không. Nếu có yếu tố kinh dị/máu me thì BẮT BUỘC đặt true. (Chỉ các thể loại an toàn như Hành động, Phiêu lưu, Giả tưởng, Viễn tưởng, Tình cảm/Đời thường, Hài hước, Gia đình, Võ thuật/Tu tiên mới đặt false).
+YÊU CẦU KIỂM DUYỆT & PHÂN LOẠI NGHIÊM NGẶT CHO TỪNG VIDEO:
+1. "isTheatricalMovie": Tra cứu Google xem tác phẩm này có phải là một bộ **Phim Điện Ảnh Chiếu Rạp (bao gồm cả Anime/Hoạt hình chiếu rạp LẪN Phim điện ảnh người đóng Live-Action đã từng công chiếu thương mại ngoài rạp — Theatrical Release)** hay không. Nếu chỉ là TV Series ghép tập, Web Drama, OVA, Phim AI 3D hoặc video tổng hợp/review thì BẮT BUỘC đặt false.
+2. "isHorrorOrGore": Kiểm tra xem bộ phim có thuộc thể loại **Kinh dị / Máu me / Rùng rợn / Ma ám / Xác sống (Horror / Gore / Supernatural Horror / Slasher)** hay không. Nếu có yếu tố kinh dị/máu me thì BẮT BUỘC đặt true.
 3. "canonicalTitle": Tên bộ phim điện ảnh chuẩn hóa ngắn gọn (tiếng Việt hoặc tên quốc tế chính thức).
 4. "releaseYear": Năm công chiếu tại rạp (số nguyên 4 chữ số, ví dụ 2022).
+5. "cinemaFormat": Chọn CHÍNH XÁC 1 trong 2 chuỗi sau:
+   - "Anime / Hoạt hình" (nếu là phim hoạt hình 2D, anime, hoạt hình 3D chiếu rạp)
+   - "Phim Người Đóng" (nếu là phim điện ảnh người thật đóng / Live-Action chiếu rạp)
+6. "cinemaGenres": Mảng 1 đến 3 thể loại an toàn phù hợp nhất từ danh sách chuẩn: ["Hành động", "Phiêu lưu", "Giả tưởng", "Viễn tưởng", "Tình cảm", "Hài hước", "Tâm lý", "Võ thuật"].
 
 Trả về DUY NHẤT 1 mảng JSON hợp lệ (không giải thích ngoài JSON) theo cấu trúc:
 [
@@ -120,7 +206,9 @@ Trả về DUY NHẤT 1 mảng JSON hợp lệ (không giải thích ngoài JSON
     "isTheatricalMovie": boolean,
     "isHorrorOrGore": boolean,
     "canonicalTitle": "string | null",
-    "releaseYear": 2022
+    "releaseYear": 2022,
+    "cinemaFormat": "Anime / Hoạt hình" | "Phim Người Đóng",
+    "cinemaGenres": ["Hành động", "Phiêu lưu"]
   }
 ]`;
 
@@ -136,6 +224,8 @@ Trả về DUY NHẤT 1 mảng JSON hợp lệ (không giải thích ngoài JSON
         isHorrorOrGore?: boolean;
         canonicalTitle?: string | null;
         releaseYear?: number | null;
+        cinemaFormat?: string | null;
+        cinemaGenres?: string[] | null;
       }>;
 
       if (!Array.isArray(parsed)) return 0;
@@ -160,12 +250,18 @@ Trả về DUY NHẤT 1 mảng JSON hợp lệ (không giải thích ngoài JSON
           cleanTitle !== null &&
           year !== null;
 
+        const candidate = candidateById.get(item.videoId);
+        const format = normalizeCinemaFormat(item.cinemaFormat, candidate);
+        const genres = normalizeSafeCinemaGenres(item.cinemaGenres);
+
         verifiedMap.set(item.videoId, {
           videoId: item.videoId,
           isTheatricalMovie: isApproved,
           isHorrorOrGore: Boolean(item.isHorrorOrGore),
           canonicalTitle: isApproved ? cleanTitle : null,
           releaseYear: isApproved ? year : null,
+          cinemaFormat: format,
+          cinemaGenres: genres,
         });
         if (isApproved) added += 1;
       }
@@ -175,11 +271,11 @@ Trả về DUY NHẤT 1 mảng JSON hợp lệ (không giải thích ngoài JSON
     return added;
   };
 
-  // Lượt 1: Bật Google Search Grounding (`tools: [{ googleSearch: {} }]` / `google_search`)
+  // Lượt 1: Bật Google Search Grounding (`tools: [{ googleSearch: {} }]` trên `v1beta`)
   try {
     const { text } = await callGeminiWithFallback({
       contents: prompt,
-      perModelTimeoutMs: 10000,
+      perModelTimeoutMs: 11000,
       config: {
         tools: [{ googleSearch: {} }],
         temperature: 0.1,
@@ -215,10 +311,13 @@ Trả về DUY NHẤT 1 mảng JSON hợp lệ (không giải thích ngoài JSON
   return verifiedMap;
 }
 
+/**
+ * Tải KHÔNG GIỚI HẠN toàn bộ kho Phim Chiếu Rạp đã xác minh từ Supabase bằng `.range(from, to)`.
+ */
 async function fetchVerifiedTheatricalMoviesFromDb(
   admin: ReturnType<typeof createAdminClient>,
 ): Promise<CinemaVideoItem[]> {
-  let rows: Array<{
+  type DbMovieRow = {
     video_id: string;
     channel_id: string;
     title: string;
@@ -235,48 +334,99 @@ async function fetchVerifiedTheatricalMoviesFromDb(
     is_manual_tag?: boolean;
     is_theatrical_movie?: boolean | null;
     theatrical_release_year?: number | null;
+    cinema_format?: CinemaFormat | null;
+    cinema_genres?: string[] | null;
     created_at: string;
-  }> = [];
+  };
 
-  const withTheatricalCol = await admin
-    .from('videos')
-    .select(
-      'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, is_manual_tag, is_theatrical_movie, theatrical_release_year, created_at',
-    )
-    .or('is_theatrical_movie.eq.true,series_name.ilike.%[CHIẾU RẠP]%')
-    .order('published_at', { ascending: false })
-    .limit(120);
+  const rows: DbMovieRow[] = [];
+  let from = 0;
+  let tier: 'full' | 'theatrical' | 'basic' = 'full';
 
-  if (withTheatricalCol.error) {
-    const fallbackRes = await admin
-      .from('videos')
-      .select(
-        'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, created_at',
-      )
-      .ilike('series_name', '%[CHIẾU RẠP]%')
-      .order('published_at', { ascending: false })
-      .limit(120);
-    rows = (fallbackRes.data ?? []) as typeof rows;
-  } else {
-    rows = (withTheatricalCol.data ?? []) as typeof rows;
+  while (true) {
+    const to = from + DB_BATCH_SIZE - 1;
+    if (tier === 'full') {
+      const res = await admin
+        .from('videos')
+        .select(
+          'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, is_manual_tag, is_theatrical_movie, theatrical_release_year, cinema_format, cinema_genres, created_at',
+        )
+        .or('is_theatrical_movie.eq.true,series_name.ilike.%[CHIẾU RẠP]%')
+        .order('published_at', { ascending: false })
+        .range(from, to);
+
+      if (res.error) {
+        tier = 'theatrical';
+        continue;
+      }
+      const batch = (res.data ?? []) as unknown as DbMovieRow[];
+      rows.push(...batch);
+      if (batch.length < DB_BATCH_SIZE) break;
+      from += DB_BATCH_SIZE;
+    } else if (tier === 'theatrical') {
+      const res = await admin
+        .from('videos')
+        .select(
+          'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, is_manual_tag, is_theatrical_movie, theatrical_release_year, created_at',
+        )
+        .or('is_theatrical_movie.eq.true,series_name.ilike.%[CHIẾU RẠP]%')
+        .order('published_at', { ascending: false })
+        .range(from, to);
+
+      if (res.error) {
+        tier = 'basic';
+        continue;
+      }
+      const batch = (res.data ?? []) as unknown as DbMovieRow[];
+      rows.push(...batch);
+      if (batch.length < DB_BATCH_SIZE) break;
+      from += DB_BATCH_SIZE;
+    } else {
+      const res = await admin
+        .from('videos')
+        .select(
+          'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, created_at',
+        )
+        .ilike('series_name', '%[CHIẾU RẠP]%')
+        .order('published_at', { ascending: false })
+        .range(from, to);
+
+      if (res.error) break;
+      const batch = (res.data ?? []) as unknown as DbMovieRow[];
+      rows.push(...batch);
+      if (batch.length < DB_BATCH_SIZE) break;
+      from += DB_BATCH_SIZE;
+    }
   }
 
   const validRows = rows.filter((r) => isTheatricalMovieVideo(r));
   if (validRows.length === 0) return [];
 
   const channelIds = Array.from(new Set(validRows.map((r) => r.channel_id)));
-  const { data: chRows } = await admin
-    .from('channels')
-    .select('channel_id, title')
-    .in('channel_id', channelIds);
-
-  const channelTitleById = new Map(
-    (chRows ?? []).map((c) => [c.channel_id, c.title]),
-  );
+  const channelTitleById = new Map<string, string>();
+  for (let i = 0; i < channelIds.length; i += 200) {
+    const slice = channelIds.slice(i, i + 200);
+    const { data: chRows } = await admin
+      .from('channels')
+      .select('channel_id, title')
+      .in('channel_id', slice);
+    for (const c of chRows ?? []) {
+      channelTitleById.set(c.channel_id, c.title);
+    }
+  }
 
   return validRows.map((v) => ({
     ...v,
     detected_genre: v.detected_genre ?? 'HH2D',
+    cinema_format:
+      v.cinema_format ??
+      resolveCinemaFormat({
+        title: v.title,
+        description: v.description,
+        series_name: v.series_name,
+        channel_title: channelTitleById.get(v.channel_id),
+      }),
+    cinema_genres: Array.isArray(v.cinema_genres) ? v.cinema_genres : null,
     channel_title: channelTitleById.get(v.channel_id) ?? v.channel_id,
     progress_seconds: 0,
     is_completed: false,
@@ -287,12 +437,14 @@ async function fetchVerifiedTheatricalMoviesFromDb(
 async function runCinemaDiscovery(options: {
   userId?: string | null;
   force?: boolean;
+  pageTokens?: Record<string, string>;
+  round?: number;
 }) {
   const admin = createAdminClient();
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
 
-  // 1. Lấy danh sách phim chiếu rạp đã xác minh hiện có trong DB
+  // 1. Lấy toàn bộ danh sách phim chiếu rạp đã xác minh hiện có trong DB (không giới hạn)
   const existingTheatrical = await fetchVerifiedTheatricalMoviesFromDb(admin);
 
   // 2. Kiểm tra mốc last_cinema_sync_at (chu kỳ 12 giờ) nếu kho đã có phim và không force
@@ -324,6 +476,10 @@ async function runCinemaDiscovery(options: {
       reason: 'COOLDOWN_12H',
       lastCinemaSyncAt: new Date(lastSyncMs).toISOString(),
       discoveredCount: 0,
+      totalTheatricalCount: existingTheatrical.length,
+      nextPageTokens: serverPageTokens,
+      nextRound: serverDiscoveryRound,
+      hasMore: true,
       movies: existingTheatrical,
     });
   }
@@ -335,17 +491,36 @@ async function runCinemaDiscovery(options: {
       reason: 'MISSING_YOUTUBE_API_KEY',
       lastCinemaSyncAt: lastSyncIso,
       discoveredCount: 0,
+      totalTheatricalCount: existingTheatrical.length,
+      nextPageTokens: serverPageTokens,
+      nextRound: serverDiscoveryRound,
+      hasMore: false,
       movies: existingTheatrical,
     });
   }
 
-  // 3. Tìm kiếm trên YouTube Data API v3 (`search.list` với type=video, videoDuration=long, maxResults=15)
+  // 3. Incremental Discovery: Luân phiên thứ tự tìm kiếm (`relevance`, `date`, `viewCount`) + dùng `nextPageToken` đào sâu trang mới
+  const activeRound =
+    typeof options.round === 'number' && Number.isFinite(options.round)
+      ? Math.max(0, Math.floor(options.round))
+      : serverDiscoveryRound;
+  const searchOrder =
+    YOUTUBE_SEARCH_ORDERS[activeRound % YOUTUBE_SEARCH_ORDERS.length];
+  const incomingTokens =
+    options.pageTokens && Object.keys(options.pageTokens).length > 0
+      ? options.pageTokens
+      : serverPageTokens;
+  const nextPageTokens: Record<string, string> = {};
+
   const discoveredVideoIds = new Set<string>();
   const existingIdSet = new Set(existingTheatrical.map((m) => m.video_id));
 
   await Promise.all(
     CINEMA_DISCOVER_QUERIES.map(async (query) => {
       try {
+        const tokenKey = `${searchOrder}::${query}`;
+        const pageToken = incomingTokens[tokenKey];
+
         const searchUrl = new URL(
           'https://www.googleapis.com/youtube/v3/search',
         );
@@ -353,8 +528,12 @@ async function runCinemaDiscovery(options: {
         searchUrl.searchParams.set('type', 'video');
         searchUrl.searchParams.set('videoDuration', 'long');
         searchUrl.searchParams.set('maxResults', '15');
+        searchUrl.searchParams.set('order', searchOrder);
         searchUrl.searchParams.set('relevanceLanguage', 'vi');
         searchUrl.searchParams.set('q', query);
+        if (pageToken) {
+          searchUrl.searchParams.set('pageToken', pageToken);
+        }
         searchUrl.searchParams.set('key', ytApiKey);
 
         const res = await fetch(searchUrl.toString(), {
@@ -364,8 +543,12 @@ async function runCinemaDiscovery(options: {
         if (!res.ok) return;
 
         const data = (await res.json().catch(() => ({}))) as {
+          nextPageToken?: string;
           items?: Array<{ id?: { videoId?: string } }>;
         };
+        if (data.nextPageToken) {
+          nextPageTokens[tokenKey] = data.nextPageToken;
+        }
         for (const item of data.items ?? []) {
           const vid = item.id?.videoId;
           if (vid && !existingIdSet.has(vid)) {
@@ -378,8 +561,14 @@ async function runCinemaDiscovery(options: {
     }),
   );
 
-  // 4. Gọi `videos.list` (`part=snippet,contentDetails,statistics`) để lấy thời lượng và mô tả đầy đủ
-  const candidateIds = Array.from(discoveredVideoIds).slice(0, 45);
+  // Cập nhật trạng thái vòng quét tiếp theo (nếu hết pageToken thì chuyển sang order tiếp theo)
+  const nextRound =
+    Object.keys(nextPageTokens).length > 0 ? activeRound : activeRound + 1;
+  serverPageTokens = nextPageTokens;
+  serverDiscoveryRound = nextRound;
+
+  // 4. Gọi `videos.list` (`part=snippet,contentDetails,statistics`) lấy thời lượng & mô tả đầy đủ (tối đa 50 IDs/request)
+  const candidateIds = Array.from(discoveredVideoIds).slice(0, 50);
   const candidates: CandidateMovieItem[] = [];
 
   if (candidateIds.length > 0) {
@@ -443,7 +632,7 @@ async function runCinemaDiscovery(options: {
             durationSeconds,
           };
 
-          // Áp dụng Lớp 1: Lọc thời lượng 65-165 phút + lọc từ khóa rác + Chặn Kinh Dị Lớp 1
+          // Áp dụng Lớp 1: Lọc thời lượng 65-165 phút + từ khóa rác + Chặn Kinh Dị Lớp 1
           if (passesCinemaLayer1PreFilter(candidate)) {
             candidates.push(candidate);
           }
@@ -454,54 +643,46 @@ async function runCinemaDiscovery(options: {
     }
   }
 
-  // 4b. Bổ sung thêm các ứng viên từ chính bảng `public.videos` hiện có (65-165 phút, chưa gắn is_theatrical_movie)
-  if (candidates.length < 12) {
-    const { data: localCandidates } = await admin
-      .from('videos')
-      .select(
-        'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds',
-      )
-      .gte('duration_seconds', THEATRICAL_MIN_DURATION_SECONDS)
-      .lte('duration_seconds', THEATRICAL_MAX_DURATION_SECONDS)
-      .eq('is_short', false)
-      .order('published_at', { ascending: false })
-      .limit(30);
-
-    const existingCandidateIds = new Set(candidates.map((c) => c.videoId));
-    for (const row of localCandidates ?? []) {
-      if (
-        existingIdSet.has(row.video_id) ||
-        existingCandidateIds.has(row.video_id)
-      ) {
-        continue;
-      }
-      const item: CandidateMovieItem = {
-        videoId: row.video_id,
-        channelId: row.channel_id,
-        channelTitle: row.channel_id,
-        title: row.title,
-        description: row.description || '',
-        thumbnailUrl: row.thumbnail_url,
-        publishedAt: row.published_at,
-        durationSeconds: row.duration_seconds,
-      };
-      if (passesCinemaLayer1PreFilter(item)) {
-        candidates.push(item);
-        existingCandidateIds.add(item.videoId);
-      }
+  // 4b. Nếu còn dư slot trong batch, bổ sung các phim chiếu rạp cũ trong DB chưa có `cinema_genres` để cập nhật lại phân loại chuẩn xác
+  const existingMissingGenres = existingTheatrical.filter(
+    (m) => !Array.isArray(m.cinema_genres) || m.cinema_genres.length === 0,
+  );
+  if (
+    candidates.length < MAX_CANDIDATES_PER_BATCH &&
+    existingMissingGenres.length > 0
+  ) {
+    const remainingSlots = Math.min(
+      6,
+      MAX_CANDIDATES_PER_BATCH - candidates.length,
+    );
+    for (const oldMovie of existingMissingGenres.slice(0, remainingSlots)) {
+      candidates.push({
+        videoId: oldMovie.video_id,
+        channelId: oldMovie.channel_id,
+        channelTitle: oldMovie.channel_title || oldMovie.channel_id,
+        title: oldMovie.title,
+        description: oldMovie.description || '',
+        thumbnailUrl: oldMovie.thumbnail_url,
+        publishedAt: oldMovie.published_at,
+        durationSeconds: oldMovie.duration_seconds,
+        isExistingBackfill: true,
+      });
     }
   }
 
-  // 5. Áp dụng Lớp 2: Xác minh thực tế qua Gemini + Google Search Grounding
+  // 5. Áp dụng Lớp 2: Xác minh thực tế + Phân loại Định dạng & Thể loại qua Gemini + Google Search Grounding
   const verifiedMap = await verifyCandidatesWithGoogleSearchGrounding(
     candidates,
   );
-  const approvedMovies = candidates.filter(
+  const approvedCandidates = candidates.filter(
     (c) => verifiedMap.get(c.videoId)?.isTheatricalMovie === true,
   );
+  const newlyDiscoveredCount = approvedCandidates.filter(
+    (c) => !c.isExistingBackfill,
+  ).length;
 
-  // 6. Upsert các kênh (`is_subscribed = false` để không lẫn vào danh sách kênh đã đăng ký) và phim vào Supabase
-  if (approvedMovies.length > 0) {
+  // 6. Upsert kênh (`is_subscribed = false`) và phim kèm `cinema_format`, `cinema_genres` vào Supabase
+  if (approvedCandidates.length > 0) {
     const uniqueChannelsWithFlag = new Map<
       string,
       {
@@ -511,7 +692,8 @@ async function runCinemaDiscovery(options: {
         updated_at: string;
       }
     >();
-    for (const m of approvedMovies) {
+    for (const m of approvedCandidates) {
+      if (m.isExistingBackfill) continue;
       uniqueChannelsWithFlag.set(m.channelId, {
         channel_id: m.channelId,
         title: m.channelTitle,
@@ -520,26 +702,28 @@ async function runCinemaDiscovery(options: {
       });
     }
 
-    const { error: chUpsertErr } = await admin
-      .from('channels')
-      .upsert(Array.from(uniqueChannelsWithFlag.values()) as never, {
-        onConflict: 'channel_id',
-      });
+    if (uniqueChannelsWithFlag.size > 0) {
+      const { error: chUpsertErr } = await admin
+        .from('channels')
+        .upsert(Array.from(uniqueChannelsWithFlag.values()) as never, {
+          onConflict: 'channel_id',
+        });
 
-    if (chUpsertErr) {
-      const fallbackChannels = Array.from(uniqueChannelsWithFlag.values()).map(
-        ({ channel_id, title, updated_at }) => ({
+      if (chUpsertErr) {
+        const fallbackChannels = Array.from(
+          uniqueChannelsWithFlag.values(),
+        ).map(({ channel_id, title, updated_at }) => ({
           channel_id,
           title,
           updated_at,
-        }),
-      );
-      await admin
-        .from('channels')
-        .upsert(fallbackChannels, { onConflict: 'channel_id' });
+        }));
+        await admin
+          .from('channels')
+          .upsert(fallbackChannels, { onConflict: 'channel_id' });
+      }
     }
 
-    const videoRowsWithTheatricalCol = approvedMovies.map((m) => {
+    const videoRowsFull = approvedCandidates.map((m) => {
       const meta = verifiedMap.get(m.videoId)!;
       const canonicalSeries = `${meta.canonicalTitle} (${meta.releaseYear}) ${VERIFIED_THEATRICAL_TAG}`;
       return {
@@ -557,24 +741,39 @@ async function runCinemaDiscovery(options: {
         episode_number: null,
         is_theatrical_movie: true,
         theatrical_release_year: meta.releaseYear,
+        cinema_format: meta.cinemaFormat,
+        cinema_genres: meta.cinemaGenres,
       };
     });
 
-    const { error: upsertErr } = await admin
+    const { error: upsertFullErr } = await admin
       .from('videos')
-      .upsert(videoRowsWithTheatricalCol, { onConflict: 'video_id' });
+      .upsert(videoRowsFull as never, { onConflict: 'video_id' });
 
-    if (upsertErr) {
-      // Fallback an toàn nếu DB chưa chạy ALTER TABLE thêm cột is_theatrical_movie
-      const fallbackRows = videoRowsWithTheatricalCol.map((row) => {
+    if (upsertFullErr) {
+      // Fallback tầng 1: Nếu DB chưa chạy ALTER TABLE thêm `cinema_format` / `cinema_genres`
+      const rowsWithoutCinemaMeta = videoRowsFull.map((row) => {
         const copy = { ...row } as Record<string, unknown>;
-        delete copy.is_theatrical_movie;
-        delete copy.theatrical_release_year;
+        delete copy.cinema_format;
+        delete copy.cinema_genres;
         return copy;
       });
-      await admin
+      const { error: upsertTheatricalErr } = await admin
         .from('videos')
-        .upsert(fallbackRows as never, { onConflict: 'video_id' });
+        .upsert(rowsWithoutCinemaMeta as never, { onConflict: 'video_id' });
+
+      if (upsertTheatricalErr) {
+        // Fallback tầng 2: Nếu DB chưa chạy ALTER TABLE thêm `is_theatrical_movie`
+        const rowsBasic = rowsWithoutCinemaMeta.map((row) => {
+          const copy = { ...row };
+          delete copy.is_theatrical_movie;
+          delete copy.theatrical_release_year;
+          return copy;
+        });
+        await admin
+          .from('videos')
+          .upsert(rowsBasic as never, { onConflict: 'video_id' });
+      }
     }
   }
 
@@ -592,40 +791,50 @@ async function runCinemaDiscovery(options: {
   return NextResponse.json({
     skipped: false,
     lastCinemaSyncAt: nowIso,
+    searchOrder,
     candidatesFound: candidates.length,
-    discoveredCount: approvedMovies.length,
+    discoveredCount: newlyDiscoveredCount,
+    totalTheatricalCount: updatedMovies.length,
+    nextPageTokens,
+    nextRound,
+    hasMore: true,
     movies: updatedMovies,
   });
 }
 
 /**
- * GET /api/cinema/discover
- * Dành cho Vercel Cron Job chạy tự động lúc 02:00 sáng hằng ngày (`0 2 * * *`),
- * hỗ trợ xác thực `CRON_SECRET` nếu được cấu hình trong biến môi trường, hoặc người dùng đã đăng nhập.
+ * GET /api/cinema/discover — Dành cho Vercel Cron Job (hỗ trợ CRON_SECRET)
  */
 export async function GET(request: Request) {
   const cronSecret = process.env.CRON_SECRET?.trim();
-  const authHeader = request.headers.get('authorization');
-  const isCronAuthorized =
-    Boolean(cronSecret) && authHeader === `Bearer ${cronSecret}`;
+  const authHeader = request.headers.get('authorization') ?? '';
+  const url = new URL(request.url);
+  const querySecret = url.searchParams.get('secret') ?? '';
 
-  if (!isCronAuthorized) {
-    const auth = await verifyWhitelistedUser();
-    if (!auth.allowed && cronSecret) {
-      return NextResponse.json({ error: 'Unauthorized Cron' }, { status: 401 });
+  if (cronSecret) {
+    const validHeader = authHeader === `Bearer ${cronSecret}`;
+    const validQuery = querySecret === cronSecret;
+    if (!validHeader && !validQuery) {
+      const auth = await verifyWhitelistedUser();
+      if (!auth.allowed) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
     }
-    return runCinemaDiscovery({
-      userId: auth.userId ?? null,
-      force: true,
-    });
   }
 
-  return runCinemaDiscovery({ userId: null, force: true });
+  try {
+    return await runCinemaDiscovery({ force: true });
+  } catch (err) {
+    console.error('[Cinema Discover GET] Lỗi hệ thống:', err);
+    return NextResponse.json(
+      { error: 'Không thể tự động quét Phim Chiếu Rạp lúc này.' },
+      { status: 500 },
+    );
+  }
 }
 
 /**
- * POST /api/cinema/discover
- * Kích hoạt từ phía client (hỗ trợ `?force=true` trên URL hoặc `{ force: true }` trong body).
+ * POST /api/cinema/discover — Kích hoạt ngầm từ Client (Background Auto-Sync 12h / Tải thêm phim chiếu rạp)
  */
 export async function POST(request: Request) {
   const auth = await verifyWhitelistedUser();
@@ -633,18 +842,42 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const urlForce =
-    new URL(request.url).searchParams.get('force') === 'true';
-  let bodyForce = false;
+  const url = new URL(request.url);
+  let force = url.searchParams.get('force') === 'true';
+  let pageTokens: Record<string, string> | undefined;
+  let round: number | undefined;
+
   try {
-    const body = (await request.json()) as { force?: boolean };
-    bodyForce = Boolean(body?.force);
+    const body = (await request.json().catch(() => ({}))) as {
+      force?: boolean;
+      pageTokens?: Record<string, string>;
+      round?: number;
+    };
+    if (typeof body.force === 'boolean') {
+      force = body.force;
+    }
+    if (body.pageTokens && typeof body.pageTokens === 'object') {
+      pageTokens = body.pageTokens;
+    }
+    if (typeof body.round === 'number' && Number.isFinite(body.round)) {
+      round = body.round;
+    }
   } catch {
-    bodyForce = false;
+    // Empty body is valid
   }
 
-  return runCinemaDiscovery({
-    userId: auth.userId,
-    force: urlForce || bodyForce,
-  });
+  try {
+    return await runCinemaDiscovery({
+      userId: auth.userId,
+      force,
+      pageTokens,
+      round,
+    });
+  } catch (err) {
+    console.error('[Cinema Discover POST] Lỗi hệ thống:', err);
+    return NextResponse.json(
+      { error: 'Không thể tự động quét Phim Chiếu Rạp lúc này.' },
+      { status: 500 },
+    );
+  }
 }

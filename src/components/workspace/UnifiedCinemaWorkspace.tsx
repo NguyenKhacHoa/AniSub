@@ -20,7 +20,9 @@ import {
 import {
   isTheatricalMovieVideo,
   matchesTheatricalSafeCategory,
+  resolveCinemaFormat,
   type ChannelWithSelection,
+  type CinemaFormatFilter,
   type CinemaVideoItem,
   type GenreFilter,
   type PrimaryGenreTag,
@@ -177,10 +179,15 @@ export function UnifiedCinemaWorkspace({
   const [viewMode, setViewMode] = useState<WorkspaceViewMode>('cinema');
   const [searchQuery, setSearchQuery] = useState('');
   const [videoType, setVideoType] = useState<VideoTypeFilter>('all');
+  const [cinemaFormatFilter, setCinemaFormatFilter] =
+    useState<CinemaFormatFilter>('all');
   const [theatricalCategory, setTheatricalCategory] =
     useState<TheatricalCategoryFilter>('all');
   const [isLoadingTheatrical, setIsLoadingTheatrical] = useState(false);
+  const [isLoadingMoreTheatrical, setIsLoadingMoreTheatrical] = useState(false);
   const isDiscoveringTheatricalRef = useRef(false);
+  const theatricalPageTokensRef = useRef<Record<string, string>>({});
+  const theatricalRoundRef = useRef<number>(0);
   const [showTrailers, setShowTrailers] = useState(false);
   const [genreFilter, setGenreFilter] = useState<GenreFilter>('all');
   const [sortBy, setSortBy] = useState<SortOption>('newest');
@@ -238,6 +245,11 @@ export function UnifiedCinemaWorkspace({
     [channels],
   );
 
+  const totalTheatricalCount = useMemo(
+    () => allVideos.filter((v) => !v.is_short && isTheatricalMovieVideo(v)).length,
+    [allVideos],
+  );
+
   const filteredVideos = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     const matched = allVideos.filter((v) => {
@@ -246,6 +258,12 @@ export function UnifiedCinemaWorkspace({
       // Không gian "Phim Chiếu Rạp" độc lập hoàn toàn với bộ lọc kênh Đã đăng ký
       if (viewMode === 'theatrical') {
         if (!isTheatricalMovieVideo(v)) return false;
+        if (
+          cinemaFormatFilter !== 'all' &&
+          resolveCinemaFormat(v) !== cinemaFormatFilter
+        ) {
+          return false;
+        }
         if (!matchesTheatricalSafeCategory(v, theatricalCategory)) {
           return false;
         }
@@ -310,6 +328,7 @@ export function UnifiedCinemaWorkspace({
     selectedChannelIds,
     watchLaterSet,
     viewMode,
+    cinemaFormatFilter,
     theatricalCategory,
     showTrailers,
     videoType,
@@ -1429,15 +1448,23 @@ export function UnifiedCinemaWorkspace({
       .catch(() => {});
   }, [authStatus, allVideos]);
 
-  // Quét tự động / thủ công kho Phim Chiếu Rạp (YouTube Data API v3 + Gemini Google Search Grounding)
+  // Quét tự động / thủ công / tải thêm không giới hạn kho Phim Chiếu Rạp (Incremental Discovery + nextPageToken)
   const runTheatricalDiscover = useCallback(
-    async (force: boolean, showFeedback = false) => {
+    async (
+      force: boolean,
+      showFeedback = false,
+      isLoadMore = false,
+    ) => {
       if (isDiscoveringTheatricalRef.current) return;
       isDiscoveringTheatricalRef.current = true;
 
       try {
         await Promise.resolve();
-        setIsLoadingTheatrical(true);
+        if (isLoadMore) {
+          setIsLoadingMoreTheatrical(true);
+        } else {
+          setIsLoadingTheatrical(true);
+        }
 
         try {
           window.localStorage.setItem(
@@ -1453,18 +1480,32 @@ export function UnifiedCinemaWorkspace({
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ force }),
+            body: JSON.stringify({
+              force,
+              pageTokens: theatricalPageTokensRef.current,
+              round: theatricalRoundRef.current,
+            }),
             keepalive: true,
           },
         );
 
         const payload = (await res.json().catch(() => ({}))) as {
           discoveredCount?: number;
+          totalTheatricalCount?: number;
+          nextPageTokens?: Record<string, string>;
+          nextRound?: number;
           movies?: CinemaVideoItem[];
           error?: string;
         };
 
         if (res.ok) {
+          if (payload.nextPageTokens) {
+            theatricalPageTokensRef.current = payload.nextPageTokens;
+          }
+          if (typeof payload.nextRound === 'number') {
+            theatricalRoundRef.current = payload.nextRound;
+          }
+
           const incoming = payload.movies ?? [];
           if (incoming.length > 0) {
             setAllVideos((prev) => {
@@ -1505,11 +1546,11 @@ export function UnifiedCinemaWorkspace({
           if (showFeedback) {
             if ((payload.discoveredCount ?? 0) > 0) {
               toast.success(
-                `🎬 Đã phát hiện & xác minh ${payload.discoveredCount} phim chiếu rạp mới!`,
+                `🎬 Đã săn & xác minh thêm ${payload.discoveredCount} phim chiếu rạp mới (Tổng ${payload.totalTheatricalCount ?? incoming.length} phim)!`,
               );
             } else {
               toast.info(
-                `Kho Phim Chiếu Rạp đã được làm mới (${incoming.length} tác phẩm điện ảnh đã xác minh).`,
+                `Đã đào sâu thêm trang YouTube mới — Kho hiện có ${payload.totalTheatricalCount ?? incoming.length} phim chiếu rạp đã xác minh.`,
               );
             }
           }
@@ -1519,6 +1560,7 @@ export function UnifiedCinemaWorkspace({
       } finally {
         isDiscoveringTheatricalRef.current = false;
         setIsLoadingTheatrical(false);
+        setIsLoadingMoreTheatrical(false);
       }
     },
     [],
@@ -1724,8 +1766,11 @@ export function UnifiedCinemaWorkspace({
               onToggleTrailers={setShowTrailers}
               genreFilter={genreFilter}
               onChangeGenreFilter={setGenreFilter}
+              cinemaFormatFilter={cinemaFormatFilter}
+              onChangeCinemaFormatFilter={setCinemaFormatFilter}
               theatricalCategory={theatricalCategory}
               onChangeTheatricalCategory={setTheatricalCategory}
+              totalTheatricalCount={totalTheatricalCount}
               sortBy={sortBy}
               onChangeSortBy={setSortBy}
               onlyUnwatched={onlyUnwatched}
@@ -1741,12 +1786,12 @@ export function UnifiedCinemaWorkspace({
               onRefreshExplore={() => void loadExploreFeed(true)}
               isDeltaSyncing={
                 viewMode === 'theatrical'
-                  ? isLoadingTheatrical
+                  ? isLoadingTheatrical || isLoadingMoreTheatrical
                   : isDeltaSyncing
               }
               onTriggerDeltaSync={
                 viewMode === 'theatrical'
-                  ? () => void runTheatricalDiscover(true, true)
+                  ? () => void runTheatricalDiscover(true, true, false)
                   : authStatus === 'authenticated' &&
                       selectedChannelIds.size > 0
                     ? () => void runDeltaSync(true)
@@ -1795,7 +1840,10 @@ export function UnifiedCinemaWorkspace({
             isLoadingMoreExplore={isLoadingMoreExplore}
             onLoadMoreExplore={handleLoadMoreExplore}
             isLoadingTheatrical={isLoadingTheatrical}
-            onRefreshTheatrical={() => void runTheatricalDiscover(true, true)}
+            isLoadingMoreTheatrical={isLoadingMoreTheatrical}
+            totalTheatricalCount={totalTheatricalCount}
+            onRefreshTheatrical={() => void runTheatricalDiscover(true, true, false)}
+            onLoadMoreTheatrical={() => void runTheatricalDiscover(true, true, true)}
             selectedChannelIds={selectedChannelIds}
             watchLaterIds={watchLaterSet}
             subscribingChannelId={subscribingChannelId}
@@ -1803,7 +1851,7 @@ export function UnifiedCinemaWorkspace({
               viewMode === 'explore'
                 ? 'Khám phá YouTube — Kênh mới hợp gu của bạn'
                 : viewMode === 'theatrical'
-                  ? 'Phim Chiếu Rạp & Bản Điện Ảnh (Verified Theatrical Movies)'
+                  ? 'Phim Chiếu Rạp — Anime/Hoạt Hình & Điện Ảnh Người Đóng'
                   : viewMode === 'watch_later'
                     ? `Danh sách Xem sau (${watchLaterList.length})`
                     : activeVideo
@@ -1814,7 +1862,7 @@ export function UnifiedCinemaWorkspace({
               viewMode === 'explore'
                 ? 'Gợi ý cá nhân hóa từ lịch sử xem & Like YouTube (đã lọc bỏ Shorts, ưu tiên kênh chưa theo dõi)'
                 : viewMode === 'theatrical'
-                  ? 'Tự động săn tìm & đối chiếu Google Search các tác phẩm điện ảnh chiếu rạp chính thức (65–165 phút, an toàn không kinh dị)'
+                  ? 'Kho phim điện ảnh chiếu rạp tích lũy không giới hạn (65–165 phút), xác minh thực tế qua Google Search Grounding & chặn tuyệt đối Kinh dị'
                   : viewMode === 'watch_later'
                     ? 'Các video bạn đã đánh dấu lưu lại để cày sau — bấm biểu tượng Bookmark để gỡ sau khi xem xong'
                     : activeVideo

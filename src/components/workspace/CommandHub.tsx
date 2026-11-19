@@ -19,7 +19,9 @@ import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
+  CINEMA_FORMAT_STYLES,
   GENRE_DOT_STYLES,
+  type CinemaFormatFilter,
   type GenreFilter,
   type SortOption,
   type TheatricalCategoryFilter,
@@ -38,8 +40,11 @@ interface CommandHubProps {
   onToggleTrailers: (checked: boolean) => void;
   genreFilter: GenreFilter;
   onChangeGenreFilter: (genre: GenreFilter) => void;
+  cinemaFormatFilter?: CinemaFormatFilter;
+  onChangeCinemaFormatFilter?: (fmt: CinemaFormatFilter) => void;
   theatricalCategory?: TheatricalCategoryFilter;
   onChangeTheatricalCategory?: (cat: TheatricalCategoryFilter) => void;
+  totalTheatricalCount?: number;
   sortBy?: SortOption;
   onChangeSortBy?: (sort: SortOption) => void;
   onlyUnwatched?: boolean;
@@ -59,15 +64,25 @@ const GENRE_PILLS: Array<{ value: GenreFilter; label: string }> = [
   { value: 'HH2D', label: 'HH2D' },
 ];
 
+const CINEMA_FORMAT_PILLS: Array<{ value: CinemaFormatFilter; label: string }> =
+  [
+    { value: 'all', label: 'Tất cả định dạng' },
+    { value: 'Anime / Hoạt hình', label: 'Anime / Hoạt hình' },
+    { value: 'Phim Người Đóng', label: 'Phim Người Đóng' },
+  ];
+
 const THEATRICAL_CATEGORY_PILLS: Array<{
   value: TheatricalCategoryFilter;
   label: string;
 }> = [
-  { value: 'all', label: 'Tất cả phim rạp' },
-  { value: 'action', label: 'Hành động / Phiêu lưu' },
-  { value: 'fantasy', label: 'Giả tưởng' },
-  { value: 'romance', label: 'Tình cảm / Đời thường' },
-  { value: 'scifi', label: 'Viễn tưởng' },
+  { value: 'all', label: 'Tất cả thể loại' },
+  { value: 'Hành động', label: 'Hành động' },
+  { value: 'Phiêu lưu', label: 'Phiêu lưu' },
+  { value: 'Giả tưởng', label: 'Giả tưởng' },
+  { value: 'Tình cảm', label: 'Tình cảm' },
+  { value: 'Viễn tưởng', label: 'Viễn tưởng' },
+  { value: 'Hài hước', label: 'Hài hước' },
+  { value: 'Tâm lý', label: 'Tâm lý' },
 ];
 
 const SORT_OPTIONS: Array<{ value: SortOption; label: string }> = [
@@ -87,8 +102,11 @@ export function CommandHub({
   onToggleTrailers,
   genreFilter,
   onChangeGenreFilter,
+  cinemaFormatFilter = 'all',
+  onChangeCinemaFormatFilter,
   theatricalCategory = 'all',
   onChangeTheatricalCategory,
+  totalTheatricalCount,
   sortBy = 'newest',
   onChangeSortBy,
   onlyUnwatched = false,
@@ -231,7 +249,7 @@ export function CommandHub({
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 text-xs font-medium text-amber-600 dark:text-amber-300">
               <Clapperboard className="size-3.5 shrink-0 text-amber-500 dark:text-amber-400" />
-              <span>65–165 phút • Google Search Verified • Không Kinh Dị</span>
+              <span>65–165 phút • Anime &amp; Người Đóng • Không Kinh Dị</span>
             </span>
           </div>
         ) : (
@@ -312,67 +330,169 @@ export function CommandHub({
               </span>
             )}
           </div>
+        ) : isTheatrical ? (
+          <div className="flex flex-1 flex-col gap-2.5">
+            {/* Nhóm 1: Định dạng Phim Chiếu Rạp (Anime / Hoạt hình | Phim Người Đóng) */}
+            <div
+              role="group"
+              aria-label="Lọc định dạng Phim Chiếu Rạp"
+              className="flex flex-wrap items-center gap-2"
+            >
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-secondary)]">
+                Định dạng:
+              </span>
+              {CINEMA_FORMAT_PILLS.map((pill) => {
+                const active = cinemaFormatFilter === pill.value;
+                const style =
+                  pill.value !== 'all' ? CINEMA_FORMAT_STYLES[pill.value] : null;
+                return (
+                  <button
+                    key={pill.value}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() =>
+                      startFilterTransition(() =>
+                        onChangeCinemaFormatFilter?.(pill.value),
+                      )
+                    }
+                    className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors cursor-pointer ${
+                      active
+                        ? style
+                          ? `${style.badgeClass} ring-1 ring-current`
+                          : 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
+                        : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    <span>{pill.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Nhóm 2: Thể loại an toàn & Sắp xếp + Chưa xem */}
+            <div
+              role="group"
+              aria-label="Lọc thể loại Phim Chiếu Rạp"
+              className="flex flex-wrap items-center gap-2"
+            >
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-secondary)]">
+                Thể loại:
+              </span>
+              {THEATRICAL_CATEGORY_PILLS.map((pill) => {
+                const active = theatricalCategory === pill.value;
+                return (
+                  <button
+                    key={pill.value}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() =>
+                      startFilterTransition(() =>
+                        onChangeTheatricalCategory?.(pill.value),
+                      )
+                    }
+                    className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors cursor-pointer ${
+                      active
+                        ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
+                        : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    <span>{pill.label}</span>
+                  </button>
+                );
+              })}
+
+              {/* Bộ chọn Sắp xếp nhanh (Mới nhất / Dài nhất / Tên A-Z) */}
+              {onChangeSortBy && (
+                <div
+                  role="group"
+                  aria-label="Sắp xếp danh sách phim"
+                  className="inline-flex h-8 items-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-0.5"
+                >
+                  <ArrowUpDown className="mx-1.5 size-3.5 shrink-0 text-[var(--text-secondary)]" />
+                  {SORT_OPTIONS.map((opt) => {
+                    const active = sortBy === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() =>
+                          startFilterTransition(() => onChangeSortBy(opt.value))
+                        }
+                        className={`h-6 rounded-md px-2 text-xs font-medium transition-colors cursor-pointer ${
+                          active
+                            ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-xs'
+                            : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Nút lọc nhanh Chưa xem */}
+              {onToggleOnlyUnwatched && (
+                <button
+                  type="button"
+                  aria-pressed={onlyUnwatched}
+                  onClick={() =>
+                    startFilterTransition(() =>
+                      onToggleOnlyUnwatched(!onlyUnwatched),
+                    )
+                  }
+                  title="Ẩn các phim đã xem xong (>= 90%)"
+                  className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors cursor-pointer ${
+                    onlyUnwatched
+                      ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                      : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+                  }`}
+                >
+                  <EyeOff className="size-3.5 shrink-0" />
+                  <span>Chưa xem</span>
+                </button>
+              )}
+            </div>
+          </div>
         ) : (
           <div
             role="group"
             aria-label="Bộ lọc danh sách phim"
             className="flex flex-wrap items-center gap-2"
           >
-            {isTheatrical
-              ? THEATRICAL_CATEGORY_PILLS.map((pill) => {
-                  const active = theatricalCategory === pill.value;
-                  return (
-                    <button
-                      key={pill.value}
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() =>
-                        startFilterTransition(() =>
-                          onChangeTheatricalCategory?.(pill.value),
-                        )
-                      }
-                      className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors cursor-pointer ${
-                        active
-                          ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
-                          : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
-                      }`}
-                    >
-                      <span>{pill.label}</span>
-                    </button>
-                  );
-                })
-              : GENRE_PILLS.map((pill) => {
-                  const active = genreFilter === pill.value;
-                  const style =
-                    pill.value !== 'all' ? GENRE_DOT_STYLES[pill.value] : null;
+            {GENRE_PILLS.map((pill) => {
+              const active = genreFilter === pill.value;
+              const style =
+                pill.value !== 'all' ? GENRE_DOT_STYLES[pill.value] : null;
 
-                  return (
-                    <button
-                      key={pill.value}
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() =>
-                        startFilterTransition(() =>
-                          onChangeGenreFilter(pill.value),
-                        )
-                      }
-                      className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors cursor-pointer ${
-                        active
-                          ? style
-                            ? `${style.badgeClass} ring-1 ring-current`
-                            : 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
-                          : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
-                      }`}
-                    >
-                      {style && (
-                        <span
-                          className={`size-2 rounded-full ${style.dotClass}`}
-                        />
-                      )}
-                      <span>{pill.label}</span>
-                    </button>
-                  );
-                })}
+              return (
+                <button
+                  key={pill.value}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() =>
+                    startFilterTransition(() =>
+                      onChangeGenreFilter(pill.value),
+                    )
+                  }
+                  className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors cursor-pointer ${
+                    active
+                      ? style
+                        ? `${style.badgeClass} ring-1 ring-current`
+                        : 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
+                      : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+                  }`}
+                >
+                  {style && (
+                    <span
+                      className={`size-2 rounded-full ${style.dotClass}`}
+                    />
+                  )}
+                  <span>{pill.label}</span>
+                </button>
+              );
+            })}
 
             {/* Bộ chọn Sắp xếp nhanh (Mới nhất / Dài nhất / Tên A-Z) */}
             {onChangeSortBy && (
@@ -451,20 +571,36 @@ export function CommandHub({
                 }`}
               />
               <span>
-                {isDeltaSyncing ? 'Đang quét tập mới...' : 'Cập nhật tập mới'}
+                {isDeltaSyncing
+                  ? isTheatrical
+                    ? 'Đang săn phim rạp...'
+                    : 'Đang quét tập mới...'
+                  : 'Cập nhật tập mới'}
               </span>
             </button>
           )}
 
           <span className="text-xs tabular-nums text-[var(--text-secondary)]">
-            <strong className="font-semibold text-[var(--text-primary)]">
-              {totalMatchingVideos}
-            </strong>{' '}
-            {isExplore
-              ? 'video đề xuất'
-              : isTheatrical
-                ? 'phim chiếu rạp'
-                : 'khe phim sẵn sàng'}
+            {isTheatrical ? (
+              <>
+                Đang hiển thị{' '}
+                <strong className="font-semibold text-[var(--text-primary)]">
+                  {totalMatchingVideos}
+                </strong>{' '}
+                / Tổng{' '}
+                <strong className="font-semibold text-[var(--text-primary)]">
+                  {totalTheatricalCount ?? totalMatchingVideos}
+                </strong>{' '}
+                phim chiếu rạp
+              </>
+            ) : (
+              <>
+                <strong className="font-semibold text-[var(--text-primary)]">
+                  {totalMatchingVideos}
+                </strong>{' '}
+                {isExplore ? 'video đề xuất' : 'khe phim sẵn sàng'}
+              </>
+            )}
           </span>
         </div>
       </div>

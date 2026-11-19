@@ -1,5 +1,6 @@
 import type {
   ChannelRow,
+  CinemaFormat,
   GenreTag,
   ProfileRow,
   UserChannelRow,
@@ -17,12 +18,43 @@ export type VideoTypeFilter = 'all' | 'episode' | 'full_movie';
 export type GenreFilter = 'all' | GenreTag;
 export type PrimaryGenreTag = GenreTag;
 export type SortOption = 'newest' | 'longest' | 'title_asc';
+export type CinemaFormatFilter = 'all' | CinemaFormat;
 export type TheatricalCategoryFilter =
   | 'all'
-  | 'action'
-  | 'fantasy'
-  | 'romance'
-  | 'scifi';
+  | 'Hành động'
+  | 'Phiêu lưu'
+  | 'Giả tưởng'
+  | 'Tình cảm'
+  | 'Viễn tưởng'
+  | 'Hài hước'
+  | 'Tâm lý';
+
+export const SAFE_CINEMA_GENRES = [
+  'Hành động',
+  'Phiêu lưu',
+  'Giả tưởng',
+  'Tình cảm',
+  'Viễn tưởng',
+  'Hài hước',
+  'Tâm lý',
+  'Võ thuật',
+] as const;
+
+export const CINEMA_FORMAT_STYLES: Record<
+  CinemaFormat,
+  { badgeClass: string; label: string }
+> = {
+  'Anime / Hoạt hình': {
+    badgeClass:
+      'bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/35',
+    label: 'Anime / Hoạt hình',
+  },
+  'Phim Người Đóng': {
+    badgeClass:
+      'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/35',
+    label: 'Phim Người Đóng',
+  },
+};
 
 /**
  * Dấu hiệu xác minh chính thức trong DB sau khi Gemini + Google Search Grounding
@@ -178,41 +210,115 @@ export function isTheatricalMovieVideo(video: {
 }
 
 /**
- * Lọc nhanh theo nhóm thể loại an toàn trong không gian Phim Chiếu Rạp
+ * Xác định định dạng Phim Chiếu Rạp (`Anime / Hoạt hình` hoặc `Phim Người Đóng`).
+ * Ưu tiên cột `cinema_format` đã được Gemini + Google Search Grounding lưu trong Supabase;
+ * nếu bản ghi cũ chưa có cột này thì suy luận chính xác từ tiêu đề, tên kênh và mô tả.
+ */
+export function resolveCinemaFormat(video: {
+  title: string;
+  description?: string | null;
+  series_name?: string | null;
+  channel_title?: string | null;
+  cinema_format?: CinemaFormat | string | null;
+}): CinemaFormat {
+  if (
+    video.cinema_format === 'Anime / Hoạt hình' ||
+    video.cinema_format === 'Phim Người Đóng'
+  ) {
+    return video.cinema_format;
+  }
+
+  const hay =
+    `${video.title} ${video.series_name ?? ''} ${video.channel_title ?? ''} ${(video.description ?? '').slice(0, 300)}`.toLowerCase();
+
+  // Dấu hiệu rõ ràng của Anime / Hoạt hình chiếu rạp
+  if (
+    /\b(anime|hoạt\s*hình|hoat\s*hinh|animation|animated|cartoon|ghibli|conan|doraemon|one\s*piece|naruto|bleach|jujutsu|kimetsu|thanh\s*gươm|dragon\s*ball|suzume|your\s*name|kimi\s*no\s*na|shinchan|crayon\s*shin|pokemon|digimon|gundam|evangelion|muse\s*việt\s*nam|ani-one|pops\s*anime|hh3d|hh2d|3d\s*animation|pixar|dreamworks)\b|劇場版/i.test(
+      hay,
+    )
+  ) {
+    return 'Anime / Hoạt hình';
+  }
+
+  // Dấu hiệu phim điện ảnh người đóng (Live-Action)
+  if (
+    /\b(live[\s-]*action|người\s*đóng|nguoi\s*dong|phim\s*lẻ|phim\s*le|phim\s*điện\s*ảnh|phim\s*dien\s*anh|thuyết\s*minh|thuyet\s*minh|lồng\s*tiếng|long\s*tieng|hồng\s*kông|hong\s*kong|hàn\s*quốc|han\s*quoc|trung\s*quốc|trung\s*quoc|âu\s*mỹ|au\s*my|hollywood|võ\s*thuật|vo\s*thuat|kiếm\s*hiệp|kiem\s*hiep|châu\s*tinh\s*trì|thành\s*long|chân\s*tử\s*đan|lý\s*liên\s*kiệt)\b/i.test(
+      hay,
+    )
+  ) {
+    return 'Phim Người Đóng';
+  }
+
+  return 'Anime / Hoạt hình';
+}
+
+/**
+ * Lọc nhanh theo nhóm thể loại an toàn trong không gian Phim Chiếu Rạp.
+ * Ưu tiên kiểm tra mảng `cinema_genres` từ Gemini + Google Search Grounding;
+ * fallback sang nhận diện từ khóa trên tiêu đề/mô tả nếu bản ghi cũ chưa cập nhật `cinema_genres`.
  */
 export function matchesTheatricalSafeCategory(
   video: {
     title: string;
     description?: string | null;
     series_name?: string | null;
+    cinema_genres?: string[] | null;
   },
   category: TheatricalCategoryFilter,
 ): boolean {
   if (category === 'all') return true;
+
+  if (Array.isArray(video.cinema_genres) && video.cinema_genres.length > 0) {
+    const normalizedGenres = video.cinema_genres.map((g) => g.toLowerCase());
+    const target = category.toLowerCase();
+    if (normalizedGenres.some((g) => g.includes(target))) {
+      return true;
+    }
+    // Cho phép Võ thuật khớp với Hành động nếu người dùng lọc Hành động
+    if (
+      category === 'Hành động' &&
+      normalizedGenres.some((g) => g.includes('võ thuật'))
+    ) {
+      return true;
+    }
+    return false;
+  }
+
   const hay =
     `${video.title} ${video.series_name ?? ''} ${video.description ?? ''}`.toLowerCase();
 
-  if (category === 'action') {
-    return /\b(hành\s*động|hanh\s*dong|phiêu\s*lưu|phieu\s*luu|chiến\s*đấu|chien\s*dau|action|adventure|shonen|thanh\s*gươm|jujutsu|chú\s*thuật|one\s*piece|conan|thám\s*tử|naruto|dragon\s*ball|bleach|hunter)\b/i.test(
-      hay,
-    );
+  switch (category) {
+    case 'Hành động':
+      return /\b(hành\s*động|hanh\s*dong|chiến\s*đấu|chien\s*dau|action|võ\s*thuật|vo\s*thuat|kiếm\s*hiệp|thanh\s*gươm|jujutsu|chú\s*thuật|conan|thám\s*tử|naruto|dragon\s*ball|bleach|hunter|đặc\s*nhiệm|sát\s*thủ)\b/i.test(
+        hay,
+      );
+    case 'Phiêu lưu':
+      return /\b(phiêu\s*lưu|phieu\s*luu|adventure|thám\s*hiểm|tham\s*hiem|hành\s*trình|hanh\s*trinh|one\s*piece|doraemon|pokemon|digimon|kho\s*báu)\b/i.test(
+        hay,
+      );
+    case 'Giả tưởng':
+      return /\b(giả\s*tưởng|gia\s*tuong|phép\s*thuật|phep\s*thuat|ma\s*thuật|fantasy|magic|isekai|dị\s*giới|thần\s*thoại|tiên\s*hiệp|suzume|ghibli|spirited|mononoke|howl|vùng\s*đất|lâu\s*đài)\b/i.test(
+        hay,
+      );
+    case 'Tình cảm':
+      return /\b(tình\s*cảm|tinh\s*cam|lãng\s*mạn|lang\s*man|đời\s*thường|doi\s*thuong|học\s*đường|hoc\s*duong|romance|slice\s*of\s*life|your\s*name|kimi\s*no\s*na|weathering|đứa\s*con\s*của\s*thời\s*tiết|dáng\s*hình\s*thanh\s*âm|violet|5cm|khu\s*vườn\s*ngôn\s*từ)\b/i.test(
+        hay,
+      );
+    case 'Viễn tưởng':
+      return /\b(viễn\s*tưởng|vien\s*tuong|tương\s*lai|tuong\s*lai|vũ\s*trụ|vu\s*tru|cơ\s*giáp|mecha|sci-fi|scifi|robot|gundam|evangelion|cyber|không\s*gian|du\s*hành\s*thời\s*gian)\b/i.test(
+        hay,
+      );
+    case 'Hài hước':
+      return /\b(hài\s*hước|hai\s*huoc|comedy|hài|vui\s*nhộn|shinchan|crayon\s*shin|châu\s*tinh\s*trì|gia\s*đình|family)\b/i.test(
+        hay,
+      );
+    case 'Tâm lý':
+      return /\b(tâm\s*lý|tam\s*ly|drama|chính\s*kịch|chinh\s*kich|cảm\s*động|cam\s*dong|trinh\s*thám|trinh\s*tham|bí\s*ẩn|bi\s*an)\b/i.test(
+        hay,
+      );
+    default:
+      return true;
   }
-  if (category === 'fantasy') {
-    return /\b(giả\s*tưởng|gia\s*tuong|phép\s*thuật|phep\s*thuat|ma\s*thuật|fantasy|magic|isekai|dị\s*giới|thần\s*thoại|suzume|ghibli|spirited|mononoke|howl|vùng\s*đất|lâu\s*đài)\b/i.test(
-      hay,
-    );
-  }
-  if (category === 'romance') {
-    return /\b(tình\s*cảm|tinh\s*cam|lãng\s*mạn|lang\s*man|đời\s*thường|doi\s*thuong|học\s*đường|hoc\s*duong|romance|slice\s*of\s*life|drama|your\s*name|kimi\s*no\s*na|weathering|đứa\s*con\s*của\s*thời\s*tiết|dáng\s*hình\s*thanh\s*âm|violet|5cm|khu\s*vườn\s*ngôn\s*từ)\b/i.test(
-      hay,
-    );
-  }
-  if (category === 'scifi') {
-    return /\b(viễn\s*tưởng|vien\s*tuong|tương\s*lai|tuong\s*lai|vũ\s*trụ|vu\s*tru|cơ\s*giáp|mecha|sci-fi|scifi|robot|gundam|evangelion|doraemon|cyber|không\s*gian)\b/i.test(
-      hay,
-    );
-  }
-  return true;
 }
 
 export const PRIMARY_GENRE_OPTIONS: PrimaryGenreTag[] = ['Phim AI', 'HH2D'];

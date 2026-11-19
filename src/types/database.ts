@@ -10,6 +10,8 @@ export type WebSubStatus = 'pending' | 'active' | 'expired';
 
 export type GenreTag = 'Phim AI' | 'HH2D';
 
+export type CinemaFormat = 'Anime / Hoạt hình' | 'Phim Người Đóng';
+
 export type VideoType = 'episode' | 'full_movie' | 'trailer';
 
 export type AccessRequestStatus = 'pending' | 'approved' | 'rejected';
@@ -107,6 +109,8 @@ export type VideoRow = {
   is_manual_tag?: boolean;
   is_theatrical_movie?: boolean | null;
   theatrical_release_year?: number | null;
+  cinema_format?: CinemaFormat | null;
+  cinema_genres?: string[] | null;
   created_at: string;
 };
 
@@ -241,6 +245,8 @@ export type Database = {
           is_manual_tag?: boolean;
           is_theatrical_movie?: boolean | null;
           theatrical_release_year?: number | null;
+          cinema_format?: CinemaFormat | null;
+          cinema_genres?: string[] | null;
           created_at?: string;
         };
         Update: {
@@ -261,6 +267,8 @@ export type Database = {
           is_manual_tag?: boolean;
           is_theatrical_movie?: boolean | null;
           theatrical_release_year?: number | null;
+          cinema_format?: CinemaFormat | null;
+          cinema_genres?: string[] | null;
           created_at?: string;
         };
         Relationships: [

@@ -28,7 +28,7 @@ Sử dụng SDK chính thức `@google/genai` phía server trên endpoint `v1bet
     - **Loại trừ cứng 100%:** Mọi video thuộc `Phim AI`, có thời lượng ngoài ngưỡng **65–165 phút (`3900s–9900s`)**, hoặc tiêu đề chứa dấu hiệu tổng hợp/ghép tập (`giờ`, `tiếng`, `tập 1`, `trọn bộ`, `tổng hợp`, `review`, `tóm tắt`) đều trả về `false`.
     - **Chính sách Chặn Kinh Dị 2 Lớp (Scoped Anti-Horror Policy — CHỈ ÁP DỤNG RIÊNG CHO PHIM CHIẾU RẠP):**
       1. *Lớp 1 (Pre-filter từ khóa trong `/api/cinema/discover` & `isHardExcludedFromTheatrical`):* Loại bỏ ngay video chiếu rạp có tiêu đề/mô tả chứa `kinh dị`, `horror`, `ma ám`, `quỷ ám`, `trừ tà`, `exorcist`, `ác quỷ`, `xác sống`, `zombie`, `ma cà rồng`, `slasher`, `giết người hàng loạt`, `máu me`, `gore`, `creepy`, `rùng rợn`, `ma quái`, `linh dị`, `cương thi`.
-      2. *Lớp 2 (Google Search Grounding trên `v1beta` kèm `tools: [{ googleSearch: {} }]`):* Tra cứu Google xác nhận đồng thời `isTheatricalMovie === true` (đã từng công chiếu thương mại ngoài rạp kèm `canonicalTitle` và `releaseYear`) VÀ `isHorrorOrGore === false`.
+      2. *Lớp 2 (Google Search Grounding trên `v1beta` kèm `tools: [{ googleSearch: {} }]`):* Tra cứu Google xác nhận đồng thời `isTheatricalMovie === true` (đón nhận cả **Anime / Hoạt hình chiếu rạp** lẫn **Phim điện ảnh người đóng Live-Action** từng công chiếu thương mại ngoài rạp, kèm `canonicalTitle`, `releaseYear`, `cinemaFormat: 'Anime / Hoạt hình' | 'Phim Người Đóng'`, và `cinemaGenres` thuộc nhóm thể loại an toàn) VÀ `isHorrorOrGore === false`.
       3. *Phạm vi cô lập:* Tuyệt đối **không** áp dụng bộ lọc kinh dị/linh dị/ma quái lên luồng phân loại `HH2D`, `2D` và `Phim AI` thông thường.
 - **Structured Output Schema (`Type.ARRAY`):**
   Trả về đúng 1 phần tử JSON cho mỗi `videoId`:

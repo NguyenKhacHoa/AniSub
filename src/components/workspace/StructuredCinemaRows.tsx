@@ -19,11 +19,13 @@ import {
 import { Button } from '@/components/ui/button';
 import { VideoThumbnail } from '@/components/workspace/VideoThumbnail';
 import {
+  CINEMA_FORMAT_STYLES,
   GENRE_DOT_STYLES,
   PRIMARY_GENRE_OPTIONS,
   formatDuration,
   getProgressPercent,
   isTheatricalMovieVideo,
+  resolveCinemaFormat,
   type CinemaVideoItem,
   type PrimaryGenreTag,
   type WorkspaceAuthStatus,
@@ -40,7 +42,10 @@ interface StructuredCinemaRowsProps {
   sectionSubtitle?: string;
   isLoadingExplore?: boolean;
   isLoadingTheatrical?: boolean;
+  isLoadingMoreTheatrical?: boolean;
+  totalTheatricalCount?: number;
   onRefreshTheatrical?: () => void;
+  onLoadMoreTheatrical?: () => void;
   hasMoreExplore?: boolean;
   isLoadingMoreExplore?: boolean;
   onLoadMoreExplore?: () => void;
@@ -89,7 +94,10 @@ export function StructuredCinemaRows({
   sectionSubtitle,
   isLoadingExplore = false,
   isLoadingTheatrical = false,
+  isLoadingMoreTheatrical = false,
+  totalTheatricalCount,
   onRefreshTheatrical,
+  onLoadMoreTheatrical,
   hasMoreExplore = false,
   isLoadingMoreExplore = false,
   onLoadMoreExplore,
@@ -104,11 +112,17 @@ export function StructuredCinemaRows({
   onTriggerGoogleSignIn,
 }: StructuredCinemaRowsProps) {
   const exploreSentinelRef = useRef<HTMLDivElement>(null);
+  const theatricalSentinelRef = useRef<HTMLDivElement>(null);
   const exploreObserverRef = useRef({
     hasMoreExplore,
     isLoadingMoreExplore,
     isLoadingExplore,
     onLoadMoreExplore,
+  });
+  const theatricalObserverRef = useRef({
+    isLoadingTheatrical,
+    isLoadingMoreTheatrical,
+    onLoadMoreTheatrical,
   });
 
   useEffect(() => {
@@ -118,6 +132,11 @@ export function StructuredCinemaRows({
       isLoadingExplore,
       onLoadMoreExplore,
     };
+    theatricalObserverRef.current = {
+      isLoadingTheatrical,
+      isLoadingMoreTheatrical,
+      onLoadMoreTheatrical,
+    };
   });
 
   const shouldObserveExploreSentinel =
@@ -125,6 +144,11 @@ export function StructuredCinemaRows({
     videos.length > 0 &&
     hasMoreExplore &&
     Boolean(onLoadMoreExplore);
+
+  const shouldObserveTheatricalSentinel =
+    viewMode === 'theatrical' &&
+    videos.length > 0 &&
+    Boolean(onLoadMoreTheatrical);
 
   useEffect(() => {
     if (!shouldObserveExploreSentinel) return;
@@ -151,6 +175,33 @@ export function StructuredCinemaRows({
     observer.observe(node);
     return () => observer.disconnect();
   }, [shouldObserveExploreSentinel]);
+
+  useEffect(() => {
+    if (!shouldObserveTheatricalSentinel) return;
+    const node = theatricalSentinelRef.current;
+    if (!node) return;
+
+    let hasTriggeredForCurrentRender = false;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting || hasTriggeredForCurrentRender) return;
+        const st = theatricalObserverRef.current;
+        if (
+          st.isLoadingTheatrical ||
+          st.isLoadingMoreTheatrical ||
+          !st.onLoadMoreTheatrical
+        ) {
+          return;
+        }
+        hasTriggeredForCurrentRender = true;
+        st.onLoadMoreTheatrical();
+      },
+      { rootMargin: '240px' },
+    );
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [shouldObserveTheatricalSentinel, videos.length]);
 
   // 1. Trạng thái: Chưa đăng nhập Google
   if (authStatus === 'unauthenticated') {
@@ -596,30 +647,55 @@ export function StructuredCinemaRows({
 
                 <div className="flex flex-1 flex-col justify-between p-3.5">
                   <div>
-                    <div className="flex items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onCycleVideoGenre?.(video, nextGenre);
-                        }}
-                        title={
-                          video.is_manual_tag
-                            ? `Đã khóa thủ công (${genreStyle.label}) — Bấm để đổi sang ${nextGenre}`
-                            : `Bấm để đổi nhanh sang ${nextGenre}`
-                        }
-                        className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-medium transition-opacity hover:opacity-85 cursor-pointer ${genreStyle.badgeClass}`}
-                      >
-                        {video.is_manual_tag && (
-                          <Lock className="size-2.5 shrink-0" />
-                        )}
-                        <span>
-                          {genreStyle.label}
-                          {video.episode_number !== null
-                            ? ` • Tập ${video.episode_number}`
-                            : ''}
-                        </span>
-                      </button>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {viewMode === 'theatrical' ? (
+                        <>
+                          {(() => {
+                            const fmt = resolveCinemaFormat(video);
+                            const fmtStyle = CINEMA_FORMAT_STYLES[fmt];
+                            return (
+                              <span
+                                className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-medium ${fmtStyle.badgeClass}`}
+                              >
+                                {fmtStyle.label}
+                              </span>
+                            );
+                          })()}
+                          {Array.isArray(video.cinema_genres) &&
+                            video.cinema_genres.slice(0, 2).map((g) => (
+                              <span
+                                key={g}
+                                className="inline-flex items-center rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-secondary)]"
+                              >
+                                {g}
+                              </span>
+                            ))}
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onCycleVideoGenre?.(video, nextGenre);
+                          }}
+                          title={
+                            video.is_manual_tag
+                              ? `Đã khóa thủ công (${genreStyle.label}) — Bấm để đổi sang ${nextGenre}`
+                              : `Bấm để đổi nhanh sang ${nextGenre}`
+                          }
+                          className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-medium transition-opacity hover:opacity-85 cursor-pointer ${genreStyle.badgeClass}`}
+                        >
+                          {video.is_manual_tag && (
+                            <Lock className="size-2.5 shrink-0" />
+                          )}
+                          <span>
+                            {genreStyle.label}
+                            {video.episode_number !== null
+                              ? ` • Tập ${video.episode_number}`
+                              : ''}
+                          </span>
+                        </button>
+                      )}
                     </div>
                     <h3 className="mt-2 line-clamp-2 text-sm font-semibold text-[var(--text-primary)]">
                       {video.title}
@@ -671,6 +747,47 @@ export function StructuredCinemaRows({
           <p className="py-2 text-xs text-[var(--text-secondary)]">
             Đang hiển thị toàn bộ {displayVideos.length} phim trong kho
           </p>
+        </div>
+      )}
+
+      {/* Cuộn vô tận & nút Tải thêm phim chiếu rạp không giới hạn */}
+      {viewMode === 'theatrical' && displayVideos.length > 0 && (
+        <div
+          ref={theatricalSentinelRef}
+          className="flex flex-col items-center justify-center gap-2.5 pt-3 pb-5"
+        >
+          <p className="text-xs tabular-nums text-[var(--text-secondary)]">
+            Đang hiển thị{' '}
+            <strong className="font-semibold text-[var(--text-primary)]">
+              {displayVideos.length}
+            </strong>{' '}
+            / Tổng{' '}
+            <strong className="font-semibold text-[var(--text-primary)]">
+              {totalTheatricalCount ?? displayVideos.length}
+            </strong>{' '}
+            phim chiếu rạp
+          </p>
+          {onLoadMoreTheatrical && (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isLoadingTheatrical || isLoadingMoreTheatrical}
+              onClick={onLoadMoreTheatrical}
+              className="h-10 rounded-xl border-[var(--border-subtle)] bg-[var(--bg-surface)] px-6 text-xs font-semibold text-[var(--text-primary)] hover:border-[var(--accent-primary)]/60 hover:bg-[var(--bg-elevated)] cursor-pointer"
+            >
+              {isLoadingTheatrical || isLoadingMoreTheatrical ? (
+                <>
+                  <Loader2 className="mr-2 size-4 animate-spin text-[var(--accent-primary)]" />
+                  <span>Đang săn &amp; xác minh thêm phim chiếu rạp...</span>
+                </>
+              ) : (
+                <>
+                  <Clapperboard className="mr-2 size-4 text-amber-500 dark:text-amber-400" />
+                  <span>Tải thêm phim chiếu rạp</span>
+                </>
+              )}
+            </Button>
+          )}
         </div>
       )}
 
