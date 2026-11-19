@@ -6,7 +6,8 @@ import type {
   CommentSentiment,
 } from '@/types/ai-insight';
 
-const MAX_TRANSCRIPT_CHARS = 9000;
+const MAX_TRANSCRIPT_CHARS = 8000;
+const MAX_SAMPLED_SEGMENTS = 1200;
 
 interface CaptionTrack {
   baseUrl?: string;
@@ -159,12 +160,25 @@ function buildCompactTimestampedTranscript(
 ): string {
   if (segments.length === 0) return '';
 
+  // Với các video siêu dài (10-12 tiếng, có thể tới 15.000+ câu thoại),
+  // lấy mẫu đều phần ĐẦU + GIỮA + CUỐI trước khi gom nhóm để xử lý tức thì (< 5ms)
+  let sampledSegments = segments;
+  if (segments.length > MAX_SAMPLED_SEGMENTS) {
+    const partSize = Math.floor(MAX_SAMPLED_SEGMENTS / 3); // 400 đoạn mỗi vùng
+    const midStart = Math.floor((segments.length - partSize) / 2);
+    sampledSegments = [
+      ...segments.slice(0, partSize),
+      ...segments.slice(midStart, midStart + partSize),
+      ...segments.slice(-partSize),
+    ];
+  }
+
   const lines: string[] = [];
   let bucketText: string[] = [];
-  let bucketStart = segments[0].startSec;
-  let lastStamp = segments[0].startSec;
+  let bucketStart = sampledSegments[0].startSec;
+  let lastStamp = sampledSegments[0].startSec;
 
-  for (const seg of segments) {
+  for (const seg of sampledSegments) {
     const clean = seg.text.replace(/\s+/g, ' ').trim();
     if (!clean) continue;
 
@@ -187,11 +201,11 @@ function buildCompactTimestampedTranscript(
     return fullText;
   }
 
-  // Giới hạn tối ưu token (~9.000 ký tự) để video dài > 3 tiếng vẫn phản hồi nhanh trên Vercel:
-  // lấy phần ĐẦU (3.6k) + GIỮA (3.0k) + CUỐI (2.4k)
-  const headLen = 3600;
-  const midLen = 3000;
-  const tailLen = 2400;
+  // Giới hạn tối đa ~8.000 ký tự (ĐẦU 3.0k + GIỮA 2.5k + CUỐI 2.5k) để các bộ phim 11-12 tiếng
+  // vẫn phân tích siêu nhanh trên Vercel mà không bao giờ bị timeout.
+  const headLen = 3000;
+  const midLen = 2500;
+  const tailLen = 2500;
   const midStart = Math.max(
     headLen,
     Math.floor((fullText.length - midLen) / 2),

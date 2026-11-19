@@ -4,6 +4,8 @@ import {
   GEMINI_PRIMARY_MODEL,
   callGeminiWithFallback,
   getGeminiClient,
+  getGeminiErrorStatus,
+  isRetryableGeminiModelError,
 } from '@/lib/gemini/client';
 import { extractSeriesInfo, parseEpisodeInfo } from '@/lib/series-parser';
 import type { PrimaryGenreTag } from '@/types/workspace';
@@ -12,7 +14,6 @@ export const GEMINI_VISION_MODELS = GEMINI_FALLBACK_MODELS;
 
 const BATCH_CHUNK_SIZE = 4;
 const INTER_CHUNK_DELAY_MS = 2000;
-const RETRY_429_DELAY_MS = 8000;
 
 export interface MultimodalVideoInput {
   video_id: string;
@@ -73,22 +74,6 @@ Quy tắc đầu ra:
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function getErrorStatus(err: unknown): number | null {
-  if (!err || typeof err !== 'object') return null;
-  const e = err as { status?: number; code?: number; message?: string };
-  if (typeof e.status === 'number') return e.status;
-  if (typeof e.code === 'number') return e.code;
-  if (typeof e.message === 'string') {
-    if (e.message.includes('429') || e.message.includes('RESOURCE_EXHAUSTED')) {
-      return 429;
-    }
-    if (e.message.includes('404') || e.message.includes('NOT_FOUND')) {
-      return 404;
-    }
-  }
-  return null;
 }
 
 function extractErrorMessage(err: unknown): string {
@@ -293,23 +278,17 @@ Thumbnail attached: ${imagePart ? 'YES' : 'NO'}`,
       return { map: chunkMap, succeeded: true, errorMessage: null };
     } catch (err) {
       lastError = err;
-      const status = getErrorStatus(err);
+      const status = getGeminiErrorStatus(err);
       console.error(`[AI Classifier ERROR] (${modelName}):`, err);
 
       if (
-        (status === 429 || status === 404) &&
+        isRetryableGeminiModelError(err) &&
         mIdx < GEMINI_VISION_MODELS.length - 1
       ) {
-        if (status === 429) {
-          console.warn(
-            `[AI Classifier] Model ${modelName} bị 429, chờ ${RETRY_429_DELAY_MS / 1000}s rồi xoay sang ${GEMINI_VISION_MODELS[mIdx + 1]}...`,
-          );
-          await sleep(RETRY_429_DELAY_MS);
-        } else {
-          console.warn(
-            `[AI Classifier] Model ${modelName} trả 404, xoay ngay sang ${GEMINI_VISION_MODELS[mIdx + 1]}...`,
-          );
-        }
+        const nextModel = GEMINI_VISION_MODELS[mIdx + 1];
+        console.warn(
+          `[AI Classifier] Model ${modelName} trả lỗi ${status ?? 'quá tải/không khả dụng'} (404/503/429), tự động chuyển ngay sang model dự phòng ${nextModel}...`,
+        );
         continue;
       }
 

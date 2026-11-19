@@ -7,7 +7,8 @@ export const GEMINI_PRIMARY_MODEL = 'gemini-3.8-flash' as const;
 
 /**
  * Chuỗi model ưu tiên & dự phòng tự động:
- * Ưu tiên `gemini-3.8-flash`, nếu gặp 404/NOT_FOUND hoặc 429 tự động chuyển sang `gemini-2.5-flash` -> `gemini-2.5-flash-lite`.
+ * Ưu tiên `gemini-3.8-flash`, nếu gặp 404 (Not Found), 503 (High Demand / Unavailable)
+ * hoặc 429 (Resource Exhausted) tự động chuyển ngay sang `gemini-2.5-flash` -> `gemini-2.5-flash-lite`.
  */
 export const GEMINI_FALLBACK_MODELS = [
   'gemini-3.8-flash',
@@ -46,19 +47,60 @@ export function getGeminiClient(): GoogleGenAI {
 
 export function getGeminiErrorStatus(err: unknown): number | null {
   if (!err || typeof err !== 'object') return null;
-  const e = err as { status?: number; code?: number; message?: string };
+  const e = err as {
+    status?: number;
+    code?: number;
+    message?: string;
+    error?: { code?: number; status?: string; message?: string };
+  };
   if (typeof e.status === 'number') return e.status;
   if (typeof e.code === 'number') return e.code;
-  if (typeof e.message === 'string') {
-    const upper = e.message.toUpperCase();
-    if (upper.includes('429') || upper.includes('RESOURCE_EXHAUSTED')) {
-      return 429;
-    }
-    if (upper.includes('404') || upper.includes('NOT_FOUND')) {
-      return 404;
-    }
+  if (typeof e.error?.code === 'number') return e.error.code;
+
+  const combinedMsg =
+    `${e.message ?? ''} ${e.error?.status ?? ''} ${e.error?.message ?? ''}`.toUpperCase();
+
+  if (
+    combinedMsg.includes('503') ||
+    combinedMsg.includes('UNAVAILABLE') ||
+    combinedMsg.includes('HIGH DEMAND') ||
+    combinedMsg.includes('OVERLOADED')
+  ) {
+    return 503;
+  }
+  if (
+    combinedMsg.includes('429') ||
+    combinedMsg.includes('RESOURCE_EXHAUSTED') ||
+    combinedMsg.includes('RATE_LIMIT')
+  ) {
+    return 429;
+  }
+  if (
+    combinedMsg.includes('404') ||
+    combinedMsg.includes('NOT_FOUND') ||
+    combinedMsg.includes('NO LONGER AVAILABLE')
+  ) {
+    return 404;
+  }
+  if (combinedMsg.includes('500') || combinedMsg.includes('INTERNAL')) {
+    return 500;
+  }
+  if (combinedMsg.includes('502') || combinedMsg.includes('504')) {
+    return 502;
   }
   return null;
+}
+
+export function isRetryableGeminiModelError(err: unknown): boolean {
+  const status = getGeminiErrorStatus(err);
+  return (
+    status === 404 ||
+    status === 429 ||
+    status === 503 ||
+    status === 500 ||
+    status === 502 ||
+    status === 504
+  );
 }
 
 function sleep(ms: number): Promise<void> {
@@ -75,8 +117,9 @@ export interface CallGeminiWithFallbackOptions {
 /**
  * Helper dùng chung gọi Gemini `generateContent` trên `v1beta`:
  * - Ưu tiên `models/gemini-3.8-flash:generateContent`.
- * - Tự động fallback ngay lập tức sang `models/gemini-2.5-flash:generateContent`
- *   khi gặp 404 / NOT_FOUND (hoặc 429) để ứng dụng không bao giờ bị gián đoạn.
+ * - Nếu gặp lỗi 404 (Not Found), 503 (High Demand / Unavailable) hoặc 429 (Resource Exhausted),
+ *   lập tức tự động chuyển sang `models/gemini-2.5-flash:generateContent` -> `gemini-2.5-flash-lite`
+ *   để người dùng luôn nhận phản hồi mượt mà ngay cả giờ cao điểm.
  */
 export async function callGeminiWithFallback(
   options: CallGeminiWithFallbackOptions,
@@ -110,7 +153,7 @@ export async function callGeminiWithFallback(
       const status = getGeminiErrorStatus(err);
       const hasNext = i < models.length - 1;
 
-      if (hasNext && (status === 404 || status === 429)) {
+      if (hasNext && isRetryableGeminiModelError(err)) {
         if (status === 429 && retry429DelayMs > 0) {
           console.warn(
             `[Gemini Fallback] Model ${modelName} bị 429, chờ ${retry429DelayMs / 1000}s rồi xoay sang ${models[i + 1]}...`,
@@ -118,7 +161,7 @@ export async function callGeminiWithFallback(
           await sleep(retry429DelayMs);
         } else {
           console.warn(
-            `[Gemini Fallback] Model ${modelName} trả ${status} (NOT_FOUND/429), tự động chuyển sang ${models[i + 1]}...`,
+            `[Gemini Fallback] Model ${modelName} gặp mã ${status ?? 'quá tải'} (404/503/429), lập tức chuyển sang ${models[i + 1]}...`,
           );
         }
         continue;
