@@ -1,0 +1,241 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:where(.dark, .dark *, [data-theme="midnight-void"], [data-theme="midnight-void"] *, [data-theme="deep-abyss"], [data-theme="deep-abyss"] *, [data-theme="velvet-espresso"], [data-theme="velvet-espresso"] *));
+
+/* ============================================================================
+   AniSub Unified Cinema Workspace — 4 Bộ Theme Chuẩn (docs/06-UI-UX-GUIDELINES.md)
+   - midnight-void (Mặc định): Đen sâu rạp chiếu & Đỏ điện ảnh
+   - deep-abyss: Xanh thẫm đại dương & Xanh ngọc sáng
+   - velvet-espresso: Than ấm & Vàng hổ phách
+   - crisp-daylight: Sáng tối giản & Xanh ngọc đậm
+   ============================================================================ */
+
+:root,
+[data-theme="midnight-void"] {
+  color-scheme: dark;
+
+  --bg-canvas: #06070a;
+  --bg-surface: #0f1117;
+  --bg-elevated: #171b24;
+  --border-subtle: rgba(255, 255, 255, 0.12);
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --accent-primary: #e11d48;
+  --accent-foreground: #ffffff;
+  --accent-soft: rgba(225, 29, 72, 0.16);
+  --ai-accent: #a78bfa;
+
+  /* Map sang shadcn / Tailwind tokens */
+  --background: var(--bg-canvas);
+  --foreground: var(--text-primary);
+  --card: var(--bg-surface);
+  --card-foreground: var(--text-primary);
+  --popover: var(--bg-elevated);
+  --popover-foreground: var(--text-primary);
+  --primary: var(--accent-primary);
+  --primary-foreground: var(--accent-foreground);
+  --secondary: var(--bg-elevated);
+  --secondary-foreground: var(--text-primary);
+  --muted: var(--bg-elevated);
+  --muted-foreground: var(--text-secondary);
+  --accent: var(--bg-elevated);
+  --accent-foreground-token: var(--text-primary);
+  --destructive: #ef4444;
+  --border: var(--border-subtle);
+  --input: var(--border-subtle);
+  --ring: var(--accent-primary);
+  --radius: 0.75rem;
+}
+
+[data-theme="deep-abyss"] {
+  color-scheme: dark;
+
+  --bg-canvas: #040b14;
+  --bg-surface: #0b1523;
+  --bg-elevated: #122136;
+  --border-subtle: rgba(148, 197, 255, 0.16);
+  --text-primary: #f1f7fe;
+  --text-secondary: #bacce0;
+  --accent-primary: #22d3ee;
+  --accent-foreground: #04131c;
+  --accent-soft: rgba(34, 211, 238, 0.16);
+  --ai-accent: #c084fc;
+
+  --background: var(--bg-canvas);
+  --foreground: var(--text-primary);
+  --card: var(--bg-surface);
+  --card-foreground: var(--text-primary);
+  --popover: var(--bg-elevated);
+  --popover-foreground: var(--text-primary);
+  --primary: var(--accent-primary);
+  --primary-foreground: var(--accent-foreground);
+  --secondary: var(--bg-elevated);
+  --secondary-foreground: var(--text-primary);
+  --muted: var(--bg-elevated);
+  --muted-foreground: var(--text-secondary);
+  --accent: var(--bg-elevated);
+  --destructive: #ef4444;
+  --border: var(--border-subtle);
+  --input: var(--border-subtle);
+  --ring: var(--accent-primary);
+}
+
+[data-theme="velvet-espresso"] {
+  color-scheme: dark;
+
+  --bg-canvas: #110d0b;
+  --bg-surface: #1b1512;
+  --bg-elevated: #261e19;
+  --border-subtle: rgba(245, 222, 195, 0.16);
+  --text-primary: #fdf8f3;
+  --text-secondary: #d6c7b8;
+  --accent-primary: #f59e0b;
+  --accent-foreground: #140d03;
+  --accent-soft: rgba(245, 158, 11, 0.16);
+  --ai-accent: #c4b5fd;
+
+  --background: var(--bg-canvas);
+  --foreground: var(--text-primary);
+  --card: var(--bg-surface);
+  --card-foreground: var(--text-primary);
+  --popover: var(--bg-elevated);
+  --popover-foreground: var(--text-primary);
+  --primary: var(--accent-primary);
+  --primary-foreground: var(--accent-foreground);
+  --secondary: var(--bg-elevated);
+  --secondary-foreground: var(--text-primary);
+  --muted: var(--bg-elevated);
+  --muted-foreground: var(--text-secondary);
+  --accent: var(--bg-elevated);
+  --destructive: #ef4444;
+  --border: var(--border-subtle);
+  --input: var(--border-subtle);
+  --ring: var(--accent-primary);
+}
+
+[data-theme="crisp-daylight"] {
+  color-scheme: light;
+
+  --bg-canvas: #f4f5f7;
+  --bg-surface: #ffffff;
+  --bg-elevated: #ebedf2;
+  --border-subtle: #d4d7df;
+  --text-primary: #111827;
+  --text-secondary: #4b5563;
+  --accent-primary: #0f766e;
+  --accent-foreground: #ffffff;
+  --accent-soft: rgba(15, 118, 110, 0.12);
+  --ai-accent: #6d28d9;
+
+  --background: var(--bg-canvas);
+  --foreground: var(--text-primary);
+  --card: var(--bg-surface);
+  --card-foreground: var(--text-primary);
+  --popover: var(--bg-surface);
+  --popover-foreground: var(--text-primary);
+  --primary: var(--accent-primary);
+  --primary-foreground: var(--accent-foreground);
+  --secondary: var(--bg-elevated);
+  --secondary-foreground: var(--text-primary);
+  --muted: var(--bg-elevated);
+  --muted-foreground: var(--text-secondary);
+  --accent: var(--bg-elevated);
+  --destructive: #dc2626;
+  --border: var(--border-subtle);
+  --input: var(--border-subtle);
+  --ring: var(--accent-primary);
+}
+
+@theme inline {
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-geist-mono);
+
+  --color-canvas: var(--bg-canvas);
+  --color-surface: var(--bg-surface);
+  --color-elevated: var(--bg-elevated);
+  --color-border-subtle: var(--border-subtle);
+  --color-accent-primary: var(--accent-primary);
+  --color-accent-soft: var(--accent-soft);
+  --color-ai-accent: var(--ai-accent);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--text-primary);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+/* Thanh cuộn tự ẩn 4px (Luật I18) */
+* {
+  --scrollbar-thumb: transparent;
+}
+*:hover {
+  --scrollbar-thumb: color-mix(in srgb, var(--text-primary) 18%, transparent);
+}
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-primary) 34%, transparent);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  *:hover {
+    scrollbar-color: color-mix(in srgb, var(--text-primary) 20%, transparent)
+      transparent;
+  }
+}
+
+.scrollbar-clean {
+  scrollbar-width: none;
+}
+.scrollbar-clean::-webkit-scrollbar {
+  display: none;
+}
