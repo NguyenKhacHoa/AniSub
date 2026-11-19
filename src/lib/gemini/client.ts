@@ -1,19 +1,20 @@
 import { GoogleGenAI, type GenerateContentParameters } from '@google/genai';
 
 /**
- * Model mặc định mới nhất trên endpoint `v1beta` cho toàn bộ hệ thống AniSub.
+ * Model mặc định ổn định nhất trên endpoint `v1beta` cho toàn bộ hệ thống AniSub.
  */
-export const GEMINI_PRIMARY_MODEL = 'gemini-3.8-flash' as const;
+export const GEMINI_PRIMARY_MODEL = 'gemini-2.5-flash' as const;
 
 /**
  * Chuỗi model ưu tiên & dự phòng tự động:
- * Ưu tiên `gemini-3.8-flash`, nếu gặp 404 (Not Found), 503 (High Demand / Unavailable)
- * hoặc 429 (Resource Exhausted) tự động chuyển ngay sang `gemini-2.5-flash` -> `gemini-2.5-flash-lite`.
+ * 1. `gemini-2.5-flash` (ưu tiên 1 — ổn định, hỗ trợ JSON mode chuẩn)
+ * 2. `gemini-3.5-flash-lite` (ưu tiên 2 — phản hồi cực nhanh, ít nghẽn)
+ * 3. `gemini-3.8-flash` (ưu tiên 3 — dự phòng khi 2 model trên chạm rate limit)
  */
 export const GEMINI_FALLBACK_MODELS = [
-  'gemini-3.8-flash',
   'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
+  'gemini-3.5-flash-lite',
+  'gemini-3.8-flash',
 ] as const;
 
 export const GEMINI_CLASSIFICATION_MODEL = GEMINI_PRIMARY_MODEL;
@@ -116,9 +117,9 @@ export interface CallGeminiWithFallbackOptions {
 
 /**
  * Helper dùng chung gọi Gemini `generateContent` trên `v1beta`:
- * - Ưu tiên `models/gemini-3.8-flash:generateContent`.
+ * - Ưu tiên `models/gemini-2.5-flash:generateContent`.
  * - Nếu gặp lỗi 404 (Not Found), 503 (High Demand / Unavailable) hoặc 429 (Resource Exhausted),
- *   lập tức tự động chuyển sang `models/gemini-2.5-flash:generateContent` -> `gemini-2.5-flash-lite`
+ *   lập tức tự động chuyển sang `models/gemini-3.5-flash-lite:generateContent` -> `gemini-3.8-flash`
  *   để người dùng luôn nhận phản hồi mượt mà ngay cả giờ cao điểm.
  */
 export async function callGeminiWithFallback(

@@ -6,8 +6,10 @@ import type {
   CommentSentiment,
 } from '@/types/ai-insight';
 
-const MAX_TRANSCRIPT_CHARS = 8000;
-const MAX_SAMPLED_SEGMENTS = 1200;
+const MAX_TRANSCRIPT_CHARS = 4800;
+const MAX_COMMENTS_CHARS = 1800;
+const MAX_PROMPT_CHARS = 7800;
+const MAX_SAMPLED_SEGMENTS = 900;
 
 interface CaptionTrack {
   baseUrl?: string;
@@ -201,11 +203,11 @@ function buildCompactTimestampedTranscript(
     return fullText;
   }
 
-  // Giới hạn tối đa ~8.000 ký tự (ĐẦU 3.0k + GIỮA 2.5k + CUỐI 2.5k) để các bộ phim 11-12 tiếng
-  // vẫn phân tích siêu nhanh trên Vercel mà không bao giờ bị timeout.
-  const headLen = 3000;
-  const midLen = 2500;
-  const tailLen = 2500;
+  // Giới hạn transcript tối đa ~4.800 ký tự (ĐẦU 1.8k + GIỮA 1.5k + CUỐI 1.5k) để tổng prompt
+  // luôn nằm gọn trong ngưỡng ~6.000-7.800 ký tự, giúp phim 11-12 tiếng xử lý trong 2-3 giây.
+  const headLen = 1800;
+  const midLen = 1500;
+  const tailLen = 1500;
   const midStart = Math.max(
     headLen,
     Math.floor((fullText.length - midLen) / 2),
@@ -482,29 +484,31 @@ export async function generateCinemaInsightWithGemini(input: {
   comments: FetchedCommentItem[];
   hasComments: boolean;
 }): Promise<CinemaInsightData> {
-  const commentsBlock =
+  const rawCommentsBlock =
     input.comments.length > 0
       ? input.comments
+          .slice(0, 28)
           .map(
             (c, idx) =>
-              `${idx + 1}. [${c.author} | 👍 ${c.likes}]: ${c.text}`,
+              `${idx + 1}. [${c.author} | 👍 ${c.likes}]: ${c.text.slice(0, 180)}`,
           )
           .join('\n')
       : '(Video hiện không có bình luận hoặc đã tắt bình luận)';
+  const commentsBlock = rawCommentsBlock.slice(0, MAX_COMMENTS_CHARS);
 
   const transcriptBlock = input.transcriptText
-    ? input.transcriptText
+    ? input.transcriptText.slice(0, MAX_TRANSCRIPT_CHARS)
     : '(Video không có phụ đề/lời thoại khả dụng — hãy phân tích khách quan từ tiêu đề, mô tả và bình luận khán giả, tuyệt đối không bịa mốc thời gian không có thật)';
 
-  const prompt = `Bạn là nhà phê bình điện ảnh & chuyên gia phân tích hoạt hình/Phim AI của rạp chiếu phim AniSub.
+  const rawPrompt = `Bạn là nhà phê bình điện ảnh & chuyên gia phân tích hoạt hình/Phim AI của rạp chiếu phim AniSub.
 Hãy phân tích chuyên sâu video dưới đây từ 3 nguồn dữ liệu THỰC TẾ (Metadata, Lời thoại/Phụ đề bên trong phim, và Bình luận khán giả YouTube) rồi trả về đúng JSON theo schema.
 
 === NGUỒN 1: METADATA PHIM ===
-- Tiêu đề: ${input.title}
-- Kênh: ${input.channelTitle || 'Không rõ'}
+- Tiêu đề: ${input.title.slice(0, 220)}
+- Kênh: ${(input.channelTitle || 'Không rõ').slice(0, 100)}
 - Thể loại: ${input.detectedGenre || 'Hoạt hình'}
 - Thời lượng: ${Math.round(input.durationSeconds / 60)} phút (${input.durationSeconds} giây)
-- Mô tả: ${(input.description || '(Không có mô tả)').slice(0, 1200)}
+- Mô tả: ${(input.description || '(Không có mô tả)').slice(0, 600)}
 
 === NGUỒN 2: LỜI THOẠI / PHỤ ĐỀ TRONG PHIM (Có sẵn: ${input.hasTranscript ? 'CÓ' : 'KHÔNG'}) ===
 ${transcriptBlock}
@@ -525,7 +529,9 @@ ${commentsBlock}
 6. communityPros: 2-3 điểm cộng cụ thể được khán giả khen nhiều nhất (nếu không có bình luận thì nêu ưu điểm nổi bật dựa trên nội dung phim).
 7. communityCons: 1-2 điểm trừ hoặc lưu ý nhỏ thực tế từ bình luận (nếu không có phàn nàn rõ rệt thì ghi 1 nhận xét khách quan hữu ích cho người xem).
 8. featuredComments: Trích tối đa 3 bình luận đắt giá/thú vị nhất TỪ ĐÚNG DANH SÁCH NGUỒN 3 ở trên (giữ đúng tác giả, số likes, tóm gọn nếu quá dài và gắn sentiment 'positive' | 'mixed' | 'critical'). Nếu Nguồn 3 rỗng thì trả về mảng rỗng [].
-9. storyContext: Bản ghi nhớ chi tiết khoảng 1.500-2.500 ký tự tổng hợp đầy đủ tên nhân vật, phe phái, tình tiết quan trọng theo trình tự từ lời thoại (nếu có) và các luồng ý kiến nổi bật trong bình luận, để làm trí nhớ chính xác cho trợ lý Chat hỏi đáp ngay sau đó.`;
+9. storyContext: Bản ghi nhớ chi tiết khoảng 1.200-2.000 ký tự tổng hợp đầy đủ tên nhân vật, phe phái, tình tiết quan trọng theo trình tự từ lời thoại (nếu có) và các luồng ý kiến nổi bật trong bình luận, để làm trí nhớ chính xác cho trợ lý Chat hỏi đáp ngay sau đó.`;
+
+  const prompt = rawPrompt.slice(0, MAX_PROMPT_CHARS);
 
   const { text: raw } = await callGeminiWithFallback({
     contents: prompt,

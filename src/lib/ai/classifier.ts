@@ -467,7 +467,7 @@ export const GEMINI_SUMMARY_MODEL = GEMINI_PRIMARY_MODEL;
 
 /**
  * Tạo 3 gạch đầu dòng tóm tắt nội dung ngắn gọn, KHÔNG spoil cái kết
- * (dùng callGeminiWithFallback: ưu tiên gemini-3.8-flash -> fallback gemini-2.5-flash).
+ * (dùng callGeminiWithFallback: ưu tiên gemini-2.5-flash -> gemini-3.5-flash-lite -> gemini-3.8-flash).
  */
 export async function generateVideoSummaryWithGemini(input: {
   title: string;
