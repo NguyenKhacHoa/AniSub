@@ -182,3 +182,40 @@ CREATE POLICY "Users read own explore cache"
   ON public.explore_cache FOR SELECT
   TO authenticated
   USING (auth.uid() = user_id);
+
+-- 10. Bảng Trạng thái Theo Dõi / Ẩn Bộ Phim theo từng User (Series Status)
+CREATE TABLE public.user_series_status (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  channel_id TEXT NOT NULL REFERENCES public.channels(channel_id) ON DELETE CASCADE,
+  series_key TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('following', 'completed', 'hidden')),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_id, series_key)
+);
+
+CREATE INDEX idx_user_series_status_user ON public.user_series_status(user_id, status);
+
+ALTER TABLE public.user_series_status ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users manage own series status"
+  ON public.user_series_status FOR ALL
+  TO authenticated
+  USING (auth.uid() = user_id);
+
+-- 11. Bảng Danh sách Lưu Xem Sau (Watch Later / Bookmarks)
+CREATE TABLE public.user_watch_later (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  video_id TEXT NOT NULL REFERENCES public.videos(video_id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_id, video_id)
+);
+
+CREATE INDEX idx_user_watch_later_user ON public.user_watch_later(user_id, created_at DESC);
+
+ALTER TABLE public.user_watch_later ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users manage own watch later"
+  ON public.user_watch_later FOR ALL
+  TO authenticated
+  USING (auth.uid() = user_id);

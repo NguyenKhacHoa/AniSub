@@ -331,10 +331,10 @@ export async function fetchChannelVideosPage(
     );
 
     const thumbnailUrl =
-      item.snippet?.thumbnails?.maxres?.url ||
-      item.snippet?.thumbnails?.standard?.url ||
       item.snippet?.thumbnails?.high?.url ||
       item.snippet?.thumbnails?.medium?.url ||
+      item.snippet?.thumbnails?.standard?.url ||
+      item.snippet?.thumbnails?.maxres?.url ||
       item.snippet?.thumbnails?.default?.url ||
       `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`;
 

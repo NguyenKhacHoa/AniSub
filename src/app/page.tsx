@@ -11,6 +11,7 @@ import type {
   CinemaVideoItem,
   WorkspaceAuthStatus,
 } from '@/types/workspace';
+import type { UserSeriesStatus } from '@/types/database';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,8 +22,9 @@ export default async function HomePage() {
   let pendingRequestsCount = 0;
   let initialChannels: ChannelWithSelection[] = [];
   let initialVideos: CinemaVideoItem[] = [];
+  let initialSeriesStatuses: Record<string, UserSeriesStatus> = {};
+  let initialWatchLaterIds: string[] = [];
   let initialTotalVideosCount = 0;
-  let initialHasMoreVideos = false;
 
   const isSupabaseConfigured = Boolean(
     process.env.NEXT_PUBLIC_SUPABASE_URL &&
@@ -71,8 +73,9 @@ export default async function HomePage() {
             const workspaceData = await loadWorkspaceDataForUser(user.id);
             initialChannels = workspaceData.channels;
             initialVideos = workspaceData.videos;
+            initialSeriesStatuses = workspaceData.seriesStatuses;
+            initialWatchLaterIds = workspaceData.watchLaterIds;
             initialTotalVideosCount = workspaceData.totalVideosCount;
-            initialHasMoreVideos = workspaceData.hasMoreVideos;
             if (workspaceData.lastSyncedAt) {
               initialUser.lastSyncedAt = workspaceData.lastSyncedAt;
             }
@@ -101,8 +104,9 @@ export default async function HomePage() {
       initialUser={initialUser}
       initialChannels={initialChannels}
       initialVideos={initialVideos}
+      initialSeriesStatuses={initialSeriesStatuses}
+      initialWatchLaterIds={initialWatchLaterIds}
       initialTotalVideosCount={initialTotalVideosCount}
-      initialHasMoreVideos={initialHasMoreVideos}
       isAdmin={isAdmin}
       pendingRequestsCount={pendingRequestsCount}
     />

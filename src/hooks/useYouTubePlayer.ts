@@ -1,10 +1,14 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 interface YTPlayerInstance {
   getCurrentTime: () => number;
   getDuration: () => number;
+  seekTo: (seconds: number, allowSeekAhead?: boolean) => void;
+  setPlaybackRate: (suggestedRate: number) => void;
+  playVideo: () => void;
+  pauseVideo: () => void;
   destroy: () => void;
 }
 
@@ -91,6 +95,7 @@ interface UseYouTubePlayerOptions {
   videoId: string;
   initialProgressSeconds: number;
   initialDurationSeconds: number;
+  playbackRate?: number;
   onSaveProgress: (
     videoId: string,
     progressSeconds: number,
@@ -103,6 +108,7 @@ export function useYouTubePlayer({
   videoId,
   initialProgressSeconds,
   initialDurationSeconds,
+  playbackRate = 1,
   onSaveProgress,
   onEnded,
 }: UseYouTubePlayerOptions) {
@@ -112,8 +118,21 @@ export function useYouTubePlayer({
   const lastSavedAtRef = useRef<number>(0);
   const latestTimeRef = useRef<number>(initialProgressSeconds);
   const latestDurationRef = useRef<number>(initialDurationSeconds);
+  const playbackRateRef = useRef<number>(playbackRate);
   const onSaveRef = useRef(onSaveProgress);
   const onEndedRef = useRef(onEnded);
+
+  useEffect(() => {
+    playbackRateRef.current = playbackRate;
+    const p = playerRef.current;
+    if (p) {
+      try {
+        p.setPlaybackRate(playbackRate);
+      } catch {
+        // Ignore if player not ready yet
+      }
+    }
+  }, [playbackRate]);
 
   useEffect(() => {
     onSaveRef.current = onSaveProgress;
@@ -188,6 +207,11 @@ export function useYouTubePlayer({
                 latestDurationRef.current = realDuration;
                 setDuration(Math.floor(realDuration));
               }
+              try {
+                event.target.setPlaybackRate(playbackRateRef.current);
+              } catch {
+                // Ignore if player rejects rate before playing
+              }
               setCurrentTime(startSec);
             },
             onStateChange: (event) => {
@@ -196,6 +220,11 @@ export function useYouTubePlayer({
 
               if (state === YT.PlayerState.PLAYING) {
                 setIsPlaying(true);
+                try {
+                  event.target.setPlaybackRate(playbackRateRef.current);
+                } catch {
+                  // Ignore
+                }
                 clearTicker();
                 intervalRef.current = setInterval(() => {
                   const p = playerRef.current;
@@ -270,10 +299,60 @@ export function useYouTubePlayer({
     };
   }, [videoId, initialProgressSeconds, initialDurationSeconds]);
 
+  const seekBy = useCallback((deltaSeconds: number) => {
+    const p = playerRef.current;
+    if (!p) return;
+    try {
+      const curr = p.getCurrentTime();
+      const dur = p.getDuration();
+      const rawTarget = (Number.isFinite(curr) ? curr : latestTimeRef.current) + deltaSeconds;
+      const clampedTarget =
+        Number.isFinite(dur) && dur > 0
+          ? Math.max(0, Math.min(dur - 1, rawTarget))
+          : Math.max(0, rawTarget);
+      p.seekTo(clampedTarget, true);
+      latestTimeRef.current = clampedTarget;
+      setCurrentTime(Math.floor(clampedTarget));
+    } catch {
+      // Ignore if player not ready
+    }
+  }, []);
+
+  const applyPlaybackRate = useCallback((rate: number) => {
+    playbackRateRef.current = rate;
+    const p = playerRef.current;
+    if (!p) return;
+    try {
+      p.setPlaybackRate(rate);
+    } catch {
+      // Ignore if player not ready
+    }
+  }, []);
+
+  const playVideo = useCallback(() => {
+    try {
+      playerRef.current?.playVideo();
+    } catch {
+      // Ignore
+    }
+  }, []);
+
+  const pauseVideo = useCallback(() => {
+    try {
+      playerRef.current?.pauseVideo();
+    } catch {
+      // Ignore
+    }
+  }, []);
+
   return {
     containerRef,
     currentTime,
     duration,
     isPlaying,
+    seekBy,
+    applyPlaybackRate,
+    playVideo,
+    pauseVideo,
   };
 }

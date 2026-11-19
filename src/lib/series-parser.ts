@@ -326,6 +326,42 @@ export function extractSeriesTitle(
   return title.trim();
 }
 
+export interface ExtractedSeriesInfo {
+  seriesTitle: string;
+  seriesSlug: string;
+  seriesKey: string;
+  isStandalone: boolean;
+}
+
+/**
+ * Trích xuất thông tin định danh Bộ Phim (seriesTitle, seriesSlug, seriesKey)
+ * dùng chung cho gom nhóm Series Playlist, lan truyền tag thủ công & phân loại AI theo bộ.
+ */
+export function extractSeriesInfo(params: {
+  videoId: string;
+  channelId: string;
+  title: string;
+  channelTitle?: string;
+  seriesName?: string | null;
+}): ExtractedSeriesInfo {
+  const seriesTitle = extractSeriesTitle(
+    params.title,
+    params.channelTitle,
+    params.seriesName,
+  );
+  const slug = normalizeSeriesSlug(seriesTitle);
+  const isStandalone = !slug || slug.length < 2;
+  const seriesSlug = isStandalone ? params.videoId : slug;
+  const seriesKey = `${params.channelId}::${seriesSlug}`;
+
+  return {
+    seriesTitle,
+    seriesSlug,
+    seriesKey,
+    isStandalone,
+  };
+}
+
 function resolvePrimaryGenre(genre: string | null): PrimaryGenreTag {
   if (genre && PRIMARY_GENRE_OPTIONS.includes(genre as PrimaryGenreTag)) {
     return genre as PrimaryGenreTag;
@@ -355,13 +391,13 @@ export function groupVideosIntoSeries(
     if (!isSeriesEpisodeCandidate(video)) continue;
 
     const parsed = parseEpisodeInfo(video.title, video.episode_number);
-    const seriesTitle = extractSeriesTitle(
-      video.title,
-      video.channel_title,
-      video.series_name,
-    );
-    const slug = normalizeSeriesSlug(seriesTitle) || video.video_id;
-    const seriesKey = `${video.channel_id}::${slug}`;
+    const { seriesTitle, seriesKey } = extractSeriesInfo({
+      videoId: video.video_id,
+      channelId: video.channel_id,
+      title: video.title,
+      channelTitle: video.channel_title,
+      seriesName: video.series_name,
+    });
 
     const publishedMs = new Date(video.published_at).getTime();
     const isNew =

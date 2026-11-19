@@ -9,33 +9,30 @@ User bấm Sync -> POST /api/youtube/sync-channels -> YouTube Data API (subscrip
                                                           ▼
                                                Lưu vào `channels` & `user_channels`
                                                           │
-User bật kênh / bấm "+50 video cũ" -> POST /api/channels/toggle | /api/channels/load-more
+User bật kênh / đăng ký kênh -> POST /api/channels/toggle | /api/youtube/subscribe | /api/channels/load-more
                                                           │
                                                           ▼
-                        YouTube playlistItems.list (maxResults=50, lưu next_page_token)
+             syncAllChannelVideos: Duyệt hết 100% các trang nextPageToken (50 video/trang)
                                                           │
                          ┌────────────────────────────────┴────────────────────────────────┐
                          ▼                                                                 ▼
-         [Lọc bỏ Shorts (< 60s) & Video đã có]                     [Kênh 2 tag -> Gemini Vision Batch]
-                                                                   (4 video/batch, mqdefault.jpg,
+         [Kế thừa tag theo Series từ DB]                           [Kênh 2 tag -> 1 đại diện / 1 Series]
+         (Ưu tiên is_manual_tag = true)                            (Gemini Vision 4 series/batch, hqdefault.jpg,
                                                                     xoay vòng 3 model dự phòng)
                                                                                            │
                                                                                            ▼
                                                                     Lưu vào bảng `videos` (Supabase)
 
-[2. Hiển thị & Cuộn Vô Hạn Theo Ngữ Cảnh (Context-Aware Infinite Scroll)]
-UI đổi bộ lọc (Tất cả | Phim AI | HH2D) / Tab (Tất cả | Tập mới | Phim Full) / Tìm kiếm / Cuộn đáy
+[2. Full-Catalog In-Memory Store & Instant Filtering (0ms)]
+Mở ứng dụng (SSR) -> loadWorkspaceDataForUser() -> Truy vấn phân đoạn .range() theo lô 1.000 dòng lấy 100% kho video
                                                           │
                                                           ▼
-             GET /api/videos?offset=...&limit=60&genre=...&tab=...&q=...
-                                                          │
-                                                          ▼
-     Truy vấn trực tiếp Supabase (Genre-Aware Filtering + watch_progress + count: exact)
+              Giữ toàn bộ `allVideos` trong bộ nhớ `UnifiedCinemaWorkspace` + Per-Tab Scroll Restoration
                                                           │
                          ┌────────────────────────────────┴────────────────────────────────┐
                          ▼                                                                 ▼
              [Tab Tập mới -> SeriesGrid]                                  [Các tab khác -> Grid thẻ phim]
-     (Gom nhóm theo channel_id + seriesKey)                               (1 chạm đổi nhãn is_manual_tag)
+     (Lọc & gom nhóm tức thì 0ms bằng useMemo)                            (1 chạm lan truyền tag cả bộ phim)
 ```
 
 ## 2. Danh sách API Routes hiện hành (`src/app/api/`)
@@ -44,18 +41,21 @@ Tất cả các API dữ liệu người dùng đều bắt buộc đi qua kiể
 
 | Endpoint | Method | Vai trò |
 | :--- | :--- | :--- |
-| `/api/videos` | `GET` | Phân trang 60 video/lần theo ngữ cảnh (`offset`, `limit`, `genre`, `tab`, `showTrailers`, `q`) phục vụ Context-Aware Infinite Scroll. |
-| `/api/workspace` | `GET` | Tải danh sách kênh + video trang đầu kèm `totalVideosCount` & `hasMoreVideos`. |
+| `/api/videos` | `GET` | Trả về 100% toàn bộ video khớp ngữ cảnh bằng truy vấn phân đoạn `.range()` theo từng lô 1.000 dòng (không giới hạn `limit=60`). |
+| `/api/workspace` | `GET` | Tải danh sách kênh + 100% kho video (`loadWorkspaceDataForUser`). |
 | `/api/youtube/sync-channels` | `POST` | Đồng bộ danh sách kênh YouTube của user (`subscriptions.list`, cooldown 6 giờ ở production). |
-| `/api/channels/toggle` | `POST` | Bật/tắt kênh và cập nhật đa nhãn `genre_tags` (`Phim AI` / `HH2D`), kéo tối đa 50 video mới nhất (chỉ quét Gemini cho video chưa có trong DB). |
-| `/api/channels/load-more` | `POST` | Kéo thêm 50 video cũ hơn của riêng 1 kênh bằng `next_page_token` đã lưu. |
+| `/api/channels/toggle` | `POST` | Bật/tắt kênh, cập nhật đa nhãn `genre_tags` (`Phim AI` / `HH2D`), chạy `syncAllChannelVideos` kéo trọn vẹn 100% video từ Tập 1 đến Tập mới nhất (Series-Aware AI). |
+| `/api/channels/load-more` | `POST` | Chạy `syncAllChannelVideos` đồng bộ trọn vẹn lịch sử video của 1 kênh. |
+| `/api/channels/delta-sync` | `POST` | Smart Delta Sync: quét nhanh 10 video mới nhất (`maxResults=10`, 1 điểm quota/kênh) của các kênh đang bật (tự động chạy ngầm khi qua ≥ 60 phút hoặc chạy chủ động `force: true`), tự động phân loại Series-Aware và trả về kho cập nhật. |
+| `/api/series/status` | `POST` | Lưu/xóa trạng thái `following` (⭐ Theo dõi), `completed` hoặc `hidden` (Ẩn bớt) cho từng bộ phim trong `public.user_series_status`. |
+| `/api/videos/watch-later` | `POST` | Toggle thêm/xóa video khỏi danh sách **Lưu Xem Sau** (`public.user_watch_later`). |
 | `/api/channels/load-more-all` | `POST` | Kéo thêm 50 video cũ/kênh cho tối đa 3 kênh đang bật chưa hết lịch sử YouTube (Giai đoạn 2 của Two-Stage Infinite Scroll). |
-| `/api/channels/reclassify` | `POST` | Chạy lại Gemini Vision cho tối đa 50 video của 1 kênh đa nhãn (bỏ qua `is_manual_tag = true`). |
-| `/api/videos/reclassify-all` | `POST` | Quét lại nhãn bằng Gemini Vision cho toàn bộ các kênh đang bật (bỏ qua `is_manual_tag = true`). |
-| `/api/videos/update-genre` | `POST` | Đổi nhanh nhãn `Phim AI` ↔ `HH2D` 1 chạm trên thẻ phim và khóa `is_manual_tag = true`. |
+| `/api/channels/reclassify` | `POST` | Chạy lại Gemini Vision (1 đại diện / 1 Series) cho toàn bộ video của 1 kênh đa nhãn (bỏ qua `is_manual_tag = true` và kế thừa các bộ đã khóa tay). |
+| `/api/videos/reclassify-all` | `POST` | Quét lại nhãn bằng Gemini Vision theo cơ chế **1 đại diện / 1 Series** (4 series / batch) cho toàn bộ kho video chưa khóa tay (`is_manual_tag = false`) của các kênh đang bật. |
+| `/api/videos/update-genre` | `POST` | Đổi nhanh nhãn `Phim AI` ↔ `HH2D` 1 chạm, tự động **lan truyền đồng loạt** `detected_genre` và khóa `is_manual_tag = true` cho toàn bộ các tập cùng `(channel_id, seriesKey)`. |
 | `/api/videos/summarize` | `POST` | Gọi Gemini tóm tắt 3 ý chính không spoil và cache vào cột `ai_summary`. |
 | `/api/watch-progress` | `POST` | Lưu tiến độ xem thời gian thực (`progress_seconds`, `is_completed`) vào `watch_progress`. |
-| `/api/youtube/explore` | `GET` | Đề xuất video từ kênh lạ hợp gu (học từ `watch_progress` + Like YouTube, cache 6 tiếng). |
+| `/api/youtube/explore` | `GET` | Đề xuất video từ kênh lạ hợp gu hỗ trợ phân trang vô hạn (`?page=1&refresh=false&pageTokens=...&excludeIds=...`): Trang 1 cache 6 tiếng, Trang ≥ 2 dùng `nextPageToken` hoặc mở rộng từ khóa qua Gemini AI, lọc bỏ Shorts (`<= 65s`) và trả về `nextPage`, `hasMore`, `pageTokens`. |
 | `/api/youtube/subscribe` | `POST` | Đăng ký kênh mới trực tiếp lên YouTube (`youtube.force-ssl`) và kéo ngay 50 video vào AniSub. |
 | `/api/access-requests` | `GET`/`POST` | Kiểm tra hoặc gửi đơn xin cấp quyền truy cập cho email ngoài Whitelist. |
 | `/api/admin/requests` | `GET`/`POST` | Phê duyệt hoặc từ chối đơn xin truy cập (chỉ dành cho `ADMIN_EMAIL`). |

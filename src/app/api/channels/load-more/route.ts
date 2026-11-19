@@ -2,10 +2,7 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server';
 import { verifyWhitelistedUser } from '@/lib/auth/whitelist';
 import { YouTubeApiError } from '@/lib/youtube/api';
-import {
-  getChannelNextPageToken,
-  syncChannelVideosPage,
-} from '@/lib/youtube/channel-sync';
+import { syncAllChannelVideos } from '@/lib/youtube/channel-sync';
 import { loadWorkspaceDataForUser } from '@/lib/workspace/loader';
 import {
   PRIMARY_GENRE_OPTIONS,
@@ -63,14 +60,10 @@ export async function POST(request: Request) {
     }
   }
 
-  const savedPageToken = await getChannelNextPageToken(channelId);
-
   try {
-    const syncResult = await syncChannelVideosPage({
+    const syncResult = await syncAllChannelVideos({
       channelId,
       genreTags,
-      maxResults: 50,
-      pageToken: savedPageToken,
     });
 
     const workspaceData = await loadWorkspaceDataForUser(auth.userId);

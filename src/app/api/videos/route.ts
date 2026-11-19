@@ -7,6 +7,8 @@ import {
   type PrimaryGenreTag,
 } from '@/types/workspace';
 
+const DB_FETCH_BATCH_SIZE = 1000;
+
 function normalizeChannelTags(
   genreTags: string[] | null | undefined,
   fallbackSingle: string | null | undefined,
@@ -49,6 +51,28 @@ function parseTabParam(
   return 'all';
 }
 
+interface RawVideoRow {
+  video_id: string;
+  channel_id: string;
+  title: string;
+  description: string | null;
+  thumbnail_url: string | null;
+  published_at: string;
+  duration_seconds: number;
+  is_short: boolean;
+  video_type: CinemaVideoItem['video_type'];
+  detected_genre: CinemaVideoItem['detected_genre'];
+  series_name: string | null;
+  episode_number: number | null;
+  ai_summary: string | null;
+  is_manual_tag?: boolean;
+  created_at: string;
+}
+
+/**
+ * GET /api/videos — Trả về 100% toàn bộ video không phải Shorts khớp ngữ cảnh
+ * bằng truy vấn phân đoạn tự động (`.range(from, to)` theo từng lô 1.000 dòng).
+ */
 export async function GET(request: Request) {
   const auth = await verifyWhitelistedUser();
   if (!auth.allowed || !auth.userId) {
@@ -56,15 +80,6 @@ export async function GET(request: Request) {
   }
 
   const { searchParams } = new URL(request.url);
-  const offsetRaw = Number(searchParams.get('offset') ?? 0);
-  const limitRaw = Number(searchParams.get('limit') ?? 60);
-  const offset =
-    Number.isFinite(offsetRaw) && offsetRaw >= 0 ? Math.floor(offsetRaw) : 0;
-  const limit =
-    Number.isFinite(limitRaw) && limitRaw > 0
-      ? Math.min(120, Math.floor(limitRaw))
-      : 60;
-
   const genre = parseGenreParam(searchParams.get('genre'));
   const tab = parseTabParam(searchParams.get('tab'));
   const showTrailers = searchParams.get('showTrailers') === 'true';
@@ -72,7 +87,6 @@ export async function GET(request: Request) {
 
   const admin = createAdminClient();
 
-  // 1. Lấy danh sách kênh user đang kích hoạt (is_selected = true) kèm genre_tags
   let userChannels: Array<{
     channel_id: string;
     genre_tag: string;
@@ -100,8 +114,6 @@ export async function GET(request: Request) {
     return NextResponse.json({
       videos: [],
       totalCount: 0,
-      offset,
-      limit,
       hasMore: false,
     });
   }
@@ -114,9 +126,6 @@ export async function GET(request: Request) {
     );
   }
 
-  // 2. Quy tắc lọc theo ngữ cảnh (Genre-Aware Filtering):
-  // - genre === 'all': lấy tất cả kênh đang bật
-  // - genre === 'Phim AI' | 'HH2D': chỉ lấy kênh đang bật có gắn tag tương ứng trong genre_tags
   const eligibleChannelIds = userChannels
     .filter((uc) => {
       if (genre === 'all') return true;
@@ -129,45 +138,42 @@ export async function GET(request: Request) {
     return NextResponse.json({
       videos: [],
       totalCount: 0,
-      offset,
-      limit,
       hasMore: false,
     });
   }
 
-  // Lấy tên kênh để phục vụ join channel_title & tìm kiếm theo tên kênh
-  const { data: channelRows } = await admin
-    .from('channels')
-    .select('channel_id, title')
-    .in('channel_id', eligibleChannelIds);
+  const [{ data: channelRows }, { data: progressRows }] = await Promise.all([
+    admin
+      .from('channels')
+      .select('channel_id, title')
+      .in('channel_id', eligibleChannelIds),
+    admin
+      .from('watch_progress')
+      .select('video_id, progress_seconds, is_completed, last_watched_at')
+      .eq('user_id', auth.userId),
+  ]);
 
   const channelTitleMap = new Map(
     (channelRows ?? []).map((c) => [c.channel_id, c.title]),
   );
+  const progressMap = new Map(
+    (progressRows ?? []).map((p) => [p.video_id, p]),
+  );
 
-  // Nếu tab === 'continue', lấy trước danh sách video_id đang xem dở của user
   let continueVideoIds: string[] | null = null;
   if (tab === 'continue') {
-    const { data: inProgressRows } = await admin
-      .from('watch_progress')
-      .select('video_id')
-      .eq('user_id', auth.userId)
-      .gt('progress_seconds', 0)
-      .eq('is_completed', false);
-
-    continueVideoIds = (inProgressRows ?? []).map((r) => r.video_id);
+    continueVideoIds = (progressRows ?? [])
+      .filter((r) => r.progress_seconds > 0 && !r.is_completed)
+      .map((r) => r.video_id);
     if (continueVideoIds.length === 0) {
       return NextResponse.json({
         videos: [],
         totalCount: 0,
-        offset,
-        limit,
         hasMore: false,
       });
     }
   }
 
-  // Chuẩn bị bộ lọc tìm kiếm q (an toàn cho PostgREST .or())
   const safeQ = queryText.replace(/[,()%]/g, ' ').replace(/\s+/g, ' ').trim();
   const matchingChannelIdsByName = safeQ
     ? eligibleChannelIds.filter((cid) =>
@@ -177,14 +183,19 @@ export async function GET(request: Request) {
       )
     : [];
 
-  const runVideoQuery = async (includeManualTagColumn: boolean) => {
-    const columns = includeManualTagColumn
+  const fetchedVideos: RawVideoRow[] = [];
+  let from = 0;
+  let supportsManualColumn = true;
+
+  while (true) {
+    const to = from + DB_FETCH_BATCH_SIZE - 1;
+    const columns = supportsManualColumn
       ? 'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, is_manual_tag, created_at'
       : 'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, created_at';
 
     let qBuilder = admin
       .from('videos')
-      .select(columns, { count: 'exact' })
+      .select(columns)
       .in('channel_id', eligibleChannelIds)
       .eq('is_short', false);
 
@@ -215,72 +226,27 @@ export async function GET(request: Request) {
       qBuilder = qBuilder.or(orParts.join(','));
     }
 
-    return qBuilder
+    const res = await qBuilder
       .order('published_at', { ascending: false })
-      .range(offset, offset + limit - 1);
-  };
+      .range(from, to);
 
-  type RawVideoRow = {
-    video_id: string;
-    channel_id: string;
-    title: string;
-    description: string | null;
-    thumbnail_url: string | null;
-    published_at: string;
-    duration_seconds: number;
-    is_short: boolean;
-    video_type: CinemaVideoItem['video_type'];
-    detected_genre: CinemaVideoItem['detected_genre'];
-    series_name: string | null;
-    episode_number: number | null;
-    ai_summary: string | null;
-    is_manual_tag?: boolean;
-    created_at: string;
-  };
-
-  let fetchedVideos: RawVideoRow[] = [];
-  let totalCount = 0;
-
-  const primaryRes = await runVideoQuery(true);
-  if (primaryRes.error) {
-    const fallbackRes = await runVideoQuery(false);
-    if (fallbackRes.error) {
-      console.error('[GET /api/videos] Lỗi truy vấn videos:', fallbackRes.error);
+    if (res.error) {
+      if (supportsManualColumn) {
+        supportsManualColumn = false;
+        continue;
+      }
+      console.error('[GET /api/videos] Lỗi truy vấn videos:', res.error);
       return NextResponse.json(
         { error: 'Không thể tải danh sách video.' },
         { status: 500 },
       );
     }
-    fetchedVideos = (fallbackRes.data ?? []) as unknown as RawVideoRow[];
-    totalCount = fallbackRes.count ?? fetchedVideos.length;
-  } else {
-    fetchedVideos = (primaryRes.data ?? []) as unknown as RawVideoRow[];
-    totalCount = primaryRes.count ?? fetchedVideos.length;
+
+    const batch = (res.data ?? []) as unknown as RawVideoRow[];
+    fetchedVideos.push(...batch);
+    if (batch.length < DB_FETCH_BATCH_SIZE) break;
+    from += DB_FETCH_BATCH_SIZE;
   }
-
-  const hasMore = offset + fetchedVideos.length < totalCount;
-
-  if (fetchedVideos.length === 0) {
-    return NextResponse.json({
-      videos: [],
-      totalCount,
-      offset,
-      limit,
-      hasMore,
-    });
-  }
-
-  // 3. Ghép tiến độ xem watch_progress của user hiện tại
-  const videoIds = fetchedVideos.map((v) => v.video_id);
-  const { data: progressRows } = await admin
-    .from('watch_progress')
-    .select('video_id, progress_seconds, is_completed')
-    .eq('user_id', auth.userId)
-    .in('video_id', videoIds);
-
-  const progressMap = new Map(
-    (progressRows ?? []).map((p) => [p.video_id, p]),
-  );
 
   const mergedVideos: CinemaVideoItem[] = fetchedVideos.map((v) => {
     const progress = progressMap.get(v.video_id);
@@ -294,14 +260,13 @@ export async function GET(request: Request) {
       channel_title: channelTitleMap.get(v.channel_id) ?? v.channel_id,
       progress_seconds: progress?.progress_seconds ?? 0,
       is_completed: progress?.is_completed ?? false,
+      last_watched_at: progress?.last_watched_at ?? null,
     };
   });
 
   return NextResponse.json({
     videos: mergedVideos,
-    totalCount,
-    offset,
-    limit,
-    hasMore,
+    totalCount: mergedVideos.length,
+    hasMore: false,
   });
 }

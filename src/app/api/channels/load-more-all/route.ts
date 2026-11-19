@@ -114,6 +114,11 @@ export async function POST(request: Request) {
   }
 
   // 2. Kiểm tra next_page_token của từng kênh để lọc ra những kênh CHƯA cạn lịch sử YouTube
+  const checkExhausted =
+    typeof isChannelHistoryExhausted === 'function'
+      ? isChannelHistoryExhausted
+      : (t?: string | null) => t === '__END__' || t === '__EXHAUSTED__';
+
   const candidates: Array<{
     channelId: string;
     genreTags: PrimaryGenreTag[];
@@ -122,7 +127,7 @@ export async function POST(request: Request) {
 
   for (const ch of scopedChannels) {
     const token = await getChannelNextPageToken(ch.channelId);
-    if (!isChannelHistoryExhausted(token)) {
+    if (!checkExhausted(token)) {
       candidates.push({
         channelId: ch.channelId,
         genreTags: ch.genreTags,

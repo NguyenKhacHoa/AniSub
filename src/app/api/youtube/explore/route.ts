@@ -12,16 +12,39 @@ import type { CinemaVideoItem } from '@/types/workspace';
 import type { Json } from '@/types/database';
 
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+const MAX_EXPLORE_PAGES = 10;
 const EXPLORE_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'] as const;
 
 interface CachedExplorePayload {
   keywords: string[];
   videos: CinemaVideoItem[];
+  pageTokens: Record<string, string>;
+  dominantGenre: 'Phim AI' | 'HH2D';
+  usedKeywords: string[];
   updatedAt: string;
 }
 
-// Fallback cache trong bộ nhớ server nếu user chưa chạy SQL tạo bảng public.explore_cache
+// Cache nhẹ trong bộ nhớ server (bổ trợ DB explore_cache và lưu pageTokens + từ khóa đã dùng)
 const memoryExploreCache = new Map<string, CachedExplorePayload>();
+
+const FALLBACK_EXPANDED_KEYWORDS: Record<'Phim AI' | 'HH2D', string[]> = {
+  'Phim AI': [
+    'phim AI huyền huyễn thuyết minh trọn bộ',
+    'phim ngắn AI viễn tưởng 3D thuyết minh',
+    'hoạt hình AI cổ trang kiếm hiệp thuyết minh',
+    'phim AI mạt thế sinh tồn thuyết minh mới',
+    'phim hoạt hình AI 3D kinh dị thuyết minh',
+    'truyện tranh manhua hệ thống thuyết minh tập mới',
+  ],
+  HH2D: [
+    'hoạt hình 2D hệ thống trọng sinh thuyết minh',
+    'manhua tu tiên phế vật nghịch thiên thuyết minh',
+    'truyện tranh 2D mạt thế dị năng thuyết minh',
+    'hoạt hình 2D xuyên không cổ đại thuyết minh',
+    'phim AI tu tiên 3D điện ảnh thuyết minh',
+    'hoạt hình 2D đô thị tu chân thuyết minh',
+  ],
+};
 
 interface YouTubeLikedResponse {
   items?: Array<{
@@ -33,6 +56,7 @@ interface YouTubeLikedResponse {
 }
 
 interface YouTubeSearchResponse {
+  nextPageToken?: string;
   items?: Array<{
     id?: { videoId?: string };
     snippet?: {
@@ -76,6 +100,7 @@ async function generateExploreKeywords(
   likedTitles: string[],
   channelTitles: string[],
   dominantGenre: 'Phim AI' | 'HH2D',
+  excludeKeywords: string[] = [],
 ): Promise<string[]> {
   const defaultKeywords =
     dominantGenre === 'Phim AI'
@@ -91,7 +116,12 @@ async function generateExploreKeywords(
         ];
 
   if (!process.env.GEMINI_API_KEY?.trim()) {
-    return defaultKeywords;
+    const unusedFallbacks = FALLBACK_EXPANDED_KEYWORDS[dominantGenre].filter(
+      (kw) => !excludeKeywords.includes(kw),
+    );
+    return unusedFallbacks.length >= 3
+      ? unusedFallbacks.slice(0, 3)
+      : defaultKeywords;
   }
 
   const ai = getGeminiClient();
@@ -107,8 +137,13 @@ async function generateExploreKeywords(
     required: ['keywords'],
   };
 
+  const excludeNote =
+    excludeKeywords.length > 0
+      ? `\n- TUYỆT ĐỐI KHÔNG lặp lại các cụm từ khóa đã dùng sau đây:\n${excludeKeywords.join('\n')}`
+      : '';
+
   const prompt = `Bạn là hệ thống gợi ý phim cá nhân hóa của rạp chiếu AniSub (chỉ gồm 2 thể loại: "Phim AI" và "HH2D").
-Dựa trên thói quen xem của người dùng bên dưới, hãy sinh ra ĐÚNG 3 cụm từ khóa tìm kiếm tiếng Việt trên YouTube để săn các kênh mới cùng gu (ưu tiên thể loại ưa thích: ${dominantGenre}):
+Dựa trên thói quen xem của người dùng bên dưới, hãy sinh ra ĐÚNG 3 cụm từ khóa tìm kiếm tiếng Việt MỚI MẺ trên YouTube để săn các kênh mới cùng gu (ưu tiên thể loại ưa thích: ${dominantGenre}):
 
 - Các video đã xem gần đây / xem lâu nhất:
 ${watchedTitles.slice(0, 15).join('\n') || '(Chưa có lịch sử xem)'}
@@ -121,7 +156,7 @@ ${channelTitles.slice(0, 12).join(', ') || '(Chưa có kênh)'}
 
 Yêu cầu:
 - Trả về đúng 3 cụm từ khóa tiếng Việt ngắn gọn (4–8 từ mỗi cụm), tự nhiên như người dùng tìm phim trên YouTube (ví dụ: "phim AI tu tiên thuyết minh full", "truyện tranh 2D trọng sinh thuyết minh").
-- Không chứa tên kênh cụ thể để tìm ra được các kênh MỚI.`;
+- Không chứa tên kênh cụ thể để tìm ra được các kênh MỚI.${excludeNote}`;
 
   for (const modelName of EXPLORE_MODELS) {
     try {
@@ -131,7 +166,7 @@ Yêu cầu:
         config: {
           responseMimeType: 'application/json',
           responseSchema: schema,
-          temperature: 0.5,
+          temperature: excludeKeywords.length > 0 ? 0.85 : 0.5,
         },
       });
 
@@ -141,7 +176,7 @@ Yêu cầu:
       const parsed = JSON.parse(raw) as { keywords?: string[] };
       const cleaned = (parsed.keywords ?? [])
         .map((k) => k.trim())
-        .filter(Boolean)
+        .filter((k) => k.length > 0 && !excludeKeywords.includes(k))
         .slice(0, 3);
 
       if (cleaned.length > 0) {
@@ -152,7 +187,31 @@ Yêu cầu:
     }
   }
 
-  return defaultKeywords;
+  const unusedFallbacks = FALLBACK_EXPANDED_KEYWORDS[dominantGenre].filter(
+    (kw) => !excludeKeywords.includes(kw),
+  );
+  return unusedFallbacks.length >= 3
+    ? unusedFallbacks.slice(0, 3)
+    : defaultKeywords;
+}
+
+function parsePageTokensParam(raw: string | null): Record<string, string> {
+  if (!raw?.trim()) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+    const clean: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof k === 'string' && typeof v === 'string' && k.trim() && v.trim()) {
+        clean[k.trim()] = v.trim();
+      }
+    }
+    return clean;
+  } catch {
+    return {};
+  }
 }
 
 export async function GET(request: Request) {
@@ -162,18 +221,35 @@ export async function GET(request: Request) {
   }
 
   const { searchParams } = new URL(request.url);
+  const pageRaw = Number(searchParams.get('page') ?? 1);
+  const page =
+    Number.isFinite(pageRaw) && pageRaw >= 1
+      ? Math.min(MAX_EXPLORE_PAGES, Math.floor(pageRaw))
+      : 1;
   const forceRefresh = searchParams.get('refresh') === 'true';
+  const incomingPageTokens = parsePageTokensParam(
+    searchParams.get('pageTokens'),
+  );
+  const excludeIdsParam = searchParams.get('excludeIds') ?? '';
+  const excludeVideoIds = new Set(
+    excludeIdsParam
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
 
   const admin = createAdminClient();
   const supabase = await createClient();
 
-  // 0. Kiểm tra Cache 6 tiếng (DB explore_cache -> fallback memory cache) nếu không ép refresh
-  if (!forceRefresh) {
+  // TRANG 1: Kiểm tra Cache 6 tiếng (DB explore_cache -> fallback memory cache) nếu không ép refresh
+  if (page === 1 && !forceRefresh) {
     const { data: dbCache, error: cacheErr } = await admin
       .from('explore_cache')
       .select('keywords, items, updated_at')
       .eq('user_id', auth.userId)
       .maybeSingle();
+
+    const mem = memoryExploreCache.get(auth.userId);
 
     if (!cacheErr && dbCache?.updated_at) {
       const age = Date.now() - new Date(dbCache.updated_at).getTime();
@@ -184,20 +260,27 @@ export async function GET(request: Request) {
         return NextResponse.json({
           keywords: dbCache.keywords ?? [],
           videos: cachedVideos,
+          page: 1,
+          nextPage: 2,
+          hasMore: true,
+          pageTokens: mem?.pageTokens ?? {},
           cached: true,
           updatedAt: dbCache.updated_at,
         });
       }
-    } else {
-      const mem = memoryExploreCache.get(auth.userId);
-      if (mem) {
-        const age = Date.now() - new Date(mem.updatedAt).getTime();
-        if (age < SIX_HOURS_MS && mem.videos.length > 0) {
-          return NextResponse.json({
-            ...mem,
-            cached: true,
-          });
-        }
+    } else if (mem) {
+      const age = Date.now() - new Date(mem.updatedAt).getTime();
+      if (age < SIX_HOURS_MS && mem.videos.length > 0) {
+        return NextResponse.json({
+          keywords: mem.keywords,
+          videos: mem.videos,
+          page: 1,
+          nextPage: 2,
+          hasMore: true,
+          pageTokens: mem.pageTokens,
+          cached: true,
+          updatedAt: mem.updatedAt,
+        });
       }
     }
   }
@@ -210,116 +293,144 @@ export async function GET(request: Request) {
     );
   }
 
-  // BƯỚC 1: Thu thập tín hiệu thói quen của user (watch_progress + user_channels + YouTube Liked Videos)
-  const [progressRes, userChannelsRes] = await Promise.all([
-    admin
+  // BƯỚC 1: Lấy danh sách kênh user đang chọn để ưu tiên đề xuất kênh LẠ
+  const { data: userChannelsRaw } = await admin
+    .from('user_channels')
+    .select('channel_id, is_selected, genre_tag')
+    .eq('user_id', auth.userId);
+
+  const userChannels = userChannelsRaw ?? [];
+  const selectedChannelIds = new Set(
+    userChannels.filter((uc) => uc.is_selected).map((uc) => uc.channel_id),
+  );
+
+  const memState = memoryExploreCache.get(auth.userId);
+  let dominantGenre: 'Phim AI' | 'HH2D' = memState?.dominantGenre ?? 'HH2D';
+  let activeQueries: Array<{ keyword: string; pageToken?: string }> = [];
+  let allKeywordsForResponse: string[] = [];
+
+  // BƯỚC 2: Xác định bộ từ khóa & pageTokens tùy theo trang
+  const effectiveTokens: Record<string, string> =
+    Object.keys(incomingPageTokens).length > 0
+      ? incomingPageTokens
+      : page >= 2
+        ? (memState?.pageTokens ?? {})
+        : {};
+
+  if (page >= 2 && Object.keys(effectiveTokens).length > 0) {
+    // Tận dụng nextPageToken từ trang trước để tiết kiệm gọi Gemini AI
+    activeQueries = Object.entries(effectiveTokens)
+      .slice(0, 3)
+      .map(([keyword, pageToken]) => ({ keyword, pageToken }));
+    allKeywordsForResponse = activeQueries.map((q) => q.keyword);
+  } else {
+    // Trang 1 (hoặc trang >= 2 đã cạn nextPageToken -> mở rộng từ khóa mới bằng Gemini AI)
+    const { data: progressRows } = await admin
       .from('watch_progress')
       .select('video_id, progress_seconds, last_watched_at')
       .eq('user_id', auth.userId)
       .order('progress_seconds', { ascending: false })
       .order('last_watched_at', { ascending: false })
-      .limit(15),
-    admin
-      .from('user_channels')
-      .select('channel_id, is_selected, genre_tag')
-      .eq('user_id', auth.userId),
-  ]);
+      .limit(15);
 
-  const userChannels = userChannelsRes.data ?? [];
-  const selectedChannelIds = new Set(
-    userChannels.filter((uc) => uc.is_selected).map((uc) => uc.channel_id),
-  );
+    const watchedVideoIds = (progressRows ?? []).map((p) => p.video_id);
+    const watchedTitles: string[] = [];
+    let aiCount = 0;
+    let hh2dCount = 0;
 
-  // Lấy chi tiết video đã xem
-  const watchedVideoIds = (progressRes.data ?? []).map((p) => p.video_id);
-  const watchedTitles: string[] = [];
-  let aiCount = 0;
-  let hh2dCount = 0;
+    if (watchedVideoIds.length > 0) {
+      const { data: watchedVideos } = await admin
+        .from('videos')
+        .select('video_id, title, detected_genre')
+        .in('video_id', watchedVideoIds);
 
-  if (watchedVideoIds.length > 0) {
-    const { data: watchedVideos } = await admin
-      .from('videos')
-      .select('video_id, title, detected_genre')
-      .in('video_id', watchedVideoIds);
-
-    for (const v of watchedVideos ?? []) {
-      watchedTitles.push(v.title);
-      if (v.detected_genre === 'Phim AI') aiCount += 1;
-      else hh2dCount += 1;
-    }
-  }
-
-  // Lấy tên các kênh user đã đăng ký (fallback cho user mới chưa có lịch sử xem)
-  let channelTitles: string[] = [];
-  if (userChannels.length > 0) {
-    const { data: chRows } = await admin
-      .from('channels')
-      .select('title')
-      .in(
-        'channel_id',
-        userChannels.slice(0, 20).map((uc) => uc.channel_id),
-      );
-    channelTitles = (chRows ?? []).map((c) => c.title);
-  }
-
-  // Lấy thêm tín hiệu video user bấm Like trên YouTube nếu provider_token còn hạn
-  const likedTitles: string[] = [];
-  try {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const cookieStore = await cookies();
-    const providerToken =
-      session?.provider_token || cookieStore.get('anisub_yt_token')?.value;
-
-    if (providerToken) {
-      const likedUrl =
-        'https://www.googleapis.com/youtube/v3/videos?part=snippet&myRating=like&maxResults=10';
-      const likedRes = await fetch(likedUrl, {
-        headers: { Authorization: `Bearer ${providerToken}` },
-        cache: 'no-store',
-        signal: AbortSignal.timeout(4000),
-      });
-      if (likedRes.ok) {
-        const likedData = (await likedRes.json()) as YouTubeLikedResponse;
-        for (const item of likedData.items ?? []) {
-          if (item.snippet?.title) {
-            likedTitles.push(item.snippet.title);
-          }
-        }
+      for (const v of watchedVideos ?? []) {
+        watchedTitles.push(v.title);
+        if (v.detected_genre === 'Phim AI') aiCount += 1;
+        else hh2dCount += 1;
       }
     }
-  } catch {
-    // Bỏ qua nếu token hết hạn, vẫn dùng watch_progress & subscribed channels
+
+    let channelTitles: string[] = [];
+    if (userChannels.length > 0) {
+      const { data: chRows } = await admin
+        .from('channels')
+        .select('title')
+        .in(
+          'channel_id',
+          userChannels.slice(0, 20).map((uc) => uc.channel_id),
+        );
+      channelTitles = (chRows ?? []).map((c) => c.title);
+    }
+
+    const likedTitles: string[] = [];
+    if (page === 1) {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        const cookieStore = await cookies();
+        const providerToken =
+          session?.provider_token || cookieStore.get('anisub_yt_token')?.value;
+
+        if (providerToken) {
+          const likedUrl =
+            'https://www.googleapis.com/youtube/v3/videos?part=snippet&myRating=like&maxResults=10';
+          const likedRes = await fetch(likedUrl, {
+            headers: { Authorization: `Bearer ${providerToken}` },
+            cache: 'no-store',
+            signal: AbortSignal.timeout(4000),
+          });
+          if (likedRes.ok) {
+            const likedData = (await likedRes.json()) as YouTubeLikedResponse;
+            for (const item of likedData.items ?? []) {
+              if (item.snippet?.title) {
+                likedTitles.push(item.snippet.title);
+              }
+            }
+          }
+        }
+      } catch {
+        // Bỏ qua nếu token hết hạn
+      }
+    }
+
+    dominantGenre = aiCount > hh2dCount ? 'Phim AI' : 'HH2D';
+    const previouslyUsedKeywords =
+      page >= 2 || forceRefresh ? (memState?.usedKeywords ?? []) : [];
+
+    const generatedKeywords = await generateExploreKeywords(
+      watchedTitles,
+      likedTitles,
+      channelTitles,
+      dominantGenre,
+      previouslyUsedKeywords,
+    );
+
+    activeQueries = generatedKeywords.map((keyword) => ({ keyword }));
+    allKeywordsForResponse = generatedKeywords;
   }
 
-  const dominantGenre: 'Phim AI' | 'HH2D' =
-    aiCount > hh2dCount ? 'Phim AI' : 'HH2D';
-
-  // BƯỚC 2: Gemini AI sinh 3 cụm từ khóa tiếng Việt đúng gu
-  const keywords = await generateExploreKeywords(
-    watchedTitles,
-    likedTitles,
-    channelTitles,
-    dominantGenre,
-  );
-
-  // BƯỚC 3: Tìm kiếm YouTube search.list cho 3 từ khóa + lọc bỏ Shorts + ưu tiên kênh LẠ
+  // BƯỚC 3: Tìm kiếm YouTube search.list song song cho các từ khóa + lưu nextPageToken
   const candidateVideoIds: string[] = [];
   const keywordByVideoId = new Map<string, string>();
-  const seenIds = new Set<string>();
+  const seenIds = new Set<string>(excludeVideoIds);
+  const nextPageTokens: Record<string, string> = {};
 
-  for (const kw of keywords) {
+  for (const q of activeQueries) {
     try {
       const searchUrl = new URL(
         'https://www.googleapis.com/youtube/v3/search',
       );
       searchUrl.searchParams.set('part', 'snippet');
       searchUrl.searchParams.set('type', 'video');
-      searchUrl.searchParams.set('maxResults', '8');
+      searchUrl.searchParams.set('maxResults', '10');
       searchUrl.searchParams.set('order', 'relevance');
       searchUrl.searchParams.set('relevanceLanguage', 'vi');
-      searchUrl.searchParams.set('q', kw);
+      searchUrl.searchParams.set('q', q.keyword);
+      if (q.pageToken) {
+        searchUrl.searchParams.set('pageToken', q.pageToken);
+      }
       searchUrl.searchParams.set('key', apiKey);
 
       const searchRes = await fetch(searchUrl.toString(), {
@@ -342,31 +453,42 @@ export async function GET(request: Request) {
         continue;
       }
 
+      if (searchData.nextPageToken) {
+        nextPageTokens[q.keyword] = searchData.nextPageToken;
+      }
+
       for (const item of searchData.items ?? []) {
         const vid = item.id?.videoId;
         if (!vid || seenIds.has(vid)) continue;
         seenIds.add(vid);
         candidateVideoIds.push(vid);
-        keywordByVideoId.set(vid, kw);
+        keywordByVideoId.set(vid, q.keyword);
       }
     } catch {
       continue;
     }
   }
 
+  const updatedAt = new Date().toISOString();
+
   if (candidateVideoIds.length === 0) {
+    const hasMore = page < MAX_EXPLORE_PAGES && Object.keys(nextPageTokens).length > 0;
     return NextResponse.json({
-      keywords,
+      keywords: allKeywordsForResponse,
       videos: [],
+      page,
+      nextPage: hasMore ? page + 1 : null,
+      hasMore,
+      pageTokens: nextPageTokens,
       cached: false,
-      updatedAt: new Date().toISOString(),
+      updatedAt,
     });
   }
 
   // Gọi videos.list để lấy duration_seconds & lọc bỏ Shorts (<= 65s)
   const videosUrl = new URL('https://www.googleapis.com/youtube/v3/videos');
   videosUrl.searchParams.set('part', 'snippet,contentDetails');
-  videosUrl.searchParams.set('id', candidateVideoIds.slice(0, 30).join(','));
+  videosUrl.searchParams.set('id', candidateVideoIds.slice(0, 35).join(','));
   videosUrl.searchParams.set('key', apiKey);
 
   const videosRes = await fetch(videosUrl.toString(), { cache: 'no-store' });
@@ -391,13 +513,13 @@ export async function GET(request: Request) {
     );
 
     // Bỏ qua YouTube Shorts (<= 65 giây hoặc #shorts)
-    if (is_short) continue;
+    if (is_short || durationSeconds <= 65) continue;
 
     const thumb =
-      item.snippet?.thumbnails?.maxres?.url ||
-      item.snippet?.thumbnails?.standard?.url ||
       item.snippet?.thumbnails?.high?.url ||
       item.snippet?.thumbnails?.medium?.url ||
+      item.snippet?.thumbnails?.standard?.url ||
+      item.snippet?.thumbnails?.maxres?.url ||
       `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`;
 
     const matchedKw = keywordByVideoId.get(item.id) ?? '';
@@ -424,7 +546,7 @@ export async function GET(request: Request) {
       episode_number: null,
       ai_summary: null,
       is_manual_tag: false,
-      created_at: new Date().toISOString(),
+      created_at: updatedAt,
       progress_seconds: 0,
       is_completed: false,
       matched_keyword: matchedKw,
@@ -442,28 +564,53 @@ export async function GET(request: Request) {
     0,
     24,
   );
-  const updatedAt = new Date().toISOString();
 
-  // Lưu cache 6 tiếng vào DB (nếu có bảng explore_cache) và memory cache
-  memoryExploreCache.set(auth.userId, {
-    keywords,
-    videos: finalVideos,
-    updatedAt,
-  });
+  const mergedUsedKeywords = Array.from(
+    new Set([
+      ...(page === 1 && !forceRefresh ? [] : (memState?.usedKeywords ?? [])),
+      ...allKeywordsForResponse,
+    ]),
+  ).slice(-18);
 
-  await admin.from('explore_cache').upsert(
-    {
-      user_id: auth.userId,
-      keywords,
-      items: finalVideos as unknown as Json,
-      updated_at: updatedAt,
-    },
-    { onConflict: 'user_id' },
-  );
+  const hasMore =
+    page < MAX_EXPLORE_PAGES &&
+    (Object.keys(nextPageTokens).length > 0 || finalVideos.length > 0);
+
+  // Chỉ ghi đè cache 6 tiếng DB ở Trang 1
+  if (page === 1) {
+    memoryExploreCache.set(auth.userId, {
+      keywords: allKeywordsForResponse,
+      videos: finalVideos,
+      pageTokens: nextPageTokens,
+      dominantGenre,
+      usedKeywords: mergedUsedKeywords,
+      updatedAt,
+    });
+
+    await admin.from('explore_cache').upsert(
+      {
+        user_id: auth.userId,
+        keywords: allKeywordsForResponse,
+        items: finalVideos as unknown as Json,
+        updated_at: updatedAt,
+      },
+      { onConflict: 'user_id' },
+    );
+  } else if (memState) {
+    memoryExploreCache.set(auth.userId, {
+      ...memState,
+      pageTokens: nextPageTokens,
+      usedKeywords: mergedUsedKeywords,
+    });
+  }
 
   return NextResponse.json({
-    keywords,
+    keywords: allKeywordsForResponse,
     videos: finalVideos,
+    page,
+    nextPage: hasMore ? page + 1 : null,
+    hasMore,
+    pageTokens: nextPageTokens,
     cached: false,
     updatedAt,
   });

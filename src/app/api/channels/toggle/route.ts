@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server';
 import { verifyWhitelistedUser } from '@/lib/auth/whitelist';
 import { YouTubeApiError } from '@/lib/youtube/api';
-import { syncChannelVideosPage } from '@/lib/youtube/channel-sync';
+import { syncAllChannelVideos } from '@/lib/youtube/channel-sync';
 import { loadWorkspaceDataForUser } from '@/lib/workspace/loader';
 import {
   PRIMARY_GENRE_OPTIONS,
@@ -113,7 +113,7 @@ export async function POST(request: Request) {
   let newVideosCount = 0;
   let aiClassified = false;
 
-  // 2. Khi kênh đang bật (isSelected === true): kéo tối đa 50 video mới nhất (chỉ chạy Gemini cho video chưa có trong DB)
+  // 2. Khi kênh đang bật (isSelected === true): kéo sạch 100% video từ Tập 1 đến Tập mới nhất (Series-Aware AI)
   if (body.isSelected) {
     if (genreTags.length >= 2 && !process.env.GEMINI_API_KEY?.trim()) {
       return NextResponse.json(
@@ -126,10 +126,9 @@ export async function POST(request: Request) {
     }
 
     try {
-      const syncResult = await syncChannelVideosPage({
+      const syncResult = await syncAllChannelVideos({
         channelId,
         genreTags,
-        maxResults: 50,
       });
 
       fetchedVideosCount = syncResult.fetchedCount;

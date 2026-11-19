@@ -5,13 +5,15 @@ import {
   type CinemaVideoItem,
   type PrimaryGenreTag,
 } from '@/types/workspace';
-import type { GenreTag } from '@/types/database';
+import type { GenreTag, UserSeriesStatus } from '@/types/database';
 
-export const DEFAULT_FEED_PAGE_SIZE = 120;
+const DB_FETCH_BATCH_SIZE = 1000;
 
 export interface LoadedWorkspaceData {
   channels: ChannelWithSelection[];
   videos: CinemaVideoItem[];
+  seriesStatuses: Record<string, UserSeriesStatus>;
+  watchLaterIds: string[];
   totalVideosCount: number;
   hasMoreVideos: boolean;
   lastSyncedAt: string | null;
@@ -38,17 +40,92 @@ function normalizePrimaryTags(
   return Array.from(validSet);
 }
 
+interface RawVideoRow {
+  video_id: string;
+  channel_id: string;
+  title: string;
+  description: string | null;
+  thumbnail_url: string | null;
+  published_at: string;
+  duration_seconds: number;
+  is_short: boolean;
+  video_type: CinemaVideoItem['video_type'];
+  detected_genre: CinemaVideoItem['detected_genre'];
+  series_name: string | null;
+  episode_number: number | null;
+  ai_summary: string | null;
+  is_manual_tag?: boolean;
+  created_at: string;
+}
+
 /**
- * Tải danh sách kênh (`user_channels` + `channels`) và danh sách video thật có phân trang
- * (`offset`, `limit` mặc định 120 video/trang) cùng tổng số video thực tế trong kho (`totalVideosCount`).
+ * Truy vấn phân đoạn tự động phía server theo từng lô 1.000 dòng (`.range(from, to)`)
+ * cho đến khi lấy trọn vẹn 100% toàn bộ video không phải Shorts của các kênh đang bật.
+ */
+async function fetchAllSelectedVideos(
+  admin: ReturnType<typeof createAdminClient>,
+  selectedChannelIds: string[],
+): Promise<RawVideoRow[]> {
+  const allRows: RawVideoRow[] = [];
+  let from = 0;
+  let supportsManualColumn = true;
+
+  while (true) {
+    const to = from + DB_FETCH_BATCH_SIZE - 1;
+
+    if (supportsManualColumn) {
+      const res = await admin
+        .from('videos')
+        .select(
+          'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, is_manual_tag, created_at',
+        )
+        .in('channel_id', selectedChannelIds)
+        .eq('is_short', false)
+        .order('published_at', { ascending: false })
+        .range(from, to);
+
+      if (res.error) {
+        supportsManualColumn = false;
+        continue;
+      }
+
+      const batch = (res.data ?? []) as RawVideoRow[];
+      allRows.push(...batch);
+      if (batch.length < DB_FETCH_BATCH_SIZE) break;
+      from += DB_FETCH_BATCH_SIZE;
+    } else {
+      const res = await admin
+        .from('videos')
+        .select(
+          'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, created_at',
+        )
+        .in('channel_id', selectedChannelIds)
+        .eq('is_short', false)
+        .order('published_at', { ascending: false })
+        .range(from, to);
+
+      if (res.error) {
+        console.error('[WorkspaceLoader] Lỗi tải full catalog videos:', res.error);
+        break;
+      }
+
+      const batch = (res.data ?? []) as RawVideoRow[];
+      allRows.push(...batch);
+      if (batch.length < DB_FETCH_BATCH_SIZE) break;
+      from += DB_FETCH_BATCH_SIZE;
+    }
+  }
+
+  return allRows;
+}
+
+/**
+ * Tải toàn bộ danh sách kênh (`user_channels` + `channels`) và 100% kho video thật
+ * thuộc các kênh đang bật (`is_selected = true`) trong 1 lần tải duy nhất (Full-Catalog In-Memory Store).
  */
 export async function loadWorkspaceDataForUser(
   userId: string,
-  options?: { offset?: number; limit?: number },
 ): Promise<LoadedWorkspaceData> {
-  const offset = Math.max(0, Math.floor(options?.offset ?? 0));
-  const limit = Math.min(200, Math.max(1, Math.floor(options?.limit ?? DEFAULT_FEED_PAGE_SIZE)));
-
   const admin = createAdminClient();
 
   const profilePromise = admin
@@ -87,6 +164,8 @@ export async function loadWorkspaceDataForUser(
     return {
       channels: [],
       videos: [],
+      seriesStatuses: {},
+      watchLaterIds: [],
       totalVideosCount: 0,
       hasMoreVideos: false,
       lastSyncedAt,
@@ -95,7 +174,6 @@ export async function loadWorkspaceDataForUser(
 
   const allChannelIds = userChannels.map((uc) => uc.channel_id);
 
-  // Tương thích ngược nếu chưa chạy ALTER TABLE thêm cột next_page_token
   let channelRows: Array<{
     channel_id: string;
     title: string;
@@ -152,83 +230,66 @@ export async function loadWorkspaceDataForUser(
     return {
       channels: mergedChannels,
       videos: [],
+      seriesStatuses: {},
+      watchLaterIds: [],
       totalVideosCount: 0,
       hasMoreVideos: false,
       lastSyncedAt,
     };
   }
 
-  // Truy vấn phân trang kèm tổng số lượng phim thực tế trong kho (count: 'exact')
-  let fetchedVideos: Array<{
-    video_id: string;
-    channel_id: string;
-    title: string;
-    description: string | null;
-    thumbnail_url: string | null;
-    published_at: string;
-    duration_seconds: number;
-    is_short: boolean;
-    video_type: CinemaVideoItem['video_type'];
-    detected_genre: CinemaVideoItem['detected_genre'];
-    series_name: string | null;
-    episode_number: number | null;
-    ai_summary: string | null;
-    is_manual_tag?: boolean;
-    created_at: string;
-  }> = [];
+  // Tải 100% toàn bộ video, watch_progress, user_series_status và user_watch_later song song
+  const [fetchedVideos, progressRes, seriesStatusRes, watchLaterRes] =
+    await Promise.all([
+      fetchAllSelectedVideos(admin, selectedChannelIds),
+      admin
+        .from('watch_progress')
+        .select('video_id, progress_seconds, is_completed, last_watched_at')
+        .eq('user_id', userId),
+      admin
+        .from('user_series_status')
+        .select('series_key, status')
+        .eq('user_id', userId),
+      admin
+        .from('user_watch_later')
+        .select('video_id')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false }),
+    ]);
 
-  let totalVideosCount = 0;
-
-  const videosWithManual = await admin
-    .from('videos')
-    .select(
-      'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, is_manual_tag, created_at',
-      { count: 'exact' },
-    )
-    .in('channel_id', selectedChannelIds)
-    .eq('is_short', false)
-    .order('published_at', { ascending: false })
-    .range(offset, offset + limit - 1);
-
-  if (videosWithManual.error) {
-    const fallbackVideos = await admin
-      .from('videos')
-      .select(
-        'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, created_at',
-        { count: 'exact' },
-      )
-      .in('channel_id', selectedChannelIds)
-      .eq('is_short', false)
-      .order('published_at', { ascending: false })
-      .range(offset, offset + limit - 1);
-    fetchedVideos = fallbackVideos.data ?? [];
-    totalVideosCount = fallbackVideos.count ?? fetchedVideos.length;
-  } else {
-    fetchedVideos = videosWithManual.data ?? [];
-    totalVideosCount = videosWithManual.count ?? fetchedVideos.length;
+  const seriesStatuses: Record<string, UserSeriesStatus> = {};
+  if (!seriesStatusRes.error && Array.isArray(seriesStatusRes.data)) {
+    for (const row of seriesStatusRes.data) {
+      if (
+        row.series_key &&
+        (row.status === 'following' ||
+          row.status === 'completed' ||
+          row.status === 'hidden')
+      ) {
+        seriesStatuses[row.series_key] = row.status;
+      }
+    }
   }
 
-  const hasMoreVideos = offset + fetchedVideos.length < totalVideosCount;
+  const watchLaterIds: string[] =
+    !watchLaterRes.error && Array.isArray(watchLaterRes.data)
+      ? watchLaterRes.data.map((r) => r.video_id)
+      : [];
 
   if (fetchedVideos.length === 0) {
     return {
       channels: mergedChannels,
       videos: [],
-      totalVideosCount,
-      hasMoreVideos,
+      seriesStatuses,
+      watchLaterIds,
+      totalVideosCount: 0,
+      hasMoreVideos: false,
       lastSyncedAt,
     };
   }
 
-  const videoIds = fetchedVideos.map((v) => v.video_id);
-  const { data: progressRows } = await admin
-    .from('watch_progress')
-    .select('video_id, progress_seconds, is_completed')
-    .eq('user_id', userId)
-    .in('video_id', videoIds);
-
   const progressMap = new Map(
-    (progressRows ?? []).map((p) => [p.video_id, p]),
+    (progressRes.data ?? []).map((p) => [p.video_id, p]),
   );
 
   const genreByChannel = new Map(
@@ -247,14 +308,17 @@ export async function loadWorkspaceDataForUser(
       channel_title: channel?.title ?? v.channel_id,
       progress_seconds: progress?.progress_seconds ?? 0,
       is_completed: progress?.is_completed ?? false,
+      last_watched_at: progress?.last_watched_at ?? null,
     };
   });
 
   return {
     channels: mergedChannels,
     videos: mergedVideos,
-    totalVideosCount,
-    hasMoreVideos,
+    seriesStatuses,
+    watchLaterIds,
+    totalVideosCount: mergedVideos.length,
+    hasMoreVideos: false,
     lastSyncedAt,
   };
 }

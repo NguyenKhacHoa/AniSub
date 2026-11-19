@@ -8,6 +8,7 @@ import {
   Film,
   Compass,
   Clock,
+  Bookmark,
   FolderKanban,
   Palette,
   UserCircle2,
@@ -40,6 +41,7 @@ interface FloatingRailProps {
   isVaultOpen: boolean;
   onOpenVault: () => void;
   selectedChannelCount: number;
+  watchLaterCount?: number;
   authStatus: WorkspaceAuthStatus;
   isAdmin?: boolean;
   pendingRequestsCount?: number;
@@ -64,6 +66,7 @@ export function FloatingRail({
   isVaultOpen,
   onOpenVault,
   selectedChannelCount,
+  watchLaterCount = 0,
   authStatus,
   isAdmin = false,
   pendingRequestsCount = 0,
@@ -234,6 +237,37 @@ export function FloatingRail({
               <Clock className="size-5 shrink-0" />
               {expanded && (
                 <span className="truncate text-sm">Đang Cày Dở</span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onChangeViewMode('watch_later')}
+              aria-current={
+                viewMode === 'watch_later' && !isVaultOpen ? 'page' : undefined
+              }
+              title={`Xem sau (${watchLaterCount})`}
+              className={`relative flex h-10 items-center rounded-xl transition-colors cursor-pointer ${
+                expanded ? 'w-full gap-3 px-3' : 'w-full justify-center'
+              } ${
+                viewMode === 'watch_later' && !isVaultOpen
+                  ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)] font-medium'
+                  : 'text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              <Bookmark className="size-5 shrink-0" />
+              {expanded ? (
+                <>
+                  <span className="flex-1 truncate text-left text-sm">
+                    Xem sau ({watchLaterCount})
+                  </span>
+                </>
+              ) : (
+                watchLaterCount > 0 && (
+                  <span className="absolute right-1.5 top-1.5 flex size-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold tabular-nums text-black">
+                    {watchLaterCount > 9 ? '9+' : watchLaterCount}
+                  </span>
+                )
               )}
             </button>
 
@@ -554,7 +588,7 @@ export function FloatingRail({
       {/* MOBILE (< md): Thanh Bottom Bar cố định */}
       <nav
         aria-label="Điều hướng di động"
-        className="fixed inset-x-0 bottom-0 z-40 grid h-16 grid-cols-5 border-t border-[var(--border-subtle)] bg-[var(--bg-surface)] pb-[env(safe-area-inset-bottom)] md:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 grid h-16 grid-cols-6 border-t border-[var(--border-subtle)] bg-[var(--bg-surface)] pb-[env(safe-area-inset-bottom)] md:hidden"
       >
         <button
           type="button"
@@ -586,6 +620,27 @@ export function FloatingRail({
         >
           <Compass className="size-5" />
           <span>Khám phá</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onChangeViewMode('watch_later')}
+          aria-current={
+            viewMode === 'watch_later' && !isVaultOpen ? 'page' : undefined
+          }
+          className={`relative flex flex-col items-center justify-center gap-1 text-xs cursor-pointer ${
+            viewMode === 'watch_later' && !isVaultOpen
+              ? 'text-[var(--accent-primary)] font-medium'
+              : 'text-[var(--text-secondary)]'
+          }`}
+        >
+          <Bookmark className="size-5" />
+          <span>Xem sau</span>
+          {watchLaterCount > 0 && (
+            <span className="absolute right-2.5 top-1.5 flex size-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold tabular-nums text-black">
+              {watchLaterCount > 9 ? '9+' : watchLaterCount}
+            </span>
+          )}
         </button>
 
         <button

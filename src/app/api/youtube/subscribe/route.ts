@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createAdminClient, createClient } from '@/lib/supabase/server';
 import { verifyWhitelistedUser } from '@/lib/auth/whitelist';
-import { syncChannelVideosPage } from '@/lib/youtube/channel-sync';
+import { syncAllChannelVideos } from '@/lib/youtube/channel-sync';
 import { loadWorkspaceDataForUser } from '@/lib/workspace/loader';
 import type { PrimaryGenreTag } from '@/types/workspace';
 
@@ -167,19 +167,18 @@ export async function POST(request: Request) {
     );
   }
 
-  // 3. Kéo ngay tối đa 50 video mới nhất của kênh vừa đăng ký & chỉ chạy Gemini Vision cho video chưa có trong DB
+  // 3. Kéo sạch 100% video của kênh vừa đăng ký (Full Channel Fetch + Series-Aware Gemini Vision)
   let fetchedVideosCount = 0;
   let newVideosCount = 0;
   try {
-    const syncResult = await syncChannelVideosPage({
+    const syncResult = await syncAllChannelVideos({
       channelId,
       genreTags: defaultTags,
-      maxResults: 50,
     });
     fetchedVideosCount = syncResult.fetchedCount;
     newVideosCount = syncResult.newVideosCount;
   } catch (err) {
-    console.error('[AniSub Subscribe] Lỗi kéo 50 video mới:', err);
+    console.error('[AniSub Subscribe] Lỗi đồng bộ toàn bộ video kênh mới:', err);
   }
 
   const workspaceData = await loadWorkspaceDataForUser(auth.userId);

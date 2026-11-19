@@ -13,26 +13,28 @@ Toàn bộ trải nghiệm rạp chiếu phim được hợp nhất trên **1 m�
 - **Mobile (`< md`):** Tự động chuyển thành thanh **Bottom Bar** cố định dưới đáy màn hình (`h-16`, `pb-[env(safe-area-inset-bottom)]`).
 - **Thành phần bên trong:**
   1. Logo **AniSub** (reset về không gian Đã đăng ký).
-  2. Chuyển không gian & chế độ xem: **Đã đăng ký (Rạp Phim)**, **Khám phá YouTube (Explore)**, **Đang Cày Dở**, nút mở **Kho Kênh Đăng Ký**, và nút **Khiên Quản Trị** (dành riêng Admin).
+  2. Chuyển không gian & chế độ xem: **Đã đăng ký (Rạp Phim)**, **Khám phá YouTube (Explore)**, **Đang Cày Dở**, **Xem sau (`{count}`)**, nút mở **Kho Kênh Đăng Ký**, và nút **Khiên Quản Trị** (dành riêng Admin).
   3. Cụm chấm lọc nhanh 2 thể loại chuẩn: `Phim AI`, `HH2D`.
   4. Cụm đáy: Nút **Đổi Theme** (chọn nhanh 4 bộ Theme) + nút **Tài khoản Google** (Avatar + tên thật, Popover quản lý Whitelist & Đăng xuất).
 
 ### 1.2. Không Gian Trung Tâm Biến Hình (Vùng A & Vùng B)
 - **Vùng A — Trạng thái 1 (`Command Hub`, khi chưa chọn video):**
   - Ô tìm kiếm nhanh hỗ trợ phím tắt `Ctrl + K` / `⌘K`.
-  - Chỉ báo trạng thái kết nối `WebSub Live`.
+  - Chỉ báo trạng thái kết nối `WebSub Live`, nút xoay **"Cập nhật tập mới"** (Smart Delta Sync) ngay cạnh bộ đếm phim.
   - Tabs lọc dạng video: `Tất cả` | `Tập mới` | `Phim Full`.
-  - Công tắc gạt `Hiện Trailer` và các pill lọc thể loại (`Tất cả thể loại`, `Phim AI`, `HH2D`).
+  - Công tắc gạt `Hiện Trailer`, các pill lọc thể loại (`Tất cả thể loại`, `Phim AI`, `HH2D`), bộ chọn sắp xếp nhanh (**`Mới nhất`** | **`Dài nhất`** | **`Tên A-Z`**) và nút bật/tắt **`Chưa xem`** (ẩn phim đã xem $\ge 90\%$).
+  - **Thanh "Xem Tiếp" (`ContinueWatchingShelf`):** Hàng thẻ ngang tối đa 6 video xem dở (`> 30s`, `< 92%`) ngay dưới Command Hub ở tab `Tất cả` & `Tập mới`, gồm thanh tiến độ đáy ảnh, thời gian còn lại và nút xóa nhanh.
 - **Vùng A — Trạng thái 2 (`Theater Stage`, khi bấm vào một khe phim hoặc Thẻ Bộ Phim):**
   - Mở rộng mượt mà thành sân khấu trình chiếu 2 cột:
-    - *Cột trái:* Khung YouTube IFrame Player API `16:9` hỗ trợ đồng bộ tiến độ thực từng giây, **Auto-Next** khi `YT.PlayerState.ENDED`, **Full Screen (phím `F`)** và **Theater Wide Mode / Rạp rộng (phím `T`)**.
+    - *Cột trái:* Khung YouTube IFrame Player API `16:9` hỗ trợ đồng bộ tiến độ thực từng giây, **Auto-Next** khi `YT.PlayerState.ENDED`, **Full Screen (phím `F`)**, **Theater Wide Mode / Rạp rộng (phím `T`)**, nút **Bookmark Xem sau**, **Floating Mini-Player** (chuyển class `fixed bottom-4 right-4` qua `IntersectionObserver` không unmount player khi cuộn xuống kèm 3 nút Phóng to / Tập tiếp theo / Đóng), **Web Media Session API (`navigator.mediaSession`)**, và thanh công cụ nhanh bên dưới: **Tua Bỏ Intro (`+30s`, `+60s` phím `S`, `+90s`)** + **Khóa Tốc Độ Phát (`1x` – `2x`)**.
     - *Cột phải (Video lẻ):* Thông tin tập đang chiếu, tiến độ thời gian thực, nút **Tập tiếp theo**, nút **Tóm tắt nhanh bằng AI** (hiển thị 3 gạch đầu dòng từ cache `ai_summary`), và nút **Đóng trình phát (`X` / `Esc`)**.
-    - *Cột phải (Chế độ Danh sách phát Bộ phim — Series Playlist):* Bảng cuộn dọc có chiều cao cố định khớp khung video, hiển thị tên bộ phim, tổng số tập, nút đảo chiều (**Mới nhất** ↔ **Từ Tập 1**), đánh dấu nổi bật tập đang phát (`▶`), badge **`MỚI`**, và dấu tích đã xem (`✓`) đồng bộ từ `watch_progress`.
+    - *Cột phải (Chế độ Danh sách phát Bộ phim — Series Playlist):* Bảng cuộn dọc có chiều cao cố định khớp khung video, hiển thị tên bộ phim, tổng số tập, nút **`⭐ Theo dõi`**, **`Ẩn`**, nút đảo chiều (**Mới nhất** ↔ **Từ Tập 1**), đánh dấu nổi bật tập đang phát (`▶`), badge **`MỚI`**, và dấu tích đã xem (`✓`) đồng bộ từ `watch_progress`.
 - **Vùng B — Dòng Chảy Nội Dung Cấu Trúc (`Structured Cinema Rows` & `Series Grid`):**
-  - Tại tab **`Tập mới`**: hiển thị **Lưới Thẻ Bộ Phim (`SeriesGrid`)** trượt dọc với hiệu ứng xếp lớp danh sách phát, badge góc trái **`🔥 TẬP MỚI`** hoặc **`Đã xem Tập X`**, badge góc phải **`≡ N tập`**, tên gốc bộ phim, nhãn **`Mới nhất: ...`**, thể loại (`Phim AI` / `HH2D`) và tên kênh.
-  - Tại các tab khác: hiển thị khung giữ chỗ cấu trúc sắc nét (không ảnh giả) cho 3 trạng thái thực tế hoặc lưới thẻ video thực từ `public.videos` kèm **Two-Stage Infinite Scroll (DB Pagination → YouTube History Auto-Fetch)**:
-    - *Giai đoạn 1:* `IntersectionObserver` tự động nạp 60 phim/lần từ `/api/videos` theo đúng bộ lọc đang xem + nút dự phòng **"Tải thêm phim"** và bộ đếm `Đang hiển thị X / Y phim`.
-    - *Giai đoạn 2:* Khi đã chạm đáy kho DB (`loadedCount >= totalCount`) và vẫn còn kênh chưa cạn lịch sử YouTube, tự động gọi `POST /api/channels/load-more-all` (có khóa chống gọi trùng & nút thủ công **"📥 Kéo thêm phim cũ từ YouTube"**) để tiếp tục mở rộng kho phim vô tận, chỉ dừng khi hiển thị *"Đã tải toàn bộ video từ tất cả các kênh"*.
+  - Tại tab **`Tập mới`**: hiển thị **Lưới Thẻ Bộ Phim (`SeriesGrid`)** trượt dọc với hiệu ứng xếp lớp danh sách phát, ghim nhóm **`⭐ THEO DÕI`** lên đầu, badge góc trái **`🔥 TẬP MỚI`** hoặc **`Đã xem Tập X`**, badge góc phải **`≡ N tập`**, nút **`⭐ Theo dõi`** / **`Ẩn`** và nút khôi phục *"Hiện X bộ đã ẩn"* ở cuối trang.
+  - Tại các tab khác: hiển thị khung giữ chỗ cấu trúc sắc nét (không ảnh giả) cho 3 trạng thái thực tế hoặc lưới thẻ video thực từ **Full-Catalog In-Memory Store** (`allVideos`):
+    - Tải **100% toàn bộ video** trong kho 1 lần duy nhất khi mở ứng dụng (phân đoạn 1.000 dòng phía server), loại bỏ hoàn toàn phân trang nhỏ lẻ `limit=60` và Infinite Scroll phân mảnh.
+    - Chuyển Tab (`Tất cả`, `Tập mới`, `Phim Full`, `Đang cày dở`), đổi thể loại (`Phim AI` / `HH2D`) hoặc tìm kiếm đều lọc tức thì **0ms** bằng `useMemo` ngay trong bộ nhớ, đồng thời tự động **lưu và khôi phục vị trí cuộn của từng Tab (`scrollPositionsRef`)**.
+  - Tại không gian **Khám phá YouTube (`Explore`)**: gắn **Cuộn Vô Hạn (`IntersectionObserver` + `exploreSentinelRef`)** và nút dự phòng **"Khám phá thêm phim mới"** để tự động nối tiếp gợi ý mới qua `/api/youtube/explore?page=...` (lọc trùng `video_id`, có khóa chống gọi trùng `isLoadingMoreExplore`), kèm nút **"+ Đăng ký kênh"** 1 chạm chuyển ngay sang **"Đã theo dõi"**.
 
 ### 1.3. Ngăn Kéo Quản Lý Kênh Trượt Ngang (`Slide-over Channel Vault Drawer`)
 - Trượt mượt từ cạnh phải vào (`500ms` vào / `350ms` ra) chiếm **75% chiều rộng màn hình** trên Desktop (`w-full lg:w-[75vw]`), làm mờ nền phía sau (`backdrop-blur-md`).

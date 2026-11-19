@@ -14,6 +14,25 @@ export type VideoType = 'episode' | 'full_movie' | 'trailer';
 
 export type AccessRequestStatus = 'pending' | 'approved' | 'rejected';
 
+export type UserSeriesStatus = 'following' | 'completed' | 'hidden';
+
+export type UserSeriesStatusRow = {
+  id: string;
+  user_id: string;
+  channel_id: string;
+  series_key: string;
+  status: UserSeriesStatus;
+  updated_at: string;
+  created_at: string;
+};
+
+export type UserWatchLaterRow = {
+  id: string;
+  user_id: string;
+  video_id: string;
+  created_at: string;
+};
+
 export type ExploreCacheRow = {
   user_id: string;
   keywords: string[];
@@ -322,6 +341,67 @@ export type Database = {
             isOneToOne: true;
             referencedRelation: 'profiles';
             referencedColumns: ['id'];
+          },
+        ];
+      };
+      user_series_status: {
+        Row: UserSeriesStatusRow;
+        Insert: {
+          id?: string;
+          user_id: string;
+          channel_id: string;
+          series_key: string;
+          status: UserSeriesStatus;
+          updated_at?: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          channel_id?: string;
+          series_key?: string;
+          status?: UserSeriesStatus;
+          updated_at?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'user_series_status_user_id_fkey';
+            columns: ['user_id'];
+            isOneToOne: false;
+            referencedRelation: 'profiles';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      user_watch_later: {
+        Row: UserWatchLaterRow;
+        Insert: {
+          id?: string;
+          user_id: string;
+          video_id: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          video_id?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'user_watch_later_user_id_fkey';
+            columns: ['user_id'];
+            isOneToOne: false;
+            referencedRelation: 'profiles';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'user_watch_later_video_id_fkey';
+            columns: ['video_id'];
+            isOneToOne: false;
+            referencedRelation: 'videos';
+            referencedColumns: ['video_id'];
           },
         ];
       };

@@ -7,10 +7,11 @@ import type {
   WatchProgressRow,
 } from '@/types/database';
 
-export type WorkspaceViewMode = 'cinema' | 'explore' | 'continue';
+export type WorkspaceViewMode = 'cinema' | 'explore' | 'continue' | 'watch_later';
 export type VideoTypeFilter = 'all' | 'episode' | 'full_movie';
 export type GenreFilter = 'all' | GenreTag;
 export type PrimaryGenreTag = GenreTag;
+export type SortOption = 'newest' | 'longest' | 'title_asc';
 
 export const PRIMARY_GENRE_OPTIONS: PrimaryGenreTag[] = ['Phim AI', 'HH2D'];
 export const GENRE_OPTIONS: GenreTag[] = ['Phim AI', 'HH2D'];
@@ -26,6 +27,7 @@ export interface CinemaVideoItem extends VideoRow {
   channel_title?: string;
   progress_seconds: WatchProgressRow['progress_seconds'];
   is_completed: WatchProgressRow['is_completed'];
+  last_watched_at?: string | null;
   matched_keyword?: string;
 }
 

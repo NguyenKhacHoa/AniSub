@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { FloatingRail } from '@/components/workspace/FloatingRail';
 import { CommandHub } from '@/components/workspace/CommandHub';
+import { ContinueWatchingShelf } from '@/components/workspace/ContinueWatchingShelf';
 import { TheaterStage } from '@/components/workspace/TheaterStage';
 import { StructuredCinemaRows } from '@/components/workspace/StructuredCinemaRows';
 import { SeriesGrid } from '@/components/workspace/SeriesGrid';
@@ -12,6 +13,7 @@ import { ChannelVaultDrawer } from '@/components/workspace/ChannelVaultDrawer';
 import { WhitelistModal } from '@/components/workspace/WhitelistModal';
 import { createClient } from '@/lib/supabase/client';
 import {
+  extractSeriesInfo,
   groupVideosIntoSeries,
   type SeriesGroup,
 } from '@/lib/series-parser';
@@ -20,10 +22,15 @@ import {
   type CinemaVideoItem,
   type GenreFilter,
   type PrimaryGenreTag,
+  type SortOption,
   type VideoTypeFilter,
   type WorkspaceAuthStatus,
   type WorkspaceViewMode,
 } from '@/types/workspace';
+import type { UserSeriesStatus } from '@/types/database';
+
+const DELTA_SYNC_STORAGE_KEY = 'anisub_last_delta_sync_at';
+const DELTA_SYNC_INTERVAL_MS = 60 * 60 * 1000; // 60 phút
 
 export interface InitialWorkspaceUser {
   id: string;
@@ -38,8 +45,9 @@ interface UnifiedCinemaWorkspaceProps {
   initialUser: InitialWorkspaceUser | null;
   initialChannels?: ChannelWithSelection[];
   initialVideos?: CinemaVideoItem[];
+  initialSeriesStatuses?: Record<string, UserSeriesStatus>;
+  initialWatchLaterIds?: string[];
   initialTotalVideosCount?: number;
-  initialHasMoreVideos?: boolean;
   isAdmin?: boolean;
   pendingRequestsCount?: number;
 }
@@ -115,41 +123,41 @@ export function UnifiedCinemaWorkspace({
   initialUser,
   initialChannels = [],
   initialVideos = [],
-  initialTotalVideosCount,
-  initialHasMoreVideos = false,
+  initialSeriesStatuses = {},
+  initialWatchLaterIds = [],
   isAdmin = false,
   pendingRequestsCount = 0,
 }: UnifiedCinemaWorkspaceProps) {
   const router = useRouter();
   const mainScrollRef = useRef<HTMLElement>(null);
   const theaterStageRef = useRef<HTMLDivElement>(null);
+  const scrollPositionsRef = useRef<Record<string, number>>({});
+  const skipNextScrollRestoreRef = useRef(false);
+  const hasTriggeredAutoDeltaRef = useRef(false);
 
   const [authStatus, setAuthStatus] =
     useState<WorkspaceAuthStatus>(initialAuthStatus);
   const [user, setUser] = useState<InitialWorkspaceUser | null>(initialUser);
   const [channels, setChannels] =
     useState<ChannelWithSelection[]>(initialChannels);
-  const [videos, setVideos] = useState<CinemaVideoItem[]>(initialVideos);
-  const [totalVideosCount, setTotalVideosCount] = useState<number>(
-    initialTotalVideosCount ?? initialVideos.length,
-  );
-  const [hasMoreVideos, setHasMoreVideos] = useState<boolean>(
-    initialHasMoreVideos,
-  );
-  const [hasMoreYouTubeHistory, setHasMoreYouTubeHistory] = useState<boolean>(
-    () => initialChannels.some((c) => c.is_selected),
-  );
-  const [isLoadingFeed, setIsLoadingFeed] = useState(false);
-  const [isLoadingMoreVideos, setIsLoadingMoreVideos] = useState(false);
-  const [isFetchingYouTubeHistory, setIsFetchingYouTubeHistory] =
-    useState(false);
-  const isFetchingYouTubeRef = useRef(false);
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
-  const hasSkippedInitialFilterFetchRef = useRef(false);
+  // Full-Catalog In-Memory Store: giữ 100% toàn bộ video trong kho để lọc tức thì 0ms
+  const [allVideos, setAllVideos] = useState<CinemaVideoItem[]>(initialVideos);
+  const [seriesStatuses, setSeriesStatuses] = useState<
+    Record<string, UserSeriesStatus>
+  >(initialSeriesStatuses);
+  const [watchLaterList, setWatchLaterList] =
+    useState<string[]>(initialWatchLaterIds);
+  const watchLaterSet = useMemo(() => new Set(watchLaterList), [watchLaterList]);
+  const [isDeltaSyncing, setIsDeltaSyncing] = useState(false);
   const [exploreVideos, setExploreVideos] = useState<CinemaVideoItem[]>([]);
   const [exploreKeywords, setExploreKeywords] = useState<string[]>([]);
+  const [explorePage, setExplorePage] = useState<number>(1);
+  const [hasMoreExplore, setHasMoreExplore] = useState<boolean>(false);
   const [hasLoadedExplore, setHasLoadedExplore] = useState(false);
   const [isLoadingExplore, setIsLoadingExplore] = useState(false);
+  const [isLoadingMoreExplore, setIsLoadingMoreExplore] = useState(false);
+  const isLoadingMoreExploreRef = useRef(false);
+  const explorePageTokensRef = useRef<Record<string, string>>({});
   const [subscribingChannelId, setSubscribingChannelId] = useState<
     string | null
   >(null);
@@ -165,12 +173,52 @@ export function UnifiedCinemaWorkspace({
   const [videoType, setVideoType] = useState<VideoTypeFilter>('all');
   const [showTrailers, setShowTrailers] = useState(false);
   const [genreFilter, setGenreFilter] = useState<GenreFilter>('all');
+  const [sortBy, setSortBy] = useState<SortOption>('newest');
+  const [onlyUnwatched, setOnlyUnwatched] = useState(false);
 
   const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
   const [activeSeriesKey, setActiveSeriesKey] = useState<string | null>(null);
   const [recommendedOrderIds, setRecommendedOrderIds] = useState<string[]>([]);
   const [isVaultOpen, setIsVaultOpen] = useState(false);
   const [isWhitelistOpen, setIsWhitelistOpen] = useState(false);
+
+  const currentTabKey =
+    viewMode === 'explore'
+      ? 'explore'
+      : viewMode === 'continue'
+        ? 'continue'
+        : viewMode === 'watch_later'
+          ? 'watch_later'
+          : videoType === 'episode'
+            ? 'episode'
+            : videoType === 'full_movie'
+              ? 'full'
+              : 'all';
+
+  const saveCurrentTabScroll = useCallback(() => {
+    const top =
+      mainScrollRef.current?.scrollTop ??
+      (typeof window !== 'undefined' ? window.scrollY : 0);
+    scrollPositionsRef.current[currentTabKey] = top;
+  }, [currentTabKey]);
+
+  // Khôi phục đúng vị trí cuộn của từng Tab khi quay trở lại
+  useEffect(() => {
+    if (skipNextScrollRestoreRef.current) {
+      skipNextScrollRestoreRef.current = false;
+      return;
+    }
+    const savedTop = scrollPositionsRef.current[currentTabKey] ?? 0;
+    const rafId = requestAnimationFrame(() => {
+      if (mainScrollRef.current) {
+        mainScrollRef.current.scrollTop = savedTop;
+      }
+      if (typeof window !== 'undefined' && window.scrollY !== savedTop) {
+        window.scrollTo({ top: savedTop, behavior: 'auto' });
+      }
+    });
+    return () => cancelAnimationFrame(rafId);
+  }, [currentTabKey]);
 
   const selectedChannelIds = useMemo(
     () =>
@@ -180,15 +228,28 @@ export function UnifiedCinemaWorkspace({
 
   const filteredVideos = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    return videos.filter((v) => {
+    const matched = allVideos.filter((v) => {
       if (v.is_short) return false;
       if (selectedChannelIds.size > 0 && !selectedChannelIds.has(v.channel_id)) {
         return false;
       }
-      if (!showTrailers && v.video_type === 'trailer') return false;
-      if (videoType === 'episode' && v.video_type !== 'episode') return false;
-      if (videoType === 'full_movie' && v.video_type !== 'full_movie') {
-        return false;
+      if (viewMode === 'watch_later') {
+        if (!watchLaterSet.has(v.video_id)) return false;
+      } else if (viewMode === 'continue') {
+        if (!(v.progress_seconds > 0 && !v.is_completed)) return false;
+      } else {
+        if (!showTrailers && v.video_type === 'trailer') return false;
+        if (videoType === 'episode' && v.video_type !== 'episode') return false;
+        if (videoType === 'full_movie' && v.video_type !== 'full_movie') {
+          return false;
+        }
+      }
+      if (onlyUnwatched) {
+        const isWatched =
+          v.is_completed ||
+          (v.duration_seconds > 0 &&
+            v.progress_seconds / v.duration_seconds >= 0.9);
+        if (isWatched) return false;
       }
       if (genreFilter !== 'all' && v.detected_genre !== genreFilter) {
         return false;
@@ -203,37 +264,62 @@ export function UnifiedCinemaWorkspace({
       }
       return true;
     });
+
+    if (sortBy === 'longest') {
+      return [...matched].sort(
+        (a, b) => b.duration_seconds - a.duration_seconds,
+      );
+    }
+    if (sortBy === 'title_asc') {
+      return [...matched].sort((a, b) => a.title.localeCompare(b.title, 'vi'));
+    }
+    // Mặc định: Mới nhất (published_at DESC)
+    return [...matched].sort(
+      (a, b) =>
+        new Date(b.published_at).getTime() - new Date(a.published_at).getTime(),
+    );
   }, [
-    videos,
+    allVideos,
     selectedChannelIds,
+    watchLaterSet,
+    viewMode,
     showTrailers,
     videoType,
+    onlyUnwatched,
     genreFilter,
     searchQuery,
+    sortBy,
   ]);
 
   const activeVideo = useMemo(() => {
     if (!activeVideoId) return null;
     return (
-      videos.find((v) => v.video_id === activeVideoId) ??
+      allVideos.find((v) => v.video_id === activeVideoId) ??
       exploreVideos.find((v) => v.video_id === activeVideoId) ??
       null
     );
-  }, [videos, exploreVideos, activeVideoId]);
+  }, [allVideos, exploreVideos, activeVideoId]);
 
-  // Gom nhóm toàn bộ video tập lẻ thành các Bộ phim (Series Playlist)
+  // Gom nhóm toàn bộ video tập lẻ thành các Bộ phim (Series Playlist) ngay trong bộ nhớ
   const allSeriesGroups = useMemo(() => {
-    const channelVideos = videos.filter(
+    const channelVideos = allVideos.filter(
       (v) =>
         selectedChannelIds.size === 0 || selectedChannelIds.has(v.channel_id),
     );
     return groupVideosIntoSeries(channelVideos);
-  }, [videos, selectedChannelIds]);
+  }, [allVideos, selectedChannelIds]);
 
   const filteredSeriesGroups = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return allSeriesGroups.filter((series) => {
       if (genreFilter !== 'all' && series.detectedGenre !== genreFilter) {
+        return false;
+      }
+      if (
+        onlyUnwatched &&
+        series.episodes.length > 0 &&
+        series.episodes.every((ep) => ep.isWatched)
+      ) {
         return false;
       }
       if (query) {
@@ -246,12 +332,38 @@ export function UnifiedCinemaWorkspace({
       }
       return true;
     });
-  }, [allSeriesGroups, genreFilter, searchQuery]);
+  }, [allSeriesGroups, genreFilter, onlyUnwatched, searchQuery]);
 
   const totalSeriesEpisodesCount = useMemo(
     () => filteredSeriesGroups.reduce((acc, s) => acc + s.totalEpisodes, 0),
     [filteredSeriesGroups],
   );
+
+  // Thanh "Xem tiếp" (Continue Watching Shelf): tối đa 6 video xem > 30s và tiến độ < 92%, sắp xếp gần nhất trước
+  const continueWatchingVideos = useMemo(() => {
+    return allVideos
+      .filter((v) => {
+        if (v.is_short) return false;
+        if (selectedChannelIds.size > 0 && !selectedChannelIds.has(v.channel_id)) {
+          return false;
+        }
+        if (v.is_completed) return false;
+        if (v.progress_seconds <= 30) return false;
+        if (
+          v.duration_seconds > 0 &&
+          v.progress_seconds / v.duration_seconds >= 0.92
+        ) {
+          return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const aTime = new Date(a.last_watched_at ?? a.published_at).getTime();
+        const bTime = new Date(b.last_watched_at ?? b.published_at).getTime();
+        return bTime - aTime;
+      })
+      .slice(0, 6);
+  }, [allVideos, selectedChannelIds]);
 
   const activeSeries = useMemo(() => {
     if (!activeSeriesKey) return null;
@@ -289,7 +401,7 @@ export function UnifiedCinemaWorkspace({
       return filteredVideos;
     }
 
-    const videoMap = new Map(videos.map((v) => [v.video_id, v]));
+    const videoMap = new Map(allVideos.map((v) => [v.video_id, v]));
     const ordered: CinemaVideoItem[] = [];
     for (const id of recommendedOrderIds) {
       if (id === activeVideo.video_id) continue;
@@ -304,7 +416,7 @@ export function UnifiedCinemaWorkspace({
     activeVideo,
     filteredExploreVideos,
     filteredVideos,
-    videos,
+    allVideos,
     recommendedOrderIds,
   ]);
 
@@ -316,6 +428,7 @@ export function UnifiedCinemaWorkspace({
   // Chọn video -> cập nhật danh sách gợi ý xáo trộn + tự động cuộn mượt lên Theater Stage
   const handleSelectVideo = useCallback(
     (video: CinemaVideoItem) => {
+      skipNextScrollRestoreRef.current = true;
       setActiveVideoId(video.video_id);
       if (
         activeSeries &&
@@ -323,7 +436,7 @@ export function UnifiedCinemaWorkspace({
       ) {
         setActiveSeriesKey(null);
       }
-      const pool = videos.filter(
+      const pool = allVideos.filter(
         (v) =>
           !v.is_short &&
           (selectedChannelIds.size === 0 ||
@@ -339,17 +452,18 @@ export function UnifiedCinemaWorkspace({
         });
       });
     },
-    [videos, selectedChannelIds, activeSeries],
+    [allVideos, selectedChannelIds, activeSeries],
   );
 
   // Chọn 1 Bộ phim (Series Card) -> mở sân khấu TheaterStage ở chế độ Playlist & phát tập phù hợp nhất
   const handleSelectSeries = useCallback(
     (series: SeriesGroup) => {
+      skipNextScrollRestoreRef.current = true;
       const targetVideo = series.recommendedEpisode.video;
       setActiveSeriesKey(series.seriesKey);
       setActiveVideoId(targetVideo.video_id);
 
-      const pool = videos.filter(
+      const pool = allVideos.filter(
         (v) =>
           !v.is_short &&
           (selectedChannelIds.size === 0 ||
@@ -365,7 +479,7 @@ export function UnifiedCinemaWorkspace({
         });
       });
     },
-    [videos, selectedChannelIds],
+    [allVideos, selectedChannelIds],
   );
 
   // Tự động lưu tiến độ xem (UPSERT public.watch_progress) + cập nhật state local tức thì
@@ -376,7 +490,8 @@ export function UnifiedCinemaWorkspace({
       const isCompleted =
         safeDuration > 0 ? safeProgress / safeDuration >= 0.9 : false;
 
-      setVideos((prev) =>
+      const nowIso = new Date().toISOString();
+      setAllVideos((prev) =>
         prev.map((v) =>
           v.video_id === videoId
             ? {
@@ -385,6 +500,7 @@ export function UnifiedCinemaWorkspace({
                 duration_seconds:
                   safeDuration > 0 ? safeDuration : v.duration_seconds,
                 is_completed: v.is_completed || isCompleted,
+                last_watched_at: nowIso,
               }
             : v,
         ),
@@ -412,13 +528,20 @@ export function UnifiedCinemaWorkspace({
     async (forceRefresh = false) => {
       if (authStatus !== 'authenticated') return;
       setIsLoadingExplore(true);
+      isLoadingMoreExploreRef.current = false;
+      setIsLoadingMoreExplore(false);
+      explorePageTokensRef.current = {};
+
       try {
         const res = await fetch(
-          `/api/youtube/explore${forceRefresh ? '?refresh=true' : ''}`,
+          `/api/youtube/explore?page=1${forceRefresh ? '&refresh=true' : ''}`,
         );
         const payload = (await res.json().catch(() => ({}))) as {
           keywords?: string[];
           videos?: CinemaVideoItem[];
+          page?: number;
+          hasMore?: boolean;
+          pageTokens?: Record<string, string>;
           cached?: boolean;
           error?: string;
         };
@@ -430,6 +553,9 @@ export function UnifiedCinemaWorkspace({
 
         setExploreKeywords(payload.keywords ?? []);
         setExploreVideos(payload.videos ?? []);
+        setExplorePage(payload.page ?? 1);
+        setHasMoreExplore(Boolean(payload.hasMore));
+        explorePageTokensRef.current = payload.pageTokens ?? {};
         setHasLoadedExplore(true);
 
         if (forceRefresh) {
@@ -446,61 +572,112 @@ export function UnifiedCinemaWorkspace({
     [authStatus],
   );
 
+  const handleLoadMoreExplore = useCallback(async () => {
+    if (
+      isLoadingMoreExploreRef.current ||
+      isLoadingExplore ||
+      !hasMoreExplore ||
+      authStatus !== 'authenticated'
+    ) {
+      return;
+    }
+
+    isLoadingMoreExploreRef.current = true;
+    setIsLoadingMoreExplore(true);
+
+    const nextPage = explorePage + 1;
+    const recentExcludeIds = exploreVideos
+      .slice(-120)
+      .map((v) => v.video_id)
+      .join(',');
+
+    const params = new URLSearchParams({
+      page: String(nextPage),
+      refresh: 'false',
+    });
+    if (Object.keys(explorePageTokensRef.current).length > 0) {
+      params.set('pageTokens', JSON.stringify(explorePageTokensRef.current));
+    }
+    if (recentExcludeIds) {
+      params.set('excludeIds', recentExcludeIds);
+    }
+
+    try {
+      const res = await fetch(`/api/youtube/explore?${params.toString()}`);
+      const payload = (await res.json().catch(() => ({}))) as {
+        keywords?: string[];
+        videos?: CinemaVideoItem[];
+        page?: number;
+        hasMore?: boolean;
+        pageTokens?: Record<string, string>;
+        error?: string;
+      };
+
+      if (!res.ok) {
+        toast.error(payload.error || 'Không thể tải thêm đề xuất Khám phá.');
+        if (res.status === 429) {
+          setHasMoreExplore(false);
+        }
+        return;
+      }
+
+      const incoming = payload.videos ?? [];
+      if (incoming.length > 0) {
+        setExploreVideos((prev) => {
+          const seen = new Set(prev.map((v) => v.video_id));
+          const merged = [...prev];
+          for (const item of incoming) {
+            if (!seen.has(item.video_id)) {
+              seen.add(item.video_id);
+              merged.push(item);
+            }
+          }
+          return merged;
+        });
+      }
+
+      if (payload.keywords && payload.keywords.length > 0) {
+        setExploreKeywords((prev) =>
+          Array.from(new Set([...prev, ...payload.keywords!])).slice(0, 9),
+        );
+      }
+
+      setExplorePage(payload.page ?? nextPage);
+      setHasMoreExplore(Boolean(payload.hasMore));
+      explorePageTokensRef.current = payload.pageTokens ?? {};
+    } catch {
+      toast.error('Lỗi kết nối khi tải thêm gợi ý Khám phá.');
+    } finally {
+      isLoadingMoreExploreRef.current = false;
+      setIsLoadingMoreExplore(false);
+    }
+  }, [
+    authStatus,
+    isLoadingExplore,
+    hasMoreExplore,
+    explorePage,
+    exploreVideos,
+  ]);
+
   const handleChangeViewMode = useCallback(
     (mode: WorkspaceViewMode) => {
+      saveCurrentTabScroll();
       setViewMode(mode);
       setIsVaultOpen(false);
       if (mode === 'explore' && !hasLoadedExplore && !isLoadingExplore) {
         void loadExploreFeed(false);
       }
     },
-    [hasLoadedExplore, isLoadingExplore, loadExploreFeed],
+    [saveCurrentTabScroll, hasLoadedExplore, isLoadingExplore, loadExploreFeed],
   );
 
-  // Hàm tải lại lô 60 video đầu tiên theo đúng bộ lọc hiện tại (đồng bộ tức thì sau khi kéo video / đổi tag / đăng ký kênh)
-  const refreshCurrentFeed = useCallback(async () => {
-    if (authStatus !== 'authenticated' || viewMode === 'explore') return;
-
-    const effectiveTab = viewMode === 'continue' ? 'continue' : videoType;
-    const params = new URLSearchParams({
-      offset: '0',
-      limit: '60',
-      genre: genreFilter,
-      tab: effectiveTab,
-      showTrailers: String(showTrailers),
-    });
-    if (debouncedSearchQuery) {
-      params.set('q', debouncedSearchQuery);
-    }
-
-    try {
-      const res = await fetch(`/api/videos?${params.toString()}`);
-      if (!res.ok) return;
-      const payload = (await res.json().catch(() => ({}))) as {
-        videos?: CinemaVideoItem[];
-        totalCount?: number;
-        hasMore?: boolean;
-      };
-      if (Array.isArray(payload.videos)) {
-        setVideos(payload.videos);
-      }
-      if (typeof payload.totalCount === 'number') {
-        setTotalVideosCount(payload.totalCount);
-      }
-      if (typeof payload.hasMore === 'boolean') {
-        setHasMoreVideos(payload.hasMore);
-      }
-    } catch {
-      // Bỏ qua lỗi mạng tạm thời
-    }
-  }, [
-    authStatus,
-    viewMode,
-    videoType,
-    genreFilter,
-    showTrailers,
-    debouncedSearchQuery,
-  ]);
+  const handleChangeVideoType = useCallback(
+    (nextType: VideoTypeFilter) => {
+      saveCurrentTabScroll();
+      setVideoType(nextType);
+    },
+    [saveCurrentTabScroll],
+  );
 
   const handleSubscribeChannel = useCallback(
     async (channelId: string, channelTitle?: string) => {
@@ -517,8 +694,6 @@ export function UnifiedCinemaWorkspace({
           fetchedVideosCount?: number;
           channels?: ChannelWithSelection[];
           videos?: CinemaVideoItem[];
-          totalVideosCount?: number;
-          hasMoreVideos?: boolean;
           code?: string;
           error?: string;
         };
@@ -536,21 +711,11 @@ export function UnifiedCinemaWorkspace({
         }
 
         if (payload.channels) setChannels(payload.channels);
-        if (viewMode === 'explore') {
-          if (payload.videos) setVideos(payload.videos);
-          if (typeof payload.totalVideosCount === 'number') {
-            setTotalVideosCount(payload.totalVideosCount);
-          }
-          if (typeof payload.hasMoreVideos === 'boolean') {
-            setHasMoreVideos(payload.hasMoreVideos);
-          }
-        } else {
-          await refreshCurrentFeed();
-        }
+        if (payload.videos) setAllVideos(payload.videos);
         router.refresh();
 
         toast.success(
-          `Đã đăng ký "${payload.channelTitle || channelTitle || channelId}" & kéo ${payload.fetchedVideosCount ?? 0} video vào AniSub!`,
+          `Đã đăng ký "${payload.channelTitle || channelTitle || channelId}" & kéo trọn bộ ${payload.fetchedVideosCount ?? 0} video vào AniSub!`,
         );
       } catch {
         toast.error('Lỗi kết nối khi đăng ký kênh YouTube.');
@@ -558,7 +723,7 @@ export function UnifiedCinemaWorkspace({
         setSubscribingChannelId(null);
       }
     },
-    [router, viewMode, refreshCurrentFeed],
+    [router],
   );
 
   const handleNavigateLogin = () => {
@@ -623,7 +788,7 @@ export function UnifiedCinemaWorkspace({
         setChannels(payload.channels);
       }
       if (payload.videos) {
-        setVideos(payload.videos);
+        setAllVideos(payload.videos);
       }
       if (process.env.NODE_ENV !== 'development' && payload.lastSyncedAt) {
         setLastSyncedAt(payload.lastSyncedAt);
@@ -695,16 +860,8 @@ export function UnifiedCinemaWorkspace({
       if (payload.channels) {
         setChannels(payload.channels);
       }
-      if (viewMode === 'explore') {
-        if (payload.videos) setVideos(payload.videos);
-        if (typeof payload.totalVideosCount === 'number') {
-          setTotalVideosCount(payload.totalVideosCount);
-        }
-        if (typeof payload.hasMoreVideos === 'boolean') {
-          setHasMoreVideos(payload.hasMoreVideos);
-        }
-      } else {
-        await refreshCurrentFeed();
+      if (payload.videos) {
+        setAllVideos(payload.videos);
       }
 
       if (payload.warning) {
@@ -792,11 +949,7 @@ export function UnifiedCinemaWorkspace({
       }
 
       if (payload.channels) setChannels(payload.channels);
-      if (viewMode === 'explore') {
-        if (payload.videos) setVideos(payload.videos);
-      } else {
-        await refreshCurrentFeed();
-      }
+      if (payload.videos) setAllVideos(payload.videos);
 
       toast.success(
         `Gemini Vision đã phân loại lại ${payload.reclassifiedCount ?? 0} video cho kênh "${current.title}"!`,
@@ -842,17 +995,7 @@ export function UnifiedCinemaWorkspace({
       }
 
       if (payload.channels) setChannels(payload.channels);
-      if (viewMode === 'explore') {
-        if (payload.videos) setVideos(payload.videos);
-        if (typeof payload.totalVideosCount === 'number') {
-          setTotalVideosCount(payload.totalVideosCount);
-        }
-        if (typeof payload.hasMoreVideos === 'boolean') {
-          setHasMoreVideos(payload.hasMoreVideos);
-        }
-      } else {
-        await refreshCurrentFeed();
-      }
+      if (payload.videos) setAllVideos(payload.videos);
 
       if (payload.warning) {
         toast.warning(payload.warning);
@@ -860,303 +1003,51 @@ export function UnifiedCinemaWorkspace({
         toast.info(`Kênh "${current.title}" không còn video cũ hơn để kéo.`);
       } else {
         toast.success(
-          `Đã kéo thêm ${payload.fetchedCount ?? 0} video (${payload.newVideosCount ?? 0} mới) cho kênh "${current.title}"!`,
+          `Đã đồng bộ trọn bộ ${payload.fetchedCount ?? 0} video (${payload.newVideosCount ?? 0} mới) cho kênh "${current.title}"!`,
         );
       }
     } catch {
-      toast.error('Lỗi kết nối khi kéo thêm 50 video cũ.');
+      toast.error('Lỗi kết nối khi đồng bộ toàn bộ video kênh.');
     } finally {
       setBusyChannelId(null);
     }
   };
 
-  // Debounce từ khóa tìm kiếm 300ms trước khi gọi API phân trang /api/videos
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearchQuery(searchQuery.trim());
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
-
-  // Khi chuyển đổi bộ lọc thể loại (Tất cả / Phim AI / HH2D), tab, trailer hoặc tìm kiếm:
-  // tự động reset offset = 0 và tải lô 60 video đầu tiên chuẩn ngữ cảnh từ /api/videos
-  useEffect(() => {
-    if (authStatus !== 'authenticated' || viewMode === 'explore') return;
-
-    // Bỏ qua lần render đầu tiên nếu đang ở bộ lọc mặc định (đã có dữ liệu SSR)
-    if (!hasSkippedInitialFilterFetchRef.current) {
-      hasSkippedInitialFilterFetchRef.current = true;
-      if (
-        viewMode === 'cinema' &&
-        genreFilter === 'all' &&
-        videoType === 'all' &&
-        !showTrailers &&
-        !debouncedSearchQuery
-      ) {
-        return;
-      }
-    }
-
-    const controller = new AbortController();
-    const effectiveTab = viewMode === 'continue' ? 'continue' : videoType;
-    const params = new URLSearchParams({
-      offset: '0',
-      limit: '60',
-      genre: genreFilter,
-      tab: effectiveTab,
-      showTrailers: String(showTrailers),
-    });
-    if (debouncedSearchQuery) {
-      params.set('q', debouncedSearchQuery);
-    }
-
-    setIsLoadingFeed(true);
-    setHasMoreYouTubeHistory(selectedChannelIds.size > 0);
-    fetch(`/api/videos?${params.toString()}`, { signal: controller.signal })
-      .then(async (res) => {
-        if (!res.ok) return;
-        const payload = (await res.json().catch(() => ({}))) as {
-          videos?: CinemaVideoItem[];
-          totalCount?: number;
-          hasMore?: boolean;
-        };
-        if (controller.signal.aborted) return;
-        if (Array.isArray(payload.videos)) {
-          setVideos(payload.videos);
-        }
-        if (typeof payload.totalCount === 'number') {
-          setTotalVideosCount(payload.totalCount);
-        }
-        if (typeof payload.hasMore === 'boolean') {
-          setHasMoreVideos(payload.hasMore);
-        }
-      })
-      .catch(() => {
-        // Bỏ qua lỗi hủy request (AbortError) khi user đổi bộ lọc liên tục
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          setIsLoadingFeed(false);
-        }
-      });
-
-    return () => controller.abort();
-  }, [
-    authStatus,
-    viewMode,
-    genreFilter,
-    videoType,
-    showTrailers,
-    debouncedSearchQuery,
-    selectedChannelIds.size,
-  ]);
-
-  // Giai đoạn 2 Infinite Scroll: Khi đã chạm đáy kho DB -> tự động kéo thêm 50 video cũ/kênh từ YouTube rồi nạp tiếp
-  const handleFetchMoreFromYouTube = useCallback(async () => {
-    if (
-      isFetchingYouTubeRef.current ||
-      isFetchingYouTubeHistory ||
-      isLoadingMoreVideos ||
-      isLoadingFeed ||
-      !hasMoreYouTubeHistory ||
-      authStatus !== 'authenticated' ||
-      viewMode !== 'cinema'
-    ) {
-      return;
-    }
-
-    isFetchingYouTubeRef.current = true;
-    setIsFetchingYouTubeHistory(true);
-
-    try {
-      const res = await fetch('/api/channels/load-more-all', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          genre: genreFilter,
-          maxChannels: 3,
-        }),
-      });
-
-      const payload = (await res.json().catch(() => ({}))) as {
-        processedChannels?: number;
-        fetchedCount?: number;
-        newVideosCount?: number;
-        hasMoreYouTubeHistory?: boolean;
-        warning?: string | null;
-        error?: string;
-      };
-
-      if (!res.ok) {
-        toast.error(payload.error || 'Không thể kéo thêm phim cũ từ YouTube.');
-        setHasMoreYouTubeHistory(false);
-        return;
-      }
-
-      const stillHasMore = Boolean(payload.hasMoreYouTubeHistory);
-      setHasMoreYouTubeHistory(stillHasMore);
-
-      if (payload.warning) {
-        toast.warning(payload.warning);
-      }
-
-      // Nạp ngay lô video mới kéo về từ Supabase vào danh sách trang chủ
-      const params = new URLSearchParams({
-        offset: String(videos.length),
-        limit: '60',
-        genre: genreFilter,
-        tab: videoType,
-        showTrailers: String(showTrailers),
-      });
-      if (debouncedSearchQuery) {
-        params.set('q', debouncedSearchQuery);
-      }
-
-      const feedRes = await fetch(`/api/videos?${params.toString()}`);
-      if (feedRes.ok) {
-        const feedPayload = (await feedRes.json().catch(() => ({}))) as {
-          videos?: CinemaVideoItem[];
-          totalCount?: number;
-          hasMore?: boolean;
-        };
-
-        const incoming = feedPayload.videos ?? [];
-        if (incoming.length > 0) {
-          setVideos((prev) => {
-            const existing = new Set(prev.map((v) => v.video_id));
-            const merged = [...prev];
-            for (const item of incoming) {
-              if (!existing.has(item.video_id)) {
-                existing.add(item.video_id);
-                merged.push(item);
-              }
-            }
-            return merged;
-          });
-        }
-
-        if (typeof feedPayload.totalCount === 'number') {
-          setTotalVideosCount(feedPayload.totalCount);
-        }
-        if (typeof feedPayload.hasMore === 'boolean') {
-          setHasMoreVideos(feedPayload.hasMore);
-        }
-      }
-
-      if ((payload.newVideosCount ?? 0) > 0) {
-        toast.success(
-          `Đã tự động kéo thêm +${payload.newVideosCount} phim cũ từ ${payload.processedChannels ?? 0} kênh YouTube!`,
-        );
-      } else if (!stillHasMore) {
-        toast.info('Đã tải toàn bộ video từ tất cả các kênh.');
-      }
-    } catch {
-      toast.error('Lỗi kết nối khi kéo thêm phim cũ từ YouTube.');
-    } finally {
-      isFetchingYouTubeRef.current = false;
-      setIsFetchingYouTubeHistory(false);
-    }
-  }, [
-    isFetchingYouTubeHistory,
-    isLoadingMoreVideos,
-    isLoadingFeed,
-    hasMoreYouTubeHistory,
-    authStatus,
-    viewMode,
-    genreFilter,
-    videos.length,
-    videoType,
-    showTrailers,
-    debouncedSearchQuery,
-  ]);
-
-  const handleLoadMoreFeedVideos = useCallback(async () => {
-    if (
-      isLoadingMoreVideos ||
-      isLoadingFeed ||
-      !hasMoreVideos ||
-      viewMode === 'explore'
-    ) {
-      return;
-    }
-
-    setIsLoadingMoreVideos(true);
-    try {
-      const effectiveTab = viewMode === 'continue' ? 'continue' : videoType;
-      const params = new URLSearchParams({
-        offset: String(videos.length),
-        limit: '60',
-        genre: genreFilter,
-        tab: effectiveTab,
-        showTrailers: String(showTrailers),
-      });
-      if (debouncedSearchQuery) {
-        params.set('q', debouncedSearchQuery);
-      }
-
-      const res = await fetch(`/api/videos?${params.toString()}`);
-      const payload = (await res.json().catch(() => ({}))) as {
-        videos?: CinemaVideoItem[];
-        totalCount?: number;
-        hasMore?: boolean;
-        error?: string;
-      };
-
-      if (!res.ok) {
-        toast.error(payload.error || 'Không thể tải thêm phim.');
-        return;
-      }
-
-      const incoming = payload.videos ?? [];
-      if (incoming.length > 0) {
-        setVideos((prev) => {
-          const existing = new Set(prev.map((v) => v.video_id));
-          const merged = [...prev];
-          for (const item of incoming) {
-            if (!existing.has(item.video_id)) {
-              existing.add(item.video_id);
-              merged.push(item);
-            }
-          }
-          return merged;
-        });
-      }
-
-      if (typeof payload.totalCount === 'number') {
-        setTotalVideosCount(payload.totalCount);
-      }
-      if (typeof payload.hasMore === 'boolean') {
-        setHasMoreVideos(payload.hasMore);
-      } else {
-        setHasMoreVideos(false);
-      }
-    } catch {
-      toast.error('Lỗi kết nối khi tải thêm phim.');
-    } finally {
-      setIsLoadingMoreVideos(false);
-    }
-  }, [
-    isLoadingMoreVideos,
-    isLoadingFeed,
-    hasMoreVideos,
-    viewMode,
-    videoType,
-    videos.length,
-    genreFilter,
-    showTrailers,
-    debouncedSearchQuery,
-  ]);
-
   const handleCycleVideoGenre = useCallback(
     async (video: CinemaVideoItem, nextGenre: PrimaryGenreTag) => {
-      const previousVideos = videos;
+      const previousVideos = allVideos;
 
-      setVideos((prev) =>
-        prev.map((v) =>
-          v.video_id === video.video_id
-            ? { ...v, detected_genre: nextGenre, is_manual_tag: true }
-            : v,
-        ),
+      // Tính toán optimistic seriesKey để cập nhật tức thì mọi tập cùng bộ đang hiển thị
+      const targetInfo = extractSeriesInfo({
+        videoId: video.video_id,
+        channelId: video.channel_id,
+        title: video.title,
+        channelTitle: video.channel_title,
+        seriesName: video.series_name,
+      });
+
+      setAllVideos((prev) =>
+        prev.map((v) => {
+          if (v.video_id === video.video_id) {
+            return { ...v, detected_genre: nextGenre, is_manual_tag: true };
+          }
+          if (
+            !targetInfo.isStandalone &&
+            v.channel_id === video.channel_id
+          ) {
+            const vInfo = extractSeriesInfo({
+              videoId: v.video_id,
+              channelId: v.channel_id,
+              title: v.title,
+              channelTitle: v.channel_title,
+              seriesName: v.series_name,
+            });
+            if (vInfo.seriesKey === targetInfo.seriesKey) {
+              return { ...v, detected_genre: nextGenre, is_manual_tag: true };
+            }
+          }
+          return v;
+        }),
       );
 
       try {
@@ -1170,30 +1061,47 @@ export function UnifiedCinemaWorkspace({
         });
 
         const payload = (await res.json().catch(() => ({}))) as {
+          updatedVideoIds?: string[];
+          propagatedCount?: number;
+          seriesTitle?: string;
           warning?: string | null;
           error?: string;
         };
 
         if (!res.ok) {
-          setVideos(previousVideos);
+          setAllVideos(previousVideos);
           toast.error(payload.error || 'Không thể đổi nhãn cho video.');
           return;
         }
 
+        const updatedSet = new Set(
+          payload.updatedVideoIds?.length
+            ? payload.updatedVideoIds
+            : [video.video_id],
+        );
+        const propagatedCount = payload.propagatedCount ?? updatedSet.size;
+
+        setAllVideos((prev) =>
+          prev.map((v) =>
+            updatedSet.has(v.video_id)
+              ? { ...v, detected_genre: nextGenre, is_manual_tag: true }
+              : v,
+          ),
+        );
+
         if (payload.warning) {
           toast.warning(payload.warning);
         } else {
-          toast.success(`Đã đổi nhãn thành "${nextGenre}" (đã khóa thủ công)`);
-          if (genreFilter !== 'all' && nextGenre !== genreFilter) {
-            setTotalVideosCount((prev) => Math.max(0, prev - 1));
-          }
+          toast.success(
+            `Đã cập nhật tag ${nextGenre} cho toàn bộ ${propagatedCount} tập của bộ phim`,
+          );
         }
       } catch {
-        setVideos(previousVideos);
+        setAllVideos(previousVideos);
         toast.error('Lỗi kết nối khi lưu nhãn thủ công.');
       }
     },
-    [videos, genreFilter],
+    [allVideos],
   );
 
   const handleReclassifyAll = async () => {
@@ -1218,6 +1126,7 @@ export function UnifiedCinemaWorkspace({
         changedCount?: number;
         skippedManualCount?: number;
         aiScannedCount?: number;
+        seriesScannedCount?: number;
         warning?: string | null;
         channels?: ChannelWithSelection[];
         videos?: CinemaVideoItem[];
@@ -1230,18 +1139,19 @@ export function UnifiedCinemaWorkspace({
       }
 
       if (payload.channels) setChannels(payload.channels);
-      if (viewMode === 'explore') {
-        if (payload.videos) setVideos(payload.videos);
-      } else {
-        await refreshCurrentFeed();
-      }
+      if (payload.videos) setAllVideos(payload.videos);
       router.refresh();
 
       if (payload.warning) {
         toast.warning(payload.warning);
       } else {
+        const seriesNote =
+          typeof payload.seriesScannedCount === 'number' &&
+          payload.seriesScannedCount > 0
+            ? `quét ${payload.seriesScannedCount} bộ phim và `
+            : '';
         toast.success(
-          `Gemini Vision đã phân loại lại ${payload.updatedCount ?? 0}/${payload.totalVideos ?? 0} video (đổi nhãn: ${payload.changedCount ?? 0}, khóa thủ công: ${payload.skippedManualCount ?? 0})!`,
+          `Gemini Vision đã ${seriesNote}phân loại lại ${payload.updatedCount ?? 0}/${payload.totalVideos ?? 0} video (đổi nhãn: ${payload.changedCount ?? 0}, khóa thủ công: ${payload.skippedManualCount ?? 0})!`,
         );
       }
     } catch {
@@ -1251,9 +1161,265 @@ export function UnifiedCinemaWorkspace({
     }
   };
 
+  const handleResumeContinueVideo = useCallback(
+    (video: CinemaVideoItem) => {
+      const matchedSeries = allSeriesGroups.find((s) =>
+        s.episodes.some((ep) => ep.video.video_id === video.video_id),
+      );
+      if (matchedSeries) {
+        setActiveSeriesKey(matchedSeries.seriesKey);
+      }
+      handleSelectVideo(video);
+    },
+    [allSeriesGroups, handleSelectVideo],
+  );
+
+  const handleRemoveFromContinue = useCallback(
+    async (videoId: string) => {
+      const previousVideos = allVideos;
+      setAllVideos((prev) =>
+        prev.map((v) =>
+          v.video_id === videoId
+            ? {
+                ...v,
+                progress_seconds: 0,
+                is_completed: false,
+                last_watched_at: null,
+              }
+            : v,
+        ),
+      );
+
+      if (authStatus !== 'authenticated') return;
+
+      try {
+        const res = await fetch('/api/watch-progress', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ videoId }),
+        });
+        if (!res.ok) {
+          setAllVideos(previousVideos);
+          toast.error('Không thể xóa khỏi danh sách xem tiếp.');
+        }
+      } catch {
+        setAllVideos(previousVideos);
+        toast.error('Lỗi kết nối khi xóa khỏi danh sách xem tiếp.');
+      }
+    },
+    [allVideos, authStatus],
+  );
+
+  const handleUpdateSeriesStatus = useCallback(
+    async (series: SeriesGroup, nextStatus: UserSeriesStatus | null) => {
+      const prevStatuses = seriesStatuses;
+      setSeriesStatuses((prev) => {
+        const copy = { ...prev };
+        if (nextStatus === null) {
+          delete copy[series.seriesKey];
+        } else {
+          copy[series.seriesKey] = nextStatus;
+        }
+        return copy;
+      });
+
+      try {
+        const res = await fetch('/api/series/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            channelId: series.channelId,
+            seriesKey: series.seriesKey,
+            status: nextStatus,
+          }),
+        });
+
+        const payload = (await res.json().catch(() => ({}))) as {
+          warning?: string | null;
+          error?: string;
+        };
+
+        if (!res.ok) {
+          setSeriesStatuses(prevStatuses);
+          toast.error(payload.error || 'Không thể cập nhật trạng thái bộ phim.');
+          return;
+        }
+
+        if (payload.warning) {
+          toast.warning(payload.warning);
+        } else if (nextStatus === 'following') {
+          toast.success(`⭐ Đã theo dõi & ghim "${series.seriesTitle}" lên đầu`);
+        } else if (nextStatus === 'hidden') {
+          toast.info(`Đã ẩn bộ phim "${series.seriesTitle}"`);
+        } else {
+          toast.info(`Đã khôi phục trạng thái mặc định cho "${series.seriesTitle}"`);
+        }
+      } catch {
+        setSeriesStatuses(prevStatuses);
+        toast.error('Lỗi kết nối khi lưu trạng thái bộ phim.');
+      }
+    },
+    [seriesStatuses],
+  );
+
+  // Smart Delta Sync: Quét nhanh 10 video mới nhất của các kênh đang bật (background hoặc thủ công)
+  const runDeltaSync = useCallback(
+    async (force: boolean) => {
+      if (
+        authStatus !== 'authenticated' ||
+        selectedChannelIds.size === 0 ||
+        isDeltaSyncing
+      ) {
+        return;
+      }
+
+      setIsDeltaSyncing(true);
+      try {
+        const res = await fetch('/api/channels/delta-sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ force }),
+        });
+
+        const payload = (await res.json().catch(() => ({}))) as {
+          skipped?: boolean;
+          newVideosCount?: number;
+          syncedChannelsCount?: number;
+          videos?: CinemaVideoItem[];
+          channels?: ChannelWithSelection[];
+          warning?: string | null;
+          error?: string;
+        };
+
+        if (!res.ok) {
+          if (force) {
+            toast.error(payload.error || 'Không thể kiểm tra tập mới lúc này.');
+          }
+          return;
+        }
+
+        try {
+          window.localStorage.setItem(
+            DELTA_SYNC_STORAGE_KEY,
+            String(Date.now()),
+          );
+        } catch {
+          // Ignore storage error
+        }
+
+        if (payload.channels) {
+          setChannels(payload.channels);
+        }
+        if (Array.isArray(payload.videos) && payload.videos.length > 0) {
+          setAllVideos(payload.videos);
+        }
+
+        if ((payload.newVideosCount ?? 0) > 0) {
+          toast.success(
+            `🔔 Đã cập nhật ${payload.newVideosCount} tập mới từ các kênh theo dõi!`,
+          );
+        } else if (force) {
+          toast.info('Kho phim đã ở trạng thái mới nhất!');
+        }
+      } catch {
+        if (force) {
+          toast.error('Lỗi kết nối khi kiểm tra tập mới.');
+        }
+      } finally {
+        setIsDeltaSyncing(false);
+      }
+    },
+    [authStatus, selectedChannelIds.size, isDeltaSyncing],
+  );
+
+  // Tự động chạy ngầm Smart Delta Sync khi mở app nếu đã quá >= 60 phút từ lần quét trước
+  useEffect(() => {
+    if (
+      hasTriggeredAutoDeltaRef.current ||
+      authStatus !== 'authenticated' ||
+      selectedChannelIds.size === 0
+    ) {
+      return;
+    }
+
+    hasTriggeredAutoDeltaRef.current = true;
+
+    let shouldRun = true;
+    try {
+      const raw = window.localStorage.getItem(DELTA_SYNC_STORAGE_KEY);
+      const lastTs = raw ? Number(raw) : 0;
+      if (Number.isFinite(lastTs) && lastTs > 0) {
+        if (Date.now() - lastTs < DELTA_SYNC_INTERVAL_MS) {
+          shouldRun = false;
+        }
+      }
+    } catch {
+      // Fallback sang server cooldown
+    }
+
+    if (shouldRun) {
+      void runDeltaSync(false);
+    }
+  }, [authStatus, selectedChannelIds.size, runDeltaSync]);
+
+  const handleScrollToMainStage = useCallback(() => {
+    mainScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    theaterStageRef.current?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    });
+  }, []);
+
+  const handleToggleWatchLater = useCallback(
+    async (videoId: string) => {
+      const prevList = watchLaterList;
+      const alreadySaved = prevList.includes(videoId);
+
+      setWatchLaterList((prev) =>
+        alreadySaved
+          ? prev.filter((id) => id !== videoId)
+          : [videoId, ...prev],
+      );
+
+      if (authStatus !== 'authenticated') return;
+
+      try {
+        const res = await fetch('/api/videos/watch-later', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ videoId }),
+        });
+
+        const payload = (await res.json().catch(() => ({}))) as {
+          saved?: boolean;
+          warning?: string | null;
+          error?: string;
+        };
+
+        if (!res.ok) {
+          setWatchLaterList(prevList);
+          toast.error(payload.error || 'Không thể cập nhật danh sách Xem sau.');
+          return;
+        }
+
+        if (payload.warning) {
+          toast.warning(payload.warning);
+        } else if (payload.saved) {
+          toast.success('Đã lưu vào danh sách Xem sau');
+        } else {
+          toast.info('Đã xóa khỏi danh sách Xem sau');
+        }
+      } catch {
+        setWatchLaterList(prevList);
+        toast.error('Lỗi kết nối khi lưu Xem sau.');
+      }
+    },
+    [watchLaterList, authStatus],
+  );
+
   const handleSummaryGenerated = useCallback(
     (videoId: string, aiSummary: string) => {
-      setVideos((prev) =>
+      setAllVideos((prev) =>
         prev.map((v) =>
           v.video_id === videoId ? { ...v, ai_summary: aiSummary } : v,
         ),
@@ -1272,6 +1438,7 @@ export function UnifiedCinemaWorkspace({
         isVaultOpen={isVaultOpen}
         onOpenVault={() => setIsVaultOpen(true)}
         selectedChannelCount={selectedChannelIds.size}
+        watchLaterCount={watchLaterList.length}
         authStatus={authStatus}
         isAdmin={isAdmin}
         pendingRequestsCount={pendingRequestsCount}
@@ -1294,6 +1461,15 @@ export function UnifiedCinemaWorkspace({
               video={activeVideo}
               nextVideo={nextVideo}
               activeSeries={activeSeries}
+              activeSeriesStatus={
+                activeSeries
+                  ? (seriesStatuses[activeSeries.seriesKey] ?? null)
+                  : null
+              }
+              onUpdateSeriesStatus={handleUpdateSeriesStatus}
+              isWatchLater={watchLaterSet.has(activeVideo.video_id)}
+              onToggleWatchLater={handleToggleWatchLater}
+              onScrollToMainStage={handleScrollToMainStage}
               isChannelSubscribed={selectedChannelIds.has(
                 activeVideo.channel_id,
               )}
@@ -1316,11 +1492,15 @@ export function UnifiedCinemaWorkspace({
               searchQuery={searchQuery}
               onChangeSearch={setSearchQuery}
               videoType={videoType}
-              onChangeVideoType={setVideoType}
+              onChangeVideoType={handleChangeVideoType}
               showTrailers={showTrailers}
               onToggleTrailers={setShowTrailers}
               genreFilter={genreFilter}
               onChangeGenreFilter={setGenreFilter}
+              sortBy={sortBy}
+              onChangeSortBy={setSortBy}
+              onlyUnwatched={onlyUnwatched}
+              onToggleOnlyUnwatched={setOnlyUnwatched}
               isRealtimeConnected={authStatus === 'authenticated'}
               totalMatchingVideos={
                 viewMode === 'cinema' && videoType === 'episode'
@@ -1330,9 +1510,28 @@ export function UnifiedCinemaWorkspace({
               exploreKeywords={exploreKeywords}
               isLoadingExplore={isLoadingExplore}
               onRefreshExplore={() => void loadExploreFeed(true)}
+              isDeltaSyncing={isDeltaSyncing}
+              onTriggerDeltaSync={
+                authStatus === 'authenticated' && selectedChannelIds.size > 0
+                  ? () => void runDeltaSync(true)
+                  : undefined
+              }
             />
           )}
         </div>
+
+        {/* Thanh "Xem Tiếp" (Continue Watching Shelf) ngay dưới Command Hub ở tab Tất cả & Tập mới */}
+        {!activeVideo &&
+          authStatus === 'authenticated' &&
+          viewMode === 'cinema' &&
+          (videoType === 'all' || videoType === 'episode') &&
+          continueWatchingVideos.length > 0 && (
+            <ContinueWatchingShelf
+              videos={continueWatchingVideos}
+              onResumeVideo={handleResumeContinueVideo}
+              onRemoveFromContinue={handleRemoveFromContinue}
+            />
+          )}
 
         {authStatus === 'authenticated' &&
         viewMode === 'cinema' &&
@@ -1342,15 +1541,10 @@ export function UnifiedCinemaWorkspace({
             seriesList={filteredSeriesGroups}
             activeSeriesKey={activeSeriesKey}
             totalEpisodesCount={totalSeriesEpisodesCount}
-            totalVideosCount={totalVideosCount}
-            hasMoreVideos={hasMoreVideos}
-            hasMoreYouTubeHistory={hasMoreYouTubeHistory}
-            isLoadingFeed={isLoadingFeed}
-            isLoadingMoreVideos={isLoadingMoreVideos}
-            isFetchingYouTubeHistory={isFetchingYouTubeHistory}
+            seriesStatuses={seriesStatuses}
+            sortBy={sortBy}
             onSelectSeries={handleSelectSeries}
-            onLoadMoreVideos={handleLoadMoreFeedVideos}
-            onFetchMoreFromYouTube={handleFetchMoreFromYouTube}
+            onUpdateSeriesStatus={handleUpdateSeriesStatus}
             onOpenVault={() => setIsVaultOpen(true)}
           />
         ) : (
@@ -1361,32 +1555,33 @@ export function UnifiedCinemaWorkspace({
             activeVideoId={activeVideo?.video_id ?? null}
             viewMode={viewMode}
             isLoadingExplore={isLoadingExplore}
+            hasMoreExplore={hasMoreExplore}
+            isLoadingMoreExplore={isLoadingMoreExplore}
+            onLoadMoreExplore={handleLoadMoreExplore}
             selectedChannelIds={selectedChannelIds}
+            watchLaterIds={watchLaterSet}
             subscribingChannelId={subscribingChannelId}
-            totalVideosCount={totalVideosCount}
-            hasMoreVideos={hasMoreVideos}
-            hasMoreYouTubeHistory={hasMoreYouTubeHistory}
-            isLoadingFeed={isLoadingFeed}
-            isLoadingMoreVideos={isLoadingMoreVideos}
-            isFetchingYouTubeHistory={isFetchingYouTubeHistory}
-            onLoadMoreVideos={handleLoadMoreFeedVideos}
-            onFetchMoreFromYouTube={handleFetchMoreFromYouTube}
             sectionHeading={
               viewMode === 'explore'
                 ? 'Khám phá YouTube — Kênh mới hợp gu của bạn'
-                : activeVideo
-                  ? `Đề xuất cùng thể loại [${activeVideo.detected_genre ?? 'HH2D'}] & Tập tiếp theo`
-                  : undefined
+                : viewMode === 'watch_later'
+                  ? `Danh sách Xem sau (${watchLaterList.length})`
+                  : activeVideo
+                    ? `Đề xuất cùng thể loại [${activeVideo.detected_genre ?? 'HH2D'}] & Tập tiếp theo`
+                    : undefined
             }
             sectionSubtitle={
               viewMode === 'explore'
                 ? 'Gợi ý cá nhân hóa từ lịch sử xem & Like YouTube (đã lọc bỏ Shorts, ưu tiên kênh chưa theo dõi)'
-                : activeVideo
-                  ? 'Ưu tiên tập kế tiếp cùng bộ/kênh, theo sau là gợi ý cùng thể loại đã làm mới ngẫu nhiên'
-                  : undefined
+                : viewMode === 'watch_later'
+                  ? 'Các video bạn đã đánh dấu lưu lại để cày sau — bấm biểu tượng Bookmark để gỡ sau khi xem xong'
+                  : activeVideo
+                    ? 'Ưu tiên tập kế tiếp cùng bộ/kênh, theo sau là gợi ý cùng thể loại đã làm mới ngẫu nhiên'
+                    : undefined
             }
             onSelectVideo={handleSelectVideo}
             onCycleVideoGenre={handleCycleVideoGenre}
+            onToggleWatchLater={handleToggleWatchLater}
             onSubscribeChannel={handleSubscribeChannel}
             onOpenVault={() => setIsVaultOpen(true)}
             onTriggerGoogleSignIn={handleNavigateLogin}

@@ -66,3 +66,39 @@ export async function POST(request: Request) {
     lastWatchedAt: nowIso,
   });
 }
+
+export async function DELETE(request: Request) {
+  const auth = await verifyWhitelistedUser();
+  if (!auth.allowed || !auth.userId) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  let body: { videoId?: string };
+  try {
+    body = (await request.json()) as { videoId?: string };
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
+
+  const videoId = body.videoId?.trim();
+  if (!videoId) {
+    return NextResponse.json({ error: 'Thiếu videoId.' }, { status: 400 });
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from('watch_progress')
+    .delete()
+    .eq('user_id', auth.userId)
+    .eq('video_id', videoId);
+
+  if (error) {
+    console.error('[AniSub WatchProgress] Lỗi xóa tiến độ:', error);
+    return NextResponse.json(
+      { error: 'Không thể xóa khỏi danh sách xem tiếp.' },
+      { status: 500 },
+    );
+  }
+
+  return NextResponse.json({ videoId, removed: true });
+}

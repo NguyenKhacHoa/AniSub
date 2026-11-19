@@ -1,7 +1,17 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
-import { Search, Radio, X, Compass, Film, RefreshCw, Sparkles } from 'lucide-react';
+import {
+  Search,
+  Radio,
+  X,
+  Compass,
+  Film,
+  RefreshCw,
+  Sparkles,
+  ArrowUpDown,
+  EyeOff,
+} from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
@@ -9,6 +19,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   GENRE_DOT_STYLES,
   type GenreFilter,
+  type SortOption,
   type VideoTypeFilter,
   type WorkspaceViewMode,
 } from '@/types/workspace';
@@ -24,17 +35,29 @@ interface CommandHubProps {
   onToggleTrailers: (checked: boolean) => void;
   genreFilter: GenreFilter;
   onChangeGenreFilter: (genre: GenreFilter) => void;
+  sortBy?: SortOption;
+  onChangeSortBy?: (sort: SortOption) => void;
+  onlyUnwatched?: boolean;
+  onToggleOnlyUnwatched?: (checked: boolean) => void;
   isRealtimeConnected?: boolean;
   totalMatchingVideos: number;
   exploreKeywords?: string[];
   isLoadingExplore?: boolean;
   onRefreshExplore?: () => void;
+  isDeltaSyncing?: boolean;
+  onTriggerDeltaSync?: () => void;
 }
 
 const GENRE_PILLS: Array<{ value: GenreFilter; label: string }> = [
   { value: 'all', label: 'Tất cả thể loại' },
   { value: 'Phim AI', label: 'Phim AI' },
   { value: 'HH2D', label: 'HH2D' },
+];
+
+const SORT_OPTIONS: Array<{ value: SortOption; label: string }> = [
+  { value: 'newest', label: 'Mới nhất' },
+  { value: 'longest', label: 'Dài nhất' },
+  { value: 'title_asc', label: 'Tên A-Z' },
 ];
 
 export function CommandHub({
@@ -48,11 +71,17 @@ export function CommandHub({
   onToggleTrailers,
   genreFilter,
   onChangeGenreFilter,
+  sortBy = 'newest',
+  onChangeSortBy,
+  onlyUnwatched = false,
+  onToggleOnlyUnwatched,
   isRealtimeConnected = true,
   totalMatchingVideos,
   exploreKeywords = [],
   isLoadingExplore = false,
   onRefreshExplore,
+  isDeltaSyncing = false,
+  onTriggerDeltaSync,
 }: CommandHubProps) {
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -266,15 +295,83 @@ export function CommandHub({
                 </button>
               );
             })}
+
+            {/* Bộ chọn Sắp xếp nhanh (Mới nhất / Dài nhất / Tên A-Z) */}
+            {onChangeSortBy && (
+              <div
+                role="group"
+                aria-label="Sắp xếp danh sách phim"
+                className="inline-flex h-8 items-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] p-0.5"
+              >
+                <ArrowUpDown className="mx-1.5 size-3.5 shrink-0 text-[var(--text-secondary)]" />
+                {SORT_OPTIONS.map((opt) => {
+                  const active = sortBy === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => onChangeSortBy(opt.value)}
+                      className={`h-6 rounded-md px-2 text-xs font-medium transition-colors cursor-pointer ${
+                        active
+                          ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] shadow-xs'
+                          : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Nút lọc nhanh Chưa xem (ẩn phim đã xem >= 90%) */}
+            {onToggleOnlyUnwatched && (
+              <button
+                type="button"
+                aria-pressed={onlyUnwatched}
+                onClick={() => onToggleOnlyUnwatched(!onlyUnwatched)}
+                title="Ẩn các phim hoặc bộ phim đã xem xong (>= 90%)"
+                className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors cursor-pointer ${
+                  onlyUnwatched
+                    ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                    : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                <EyeOff className="size-3.5 shrink-0" />
+                <span>Chưa xem</span>
+              </button>
+            )}
           </div>
         )}
 
-        <span className="text-xs tabular-nums text-[var(--text-secondary)]">
-          <strong className="font-semibold text-[var(--text-primary)]">
-            {totalMatchingVideos}
-          </strong>{' '}
-          {isExplore ? 'video đề xuất' : 'khe phim sẵn sàng'}
-        </span>
+        <div className="flex items-center gap-2.5">
+          {!isExplore && onTriggerDeltaSync && (
+            <button
+              type="button"
+              disabled={isDeltaSyncing}
+              onClick={onTriggerDeltaSync}
+              title="Quét nhanh 10 video mới nhất của các kênh đang bật"
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 text-xs font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--accent-primary)]/50 hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] disabled:opacity-60 cursor-pointer"
+            >
+              <RefreshCw
+                className={`size-3.5 text-[var(--accent-primary)] ${
+                  isDeltaSyncing ? 'animate-spin' : ''
+                }`}
+              />
+              <span>
+                {isDeltaSyncing ? 'Đang quét tập mới...' : 'Cập nhật tập mới'}
+              </span>
+            </button>
+          )}
+
+          <span className="text-xs tabular-nums text-[var(--text-secondary)]">
+            <strong className="font-semibold text-[var(--text-primary)]">
+              {totalMatchingVideos}
+            </strong>{' '}
+            {isExplore ? 'video đề xuất' : 'khe phim sẵn sàng'}
+          </span>
+        </div>
       </div>
     </section>
   );
