@@ -45,7 +45,8 @@ Tất cả các API dữ liệu người dùng đều bắt buộc đi qua kiể
 | `/api/videos` | `GET` | Trả về 100% toàn bộ video khớp ngữ cảnh bằng truy vấn phân đoạn `.range()` theo từng lô 1.000 dòng (không giới hạn `limit=60`). |
 | `/api/workspace` | `GET` | Tải danh sách kênh + 100% kho video (`loadWorkspaceDataForUser`). |
 | `/api/youtube/sync-channels` | `POST` | Đồng bộ danh sách kênh YouTube của user (`subscriptions.list`, cooldown 6 giờ ở production). |
-| `/api/channels/toggle` | `POST` | Bật/tắt kênh, cập nhật đa nhãn `genre_tags` (`Phim AI` / `HH2D`), chạy `syncAllChannelVideos` kéo trọn vẹn 100% video từ Tập 1 đến Tập mới nhất (Series-Aware AI). |
+| `/api/channels/toggle` | `POST` | Bật/tắt kênh, cập nhật đa nhãn `genre_tags` (`Phim AI` / `HH2D` / `2D`), chạy `syncAllChannelVideos` tôn trọng Tầng 1 (`channels.default_category` Channel Master Lock + Series Inheritance) trước khi gọi Tầng 2. |
+| `/api/channels/default-category` | `POST` | **Tầng 1 (Channel Master Lock):** Khóa danh mục mặc định của kênh (`AUTO` | `HH2D` | `2D` | `PHIM_AI`) trong `public.channels.default_category` và tự động đồng bộ toàn bộ video chưa khóa tay của kênh đó. |
 | `/api/channels/load-more` | `POST` | Chạy `syncAllChannelVideos` đồng bộ trọn vẹn lịch sử video của 1 kênh. |
 | `/api/channels/delta-sync` | `POST` | Smart Delta Sync: quét nhanh 10 video mới nhất (`maxResults=10`, 1 điểm quota/kênh) của các kênh đang bật (tự động chạy ngầm khi qua ≥ 60 phút hoặc chạy chủ động `force: true`), tự động phân loại Series-Aware và trả về kho cập nhật. |
 | `/api/series/status` | `POST` | Lưu/xóa trạng thái `following` (⭐ Theo dõi), `completed` hoặc `hidden` (Ẩn bớt) cho từng bộ phim trong `public.user_series_status`. |

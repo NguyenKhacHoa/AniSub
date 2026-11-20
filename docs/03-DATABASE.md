@@ -64,15 +64,17 @@ CREATE TABLE public.channels (
   thumbnail_url TEXT,
   custom_url TEXT,
   is_subscribed BOOLEAN DEFAULT FALSE, -- FALSE cho các kênh phát hiện tự động từ kho Phim Chiếu Rạp để không làm rác danh sách kênh cá nhân
+  default_category TEXT DEFAULT 'AUTO', -- Khóa danh mục cấp kênh Tầng 1: 'AUTO' | 'HH2D' | '2D' | 'PHIM_AI'
   websub_status TEXT DEFAULT 'pending', -- 'pending' | 'active' | 'expired'
   websub_expires_at TIMESTAMPTZ,
   next_page_token TEXT, -- Token phân trang YouTube playlistItems để kéo thêm 50 video cũ
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Migration bổ sung cột next_page_token và is_subscribed cho DB đã khởi tạo trước đó:
+-- Migration bổ sung cột next_page_token, is_subscribed và default_category cho DB đã khởi tạo trước đó:
 -- ALTER TABLE public.channels ADD COLUMN IF NOT EXISTS next_page_token TEXT;
 -- ALTER TABLE public.channels ADD COLUMN IF NOT EXISTS is_subscribed BOOLEAN DEFAULT FALSE;
+-- ALTER TABLE public.channels ADD COLUMN IF NOT EXISTS default_category TEXT DEFAULT 'AUTO';
 
 ALTER TABLE public.channels ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Authenticated users can read channels"

@@ -58,7 +58,10 @@ AniSub là rạp chiếu phim riêng tư dành cho chủ sở hữu và nhóm b�
 4. Ở cột phải (**Kênh đang kích hoạt**), gắn nhãn thể loại cho từng kênh bằng 2 nút Pill:
    - **Chọn 1 nhãn (`Phim AI` hoặc `HH2D`):** Gán thẳng 100% video của kênh theo nhãn đó.
    - **Chọn cả 2 nhãn (`Phim AI` + `HH2D`):** Gemini Vision tự động phân tích ảnh bìa theo từng bộ phim (1 đại diện / 1 Series) để tách chuẩn xác `Phim AI` (đồ họa tả thực/3D AI không viền mực) và `HH2D` (tranh vẽ 2D/Manhua có nét viền lineart), đồng thời nhận diện cờ `isMovie` cho các bản điện ảnh chiếu rạp.
-5. **Đổi tag 1 chạm lan truyền cả bộ:** Nếu thấy AI nhận diện nhầm một tập nào đó, chỉ cần bấm trực tiếp vào nhãn `Phim AI` / `HH2D` trên thẻ phim — AniSub sẽ tự động đổi tag và khóa thủ công cho **toàn bộ các tập cùng bộ phim đó**.
+5. **Hệ thống Phân loại Chuẩn xác 3 Tầng (Channel Lock + Series Inheritance + TMDB/AniList Grounding):**
+   - Trong `Channel Vault Drawer`, có thể chọn **Khóa kênh (`AUTO` | `HH2D` | `2D` | `PHIM_AI`)** để 100% video mới từ kênh đó nhận đúng phân loại mà không bị AI đoán lệch tập, hoặc bấm **"Chạy lại chuẩn hóa phân loại"** cho toàn bộ kho phim.
+   - Khi đổi tag 1 chạm trên thẻ phim, AniSub cập nhật Optimistic UI 0ms cho toàn bộ các tập cùng bộ phim và gợi ý nút **"Áp dụng cho cả kênh"** (Smart Learn on Manual Fix).
+   - Riêng mục **Phim Chiếu Rạp** bắt buộc đối chiếu tên gốc trên **TMDB / AniList / IMDb** qua Google Search Grounding, gắn chuẩn `Anime / Hoạt hình` hoặc `Phim Người Đóng` cùng tối đa 2 thể loại an toàn.
 
 ## 4. Cày phim chuẩn rạp chiếu trên Unified Cinema Workspace
 

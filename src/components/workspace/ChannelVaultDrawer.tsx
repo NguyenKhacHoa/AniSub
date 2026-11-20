@@ -21,8 +21,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import {
+  CHANNEL_DEFAULT_CATEGORIES,
   GENRE_DOT_STYLES,
   PRIMARY_GENRE_OPTIONS,
+  type ChannelDefaultCategory,
   type ChannelWithSelection,
   type PrimaryGenreTag,
 } from '@/types/workspace';
@@ -72,6 +74,10 @@ interface ChannelVaultDrawerProps {
   onReclassifyAll: () => void;
   onToggleChannel: (channelId: string, nextSelected: boolean) => void;
   onToggleChannelGenreTag: (channelId: string, tag: PrimaryGenreTag) => void;
+  onChangeChannelDefaultCategory?: (
+    channelId: string,
+    defaultCategory: ChannelDefaultCategory,
+  ) => void;
   onReclassifyChannel: (channelId: string) => void;
   onLoadMoreChannelVideos: (channelId: string) => void;
   onQuickAddChannel?: (
@@ -80,6 +86,13 @@ interface ChannelVaultDrawerProps {
     genreTags?: PrimaryGenreTag[],
   ) => Promise<void> | void;
 }
+
+const DEFAULT_CATEGORY_LABELS: Record<ChannelDefaultCategory, string> = {
+  AUTO: 'Tự động (AUTO)',
+  HH2D: 'Khóa HH2D',
+  '2D': 'Khóa 2D',
+  PHIM_AI: 'Khóa Phim AI',
+};
 
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 
@@ -96,6 +109,7 @@ export function ChannelVaultDrawer({
   onReclassifyAll,
   onToggleChannel,
   onToggleChannelGenreTag,
+  onChangeChannelDefaultCategory,
   onReclassifyChannel,
   onLoadMoreChannelVideos,
   onQuickAddChannel,
@@ -223,8 +237,8 @@ export function ChannelVaultDrawer({
                 )}
                 <span>
                   {isReclassifyingAll
-                    ? 'Đang quét AI...'
-                    : 'Quét lại nhãn AI'}
+                    ? 'Đang chuẩn hóa...'
+                    : 'Chạy lại chuẩn hóa phân loại'}
                 </span>
               </Button>
             )}
@@ -568,7 +582,47 @@ export function ChannelVaultDrawer({
                           </div>
                         </div>
 
-                        {/* Cụm 3 nút Pill bật/tắt nhiều lựa chọn + Nút Quét AI lại */}
+                        {/* Tầng 1 (Channel Master Lock): Khóa danh mục mặc định theo kênh (`AUTO` | `HH2D` | `2D` | `PHIM_AI`) */}
+                        {onChangeChannelDefaultCategory && (
+                          <div className="flex flex-wrap items-center gap-1.5 border-t border-[var(--border-subtle)] pt-2.5">
+                            <span className="text-[11px] font-medium text-[var(--text-secondary)]">
+                              Khóa kênh:
+                            </span>
+                            {CHANNEL_DEFAULT_CATEGORIES.map((cat) => {
+                              const currentCat: ChannelDefaultCategory =
+                                ch.default_category &&
+                                CHANNEL_DEFAULT_CATEGORIES.includes(
+                                  ch.default_category,
+                                )
+                                  ? ch.default_category
+                                  : 'AUTO';
+                              const active = currentCat === cat;
+                              return (
+                                <button
+                                  key={cat}
+                                  type="button"
+                                  disabled={isBusy}
+                                  aria-pressed={active}
+                                  onClick={() =>
+                                    onChangeChannelDefaultCategory(
+                                      ch.channel_id,
+                                      cat,
+                                    )
+                                  }
+                                  className={`inline-flex h-7 items-center rounded-md border px-2 text-[11px] font-medium transition-colors cursor-pointer disabled:opacity-60 ${
+                                    active
+                                      ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
+                                      : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+                                  }`}
+                                >
+                                  {DEFAULT_CATEGORY_LABELS[cat]}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Cụm nút Pill Multi-Tag + Nút Đồng bộ đủ video / Quét AI lại */}
                         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border-subtle)] pt-2.5">
                           <div
                             role="group"

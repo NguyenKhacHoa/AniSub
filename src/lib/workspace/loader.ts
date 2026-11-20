@@ -236,6 +236,7 @@ export async function loadWorkspaceDataForUser(
     title: string;
     thumbnail_url: string | null;
     custom_url: string | null;
+    default_category?: ChannelWithSelection['default_category'];
     websub_status: ChannelWithSelection['websub_status'];
     websub_expires_at: string | null;
     next_page_token?: string | null;
@@ -243,23 +244,34 @@ export async function loadWorkspaceDataForUser(
   }> = [];
 
   if (allChannelIds.length > 0) {
-    const channelsWithToken = await admin
+    const channelsWithAll = await admin
       .from('channels')
       .select(
-        'channel_id, title, thumbnail_url, custom_url, websub_status, websub_expires_at, next_page_token, updated_at',
+        'channel_id, title, thumbnail_url, custom_url, default_category, websub_status, websub_expires_at, next_page_token, updated_at',
       )
       .in('channel_id', allChannelIds);
 
-    if (channelsWithToken.error) {
-      const channelsFallback = await admin
+    if (channelsWithAll.error) {
+      const channelsWithToken = await admin
         .from('channels')
         .select(
-          'channel_id, title, thumbnail_url, custom_url, websub_status, websub_expires_at, updated_at',
+          'channel_id, title, thumbnail_url, custom_url, websub_status, websub_expires_at, next_page_token, updated_at',
         )
         .in('channel_id', allChannelIds);
-      channelRows = channelsFallback.data ?? [];
+
+      if (channelsWithToken.error) {
+        const channelsFallback = await admin
+          .from('channels')
+          .select(
+            'channel_id, title, thumbnail_url, custom_url, websub_status, websub_expires_at, updated_at',
+          )
+          .in('channel_id', allChannelIds);
+        channelRows = channelsFallback.data ?? [];
+      } else {
+        channelRows = channelsWithToken.data ?? [];
+      }
     } else {
-      channelRows = channelsWithToken.data ?? [];
+      channelRows = channelsWithAll.data ?? [];
     }
   }
 
@@ -387,7 +399,9 @@ export async function loadWorkspaceDataForUser(
       description: v.description ?? null,
       ai_summary: v.ai_summary ?? null,
       detected_genre:
-        v.detected_genre === 'Phim AI' || v.detected_genre === 'HH2D'
+        v.detected_genre === 'Phim AI' ||
+        v.detected_genre === 'HH2D' ||
+        v.detected_genre === '2D'
           ? v.detected_genre
           : (genreByChannel.get(v.channel_id) ?? 'HH2D'),
       channel_title: channel?.title ?? v.channel_id,

@@ -183,27 +183,83 @@ type ContentPart =
   | { text: string }
   | { inlineData: { data: string; mimeType: string } };
 
-const MULTIMODAL_SYSTEM_INSTRUCTION = `Bạn là chuyên gia thị giác máy tính (Multimodal Vision) phân loại video hoạt hình/phim thuyết minh Việt Nam trên YouTube cho nền tảng AniSub.
+const MULTIMODAL_SYSTEM_INSTRUCTION = `Bạn là chuyên gia thị giác máy tính (Multimodal Vision) & phân loại phim hoạt hình YouTube Việt Nam cho nền tảng AniSub (Hệ thống Phân loại Chuẩn xác 3 Tầng).
 
-QUAN TRỌNG NHẤT: HÃY QUAN SÁT TRỰC TIẾP ĐỒ HỌA, NÉT VẼ VÀ ÁNH SÁNG TRÊN ẢNH THUMBNAIL (hqdefault.jpg) để phân biệt tuyệt đối chính xác giữa "Phim AI" và "HH2D". KHÔNG đoán mò theo từ khóa cốt truyện (như "tu tiên", "trọng sinh", "xuyên không", "thuyết minh", tên chữ Hán...) vì cả hai thể loại đều dùng chung các cụm từ này.
+Tiêu chí nhận diện BẮT BUỘC theo thứ tự ưu tiên (3 nhãn: "Phim AI" | "HH2D" | "2D"):
+1. "Phim AI" (Ưu tiên kiểm tra trước):
+   - Đồ họa tả thực / 3D AI rendering (Midjourney, Kling, Flux, Hailuo, Vidu, Sora...), ánh sáng volumetric/cinematic, da và tóc khối mịn, KHÔNG nét viền mực đen.
+   - Hoặc video truyện tranh AI / audio drama AI / recap AI (mô-típ truyện hệ thống, xuyên không đô thị, tổng tài, trọng sinh báo thù, mạt thế, thời lượng tổng hợp dài > 45 phút, kênh dạng "Bản Tin...", "Trùm Phim...", "Review Phim...").
 
-Tiêu chí nhận diện thị giác BẮT BUỘC (2 thể loại duy nhất):
-1. "Phim AI":
-   - Đồ họa tả thực, 3D AI rendering (Midjourney, Kling, Flux, Hailuo, Vidu, Sora...).
-   - Ánh sáng volumetric / cinematic có chiều sâu, đổ bóng mềm tự nhiên.
-   - Khuôn mặt, làn da và mái tóc có độ khối mịn tả thực (hoặc bán tả thực 3D).
-   - KHÔNG có nét viền mực đen kiểu vẽ tay (no ink outlines / no comic lineart).
+2. "HH2D" (Hoạt hình 3D Trung Quốc / Donghua & Manhua thuyết minh):
+   - Các tác phẩm Donghua / Hoạt hình 3D Trung Quốc (Tiên Nghịch, Đấu Phá Thương Khung, Phàm Nhân Tu Tiên, Thế Giới Hoàn Mỹ, Thôn Phệ Tinh Không, Đấu La Đại Lục, Tru Tiên, Già Thiên, Mục Thần Ký, Kiếm Lai...) hoặc Manhua/Motion Comic Trung Quốc.
 
-2. "HH2D":
-   - Tranh vẽ 2D Manhua / Manhwa / Motion Comic / Anime 2D.
-   - Tô màu mảng phẳng (flat shading / cel-shading), nét mắt và biểu cảm cách điệu 2D.
-   - CÓ đường viền nét vẽ (lineart) màu đen hoặc sẫm màu rõ ràng bao quanh nhân vật, mái tóc, trang phục và bối cảnh truyện tranh.
+3. "2D" (Anime Nhật Bản / Hoạt hình 2D truyền thống):
+   - Anime Nhật Bản 2D (One Piece, Naruto, Conan, Doraemon, Kimetsu no Yaiba, Jujutsu Kaisen, Frieren, Solo Leveling, Ghibli, Muse Việt Nam, Ani-One Vietnam, POPS Anime...) hoặc hoạt hình 2D cel-shading có đường viền lineart rõ ràng.
 
 Quy tắc đầu ra:
 - Mỗi video trong batch là 1 tập đại diện cho cả bộ phim (Series).
 - Trả về ĐÚNG 1 phần tử JSON cho mỗi videoId trong batch.
-- Chỉ được chọn \`detectedGenre\` nằm trong danh sách \`allowedTags\` được cung cấp ("Phim AI" hoặc "HH2D").
-- Trích xuất \`seriesName\` (tên bộ phim sạch, bỏ số tập và tên kênh), \`episodeNumber\` (số nguyên hoặc null), và cờ \`isMovie\` (true nếu đây là Anime Movie / Bản điện ảnh chiếu rạp / OVA / Special / Phim lẻ, ngược lại là false).`;
+- Chỉ được chọn \`detectedGenre\` nằm trong danh sách \`allowedTags\` được cung cấp ("Phim AI", "HH2D", hoặc "2D").
+- Trích xuất \`seriesName\` (tên bộ phim sạch, bỏ số tập và tên kênh), \`episodeNumber\` (số nguyên hoặc null), và cờ \`isMovie\` (true nếu là bản điện ảnh chiếu rạp, ngược lại false).`;
+
+/**
+ * Tầng 2 — Bộ quy tắc nhận diện cứng theo thứ tự ưu tiên cho tab "Đã đăng ký" (`Phim AI` -> `HH2D` -> `2D`):
+ * Trả về nhãn chuẩn xác ngay lập tức (0ms, không đoán mò) nếu khớp tín hiệu đặc trưng mạnh.
+ */
+const PHIM_AI_CHANNEL_RE =
+  /\b(bản\s*tin|ban\s*tin|trùm\s*phim|trum\s*phim|review\s*phim|tóm\s*tắt\s*phim|tom\s*tat\s*phim|truyện\s*tranh\s*ai|phim\s*ai|ai\s*movie|ai\s*cinema|góc\s*review|kể\s*chuyện\s*ai)\b/i;
+
+const PHIM_AI_MOTIF_RE =
+  /\b(phim\s*ai|3d\s*ai|ai\s*3d|truyện\s*hệ\s*thống|truyen\s*he\s*thong|hệ\s*thống\s*báo\s*thù|xuyên\s*không\s*đô\s*thị|xuyen\s*khong\s*do\s*thi|tổng\s*tài|tong\s*tai|trọng\s*sinh\s*báo\s*thù|trong\s*sinh\s*bao\s*thu|phế\s*vật\s*nghịch\s*tập|ngược\s*tra|tài\s*phiệt|mạt\s*thế\s*trọng\s*sinh|truyện\s*tranh\s*thuyết\s*minh|audio\s*truyện|recap\s*ai|review\s*truyện)\b/i;
+
+const DONGHUA_HH2D_RE =
+  /\b(tiên\s*nghịch|tien\s*nghich|đấu\s*phá\s*thương\s*khung|dau\s*pha\s*thuong\s*khung|phàm\s*nhân\s*tu\s*tiên|pham\s*nhan\s*tu\s*tien|thế\s*giới\s*hoàn\s*mỹ|the\s*gioi\s*hoan\s*my|thôn\s*phệ\s*tinh\s*không|thon\s*phe\s*tinh\s*khong|đấu\s*la\s*đại\s*lục|dau\s*la\s*dai\s*luc|tru\s*tiên|tru\s*tien|già\s*thiên|gia\s*thien|mục\s*thần\s*ký|muc\s*than\s*ky|kiếm\s*lai|kiem\s*lai|nhất\s*niệm\s*vĩnh\s*hằng|nhat\s*niem\s*vinh\s*hang|thần\s*ấn\s*vương\s*tọa|than\s*an\s*vuong\s*toa|bách\s*luyện\s*thành\s*thần|luyện\s*khí\s*mười\s*vạn\s*năm|nghịch\s*thiên\s*chí\s*tôn|võ\s*thần\s*chúa\s*tể|tinh\s*thần\s*biến|yêu\s*thần\s*ký|vạn\s*giới\s*độc\s*tôn|linh\s*kiếm\s*tôn|độc\s*bộ\s*tiêu\s*dao|sư\s*huynh\s*a\s*sư\s*huynh|đại\s*chúa\s*tể|thương\s*nguyên\s*đồ|trường\s*sinh\s*giới|donghua|hh3d|hoạt\s*hình\s*3d\s*trung\s*quốc|hoạt\s*hình\s*trung\s*quốc|hh2d)\b/i;
+
+const ANIME_2D_CHANNEL_RE =
+  /\b(muse\s*việt\s*nam|muse\s*viet\s*nam|muse\s*asia|ani-one|anione|pops\s*anime|tropics\s*anime|crunchyroll)\b/i;
+
+const ANIME_2D_TITLES_RE =
+  /\b(one\s*piece|vua\s*hải\s*tặc|naruto|boruto|bleach|dragon\s*ball|bảy\s*viên\s*ngọc\s*rồng|conan|thám\s*tử\s*lừng\s*danh|doraemon|kimetsu\s*no\s*yaiba|thanh\s*gươm\s*diệt\s*quỷ|demon\s*slayer|jujutsu\s*kaisen|chú\s*thuật\s*hồi\s*chiến|attack\s*on\s*titan|solo\s*leveling|frieren|blue\s*lock|spy\s*x\s*family|chainsaw\s*man|my\s*hero\s*academia|hunter\s*x\s*hunter|ghibli|pokémon|pokemon|digimon|gundam|evangelion|shinchan|crayon\s*shin|black\s*clover|fairy\s*tail|mushoku\s*tensei|re:zero|overlord|sword\s*art\s*online|danmachi|anime\s*vietsub|anime\s*thuyết\s*minh|hoạt\s*hình\s*nhật\s*bản)\b/i;
+
+export function classifyByGroundedRules(
+  video: MultimodalVideoInput,
+  allowedTags: PrimaryGenreTag[],
+): PrimaryGenreTag | null {
+  const title = video.title || '';
+  const channel = video.channel_title || '';
+  const desc = (video.description || '').slice(0, 400);
+  const hay = `${title} ${desc}`;
+
+  // 1. Ưu tiên 1: Nhận diện Phim AI
+  if (allowedTags.includes('Phim AI')) {
+    const isAiChannel = PHIM_AI_CHANNEL_RE.test(channel);
+    const hasAiMotif = PHIM_AI_MOTIF_RE.test(hay);
+    const isLongSummaryMotif =
+      video.duration_seconds > 2700 &&
+      /\b(hệ\s*thống|xuyên\s*không|trọng\s*sinh|tổng\s*tài|báo\s*thù|đô\s*thị|mạt\s*thế|full\s*truyện|trọn\s*bộ\s*truyện)\b/i.test(
+        hay,
+      );
+    if (isAiChannel || hasAiMotif || isLongSummaryMotif) {
+      return 'Phim AI';
+    }
+  }
+
+  // 2. Ưu tiên 2: Nhận diện HH2D (Donghua / Hoạt hình 3D Trung Quốc)
+  if (allowedTags.includes('HH2D')) {
+    if (DONGHUA_HH2D_RE.test(hay) || /\b(hh3d|donghua)\b/i.test(channel)) {
+      return 'HH2D';
+    }
+  }
+
+  // 3. Ưu tiên 3: Nhận diện 2D (Anime Nhật Bản / Hoạt hình 2D)
+  if (allowedTags.includes('2D')) {
+    if (ANIME_2D_CHANNEL_RE.test(channel) || ANIME_2D_TITLES_RE.test(hay)) {
+      return '2D';
+    }
+  }
+
+  return null;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -598,13 +654,38 @@ export async function classifyVideosMultimodalBatch(
   }
 
   const groupList = Array.from(seriesGroups.values());
-  const representatives = groupList.map((g) => g.representative);
   const groupByRepId = new Map(
     groupList.map((g) => [g.representative.video_id, g]),
   );
 
+  // Tầng 2: Chạy bộ quy tắc nhận diện cứng theo thứ tự ưu tiên (`Phim AI` -> `HH2D` -> `2D`) trước khi gọi Gemini Vision
+  const representativesNeedingVision: MultimodalVideoInput[] = [];
+  let groundedRuleCount = 0;
+
+  for (const group of groupList) {
+    const ruleGenre = classifyByGroundedRules(group.representative, allowedTags);
+    if (ruleGenre) {
+      groundedRuleCount += 1;
+      for (const member of group.members) {
+        results.set(member.video_id, {
+          videoId: member.video_id,
+          detectedGenre: ruleGenre,
+          seriesName: member.series_name ?? group.seriesTitle,
+          episodeNumber: parseEpisodeInfo(member.title, null).episodeStart,
+          isMovie: false,
+          confidence: 0.95,
+          source: 'fixed',
+        });
+      }
+    } else {
+      representativesNeedingVision.push(group.representative);
+    }
+  }
+
+  const representatives = representativesNeedingVision;
+
   console.log(
-    `[AI Classifier] Series-Aware Batching: ${videos.length} video -> gom còn ${representatives.length} bộ phim đại diện (tiết kiệm ${videos.length - representatives.length} lượt gọi Vision).`,
+    `[AI Classifier] Tầng 2 Grounded Rules + Series-Aware Batching: ${videos.length} video -> ${groupList.length} series (${groundedRuleCount} khớp quy tắc cứng 0ms, ${representatives.length} cần Gemini Vision).`,
   );
 
   let geminiSuccessCount = 0;

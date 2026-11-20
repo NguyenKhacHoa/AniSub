@@ -13,6 +13,7 @@ import type { Database } from '@/types/database';
 import {
   VERIFIED_THEATRICAL_TAG,
   isPotentialTheatricalCandidate,
+  mapDefaultCategoryToGenre,
   type PrimaryGenreTag,
 } from '@/types/workspace';
 
@@ -56,7 +57,9 @@ function normalizeClassificationMap(
     if (!val || typeof val !== 'object') return null;
     const item = val as Partial<MultimodalClassificationResult>;
     const genre =
-      item.detectedGenre === 'Phim AI' || item.detectedGenre === 'HH2D'
+      item.detectedGenre === 'Phim AI' ||
+      item.detectedGenre === 'HH2D' ||
+      item.detectedGenre === '2D'
         ? item.detectedGenre
         : fallbackGenre;
     return {
@@ -358,12 +361,52 @@ async function persistAndClassifyFetchedVideos(options: {
   const classificationMap = new Map<string, ClassificationRecord>();
   const inheritedManualIds = new Set<string>();
 
-  const { data: channelRow } = await admin
+  const { data: channelRowWithCat } = await admin
     .from('channels')
-    .select('title')
+    .select('title, default_category')
     .eq('channel_id', channelId)
     .maybeSingle();
-  const channelTitle = channelRow?.title ?? undefined;
+
+  let channelTitle = channelRowWithCat?.title ?? undefined;
+  const channelLockedGenre = mapDefaultCategoryToGenre(
+    channelRowWithCat?.default_category,
+  );
+
+  if (!channelRowWithCat) {
+    const { data: fallbackCh } = await admin
+      .from('channels')
+      .select('title')
+      .eq('channel_id', channelId)
+      .maybeSingle();
+    channelTitle = fallbackCh?.title ?? undefined;
+  }
+
+  // Tầng 1 (Channel Master Lock): Nếu kênh đã khóa `default_category` khác AUTO -> 100% video mới nhận đúng phân loại của kênh, không cho AI đoán lệch tập
+  if (channelLockedGenre) {
+    const lockedPayload = brandNewVideos.map((v) => ({
+      video_id: v.video_id,
+      channel_id: v.channel_id,
+      title: v.title,
+      description: v.description,
+      thumbnail_url: v.thumbnail_url,
+      published_at: v.published_at,
+      duration_seconds: v.duration_seconds,
+      is_short: v.is_short,
+      video_type: v.video_type,
+      detected_genre: channelLockedGenre,
+      series_name: null,
+      episode_number: parseEpisodeInfo(v.title, null).episodeStart,
+    }));
+    await upsertVideosChunked(admin, lockedPayload);
+    return {
+      fetchedCount: fetchedVideos.length,
+      newVideosCount: brandNewVideos.length,
+      aiClassifiedCount: 0,
+      pagesFetched,
+      nextPageToken,
+      warning: null,
+    };
+  }
 
   // Bước 1: Kế thừa tag theo Series từ các video đã có của cùng kênh (ưu tiên is_manual_tag = true)
   const existingSeriesGenreMap = new Map<

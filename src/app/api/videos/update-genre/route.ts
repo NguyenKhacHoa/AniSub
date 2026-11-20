@@ -4,6 +4,7 @@ import { verifyWhitelistedUser } from '@/lib/auth/whitelist';
 import { extractSeriesInfo } from '@/lib/series-parser';
 import {
   PRIMARY_GENRE_OPTIONS,
+  mapGenreToDefaultCategory,
   type PrimaryGenreTag,
 } from '@/types/workspace';
 
@@ -15,11 +16,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  let body: { videoId?: string; detectedGenre?: PrimaryGenreTag };
+  let body: {
+    videoId?: string;
+    detectedGenre?: PrimaryGenreTag;
+    applyToChannel?: boolean;
+  };
   try {
     body = (await request.json()) as {
       videoId?: string;
       detectedGenre?: PrimaryGenreTag;
+      applyToChannel?: boolean;
     };
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
@@ -27,6 +33,7 @@ export async function POST(request: Request) {
 
   const videoId = body.videoId?.trim();
   const detectedGenre = body.detectedGenre;
+  const applyToChannel = body.applyToChannel === true;
 
   if (
     !videoId ||
@@ -131,12 +138,59 @@ export async function POST(request: Request) {
     }
   }
 
+  // 4. Smart Learn on Manual Fix: Nếu người dùng chọn áp dụng làm mặc định cho cả kênh
+  let channelUpdatedCount = 0;
+  if (applyToChannel) {
+    const nextDefaultCat = mapGenreToDefaultCategory(detectedGenre);
+    await admin
+      .from('channels')
+      .update({
+        default_category: nextDefaultCat,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('channel_id', targetVideo.channel_id);
+
+    await admin
+      .from('user_channels')
+      .update({
+        genre_tag: detectedGenre,
+        genre_tags: [detectedGenre],
+      })
+      .eq('user_id', auth.userId)
+      .eq('channel_id', targetVideo.channel_id);
+
+    const { data: chVids } = await admin
+      .from('videos')
+      .select('video_id, is_manual_tag')
+      .eq('channel_id', targetVideo.channel_id)
+      .eq('is_short', false)
+      .limit(3000);
+
+    const chTargetIds = (chVids ?? [])
+      .filter((v) => !v.is_manual_tag && !matchedIdsSet.has(v.video_id))
+      .map((v) => v.video_id);
+
+    for (let i = 0; i < chTargetIds.length; i += UPDATE_CHUNK_SIZE) {
+      const chunkIds = chTargetIds.slice(i, i + UPDATE_CHUNK_SIZE);
+      const { error } = await admin
+        .from('videos')
+        .update({ detected_genre: detectedGenre })
+        .in('video_id', chunkIds);
+      if (!error) {
+        channelUpdatedCount += chunkIds.length;
+      }
+    }
+  }
+
   return NextResponse.json({
     videoId,
+    channelId: targetVideo.channel_id,
     detectedGenre,
     isManualTag: true,
     updatedVideoIds: matchedVideoIds,
     propagatedCount: matchedVideoIds.length,
+    channelUpdatedCount,
+    appliedToChannel: applyToChannel,
     seriesTitle: targetSeriesInfo.seriesTitle,
     warning,
   });

@@ -14,22 +14,18 @@ Sử dụng SDK chính thức `@google/genai` phía server trên endpoint `v1bet
   - **Auto-Retry 1 lần (`1200ms`):** Nếu toàn bộ chuỗi model trong lượt đầu gặp lỗi quá tải tạm thời (`503` / `429` / `504`), hệ thống tự động nghỉ ngắn `1200ms` (1.2 giây) rồi gọi lại `gemini-2.5-flash` thêm 1 lần nữa trước khi dừng.
   - **Thông báo lỗi tiếng Việt thân thiện (`formatFriendlyGeminiError`):** Nếu sau khi retry vẫn quá tải, luôn trả về thông điệp *"Máy chủ AI Google đang quá tải tạm thời, bạn bấm gửi lại sau vài giây nhé!"*, tuyệt đối không hiển thị chuỗi JSON lỗi thô của Google ra giao diện.
 
-## 2. Phân loại Đa Phương Thức Series-Aware Gemini Vision (`src/lib/ai/classifier.ts`)
-- **Áp dụng:** Chỉ chạy cho các video thuộc kênh bật **từ 2 nhãn trở lên** (`['Phim AI', 'HH2D']`) và **chưa kế thừa được nhãn** từ các tập cùng `(channel_id, seriesKey)` đã có trong DB (kênh 1 nhãn được gán thẳng 100%, và luôn bỏ qua các video đã khóa thủ công `is_manual_tag = true`).
-- **Series-Representative Batching & Rate Limit Protection:**
-  - Gom nhóm theo `(channel_id, seriesKey)` (`extractSeriesInfo`), chỉ gửi **1 video đại diện / 1 bộ phim** rồi lan truyền kết quả cho toàn bộ các tập cùng bộ (giảm tới ~90% lượng gọi API).
-  - Gom **4 bộ phim đại diện / 1 request**, sử dụng ảnh thumbnail `hqdefault.jpg` (480×360, fallback `mqdefault.jpg`) để nhìn rõ nét viền lineart vs khối da/tóc 3D AI.
-  - Xoay vòng tuần tự theo `GEMINI_FALLBACK_MODELS` (`['gemini-2.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.8-flash']`).
-- **Tiêu chí nhận diện thị giác (2 nhãn thể loại + cờ `isMovie` Phim Chiếu Rạp):**
-  - **`Phim AI`:** Đồ họa tả thực, 3D AI rendering (Midjourney, Kling, Flux, Hailuo, Vidu, Sora...), ánh sáng volumetric/cinematic, da và tóc có độ khối mịn, **KHÔNG** có nét viền mực đen kiểu vẽ tay.
-  - **`HH2D`:** Tranh vẽ 2D Manhua / Manhwa / Motion Comic / Anime 2D, tô màu mảng phẳng (cel-shading), **CÓ** đường viền nét vẽ (lineart) rõ ràng quanh nhân vật và bối cảnh truyện tranh.
-  - **`isMovie` / `is_theatrical_movie` (Phim Chiếu Rạp — Auto-Discover, Google Search Grounding & Scoped Anti-Horror Policy):**
-    - **Cấm tuyệt đối** tự gắn mác `Chiếu Rạp` dựa trên thời lượng hay từ khóa chung (`full`, `bản full`, `trọn bộ`, `ova`, `special`).
-    - **Loại trừ cứng 100%:** Mọi video thuộc `Phim AI`, có thời lượng ngoài ngưỡng **65–165 phút (`3900s–9900s`)**, hoặc tiêu đề chứa dấu hiệu tổng hợp/ghép tập (`giờ`, `tiếng`, `tập 1`, `trọn bộ`, `tổng hợp`, `review`, `tóm tắt`) đều trả về `false`.
-    - **Chính sách Chặn Kinh Dị 2 Lớp (Scoped Anti-Horror Policy — CHỈ ÁP DỤNG RIÊNG CHO PHIM CHIẾU RẠP):**
-      1. *Lớp 1 (Pre-filter từ khóa trong `/api/cinema/discover` & `isHardExcludedFromTheatrical`):* Loại bỏ ngay video chiếu rạp có tiêu đề/mô tả chứa `kinh dị`, `horror`, `ma ám`, `quỷ ám`, `trừ tà`, `exorcist`, `ác quỷ`, `xác sống`, `zombie`, `ma cà rồng`, `slasher`, `giết người hàng loạt`, `máu me`, `gore`, `creepy`, `rùng rợn`, `ma quái`, `linh dị`, `cương thi`.
-      2. *Lớp 2 (Google Search Grounding trên `v1beta` kèm `tools: [{ googleSearch: {} }]`):* Tra cứu Google xác nhận đồng thời `isTheatricalMovie === true` (đón nhận cả **Anime / Hoạt hình chiếu rạp** lẫn **Phim điện ảnh người đóng Live-Action** từng công chiếu thương mại ngoài rạp, kèm `canonicalTitle`, `releaseYear`, `cinemaFormat: 'Anime / Hoạt hình' | 'Phim Người Đóng'`, và `cinemaGenres` thuộc nhóm thể loại an toàn) VÀ `isHorrorOrGore === false`.
-      3. *Phạm vi cô lập:* Tuyệt đối **không** áp dụng bộ lọc kinh dị/linh dị/ma quái lên luồng phân loại `HH2D`, `2D` và `Phim AI` thông thường.
+## 2. Kiến Trúc Phân Loại Chuẩn Xác 3 Tầng (3-Layer Grounded Classification Pipeline — `src/lib/ai/classifier.ts`)
+- **Tầng 1 — Khóa Định Danh Cấp Kênh & Cấp Bộ Phim (Channel & Series Master Lock):**
+  - **Channel Master Lock (`channels.default_category`):** `AUTO` | `HH2D` | `2D` | `PHIM_AI`. Nếu khác `AUTO`, 100% video mới đồng bộ từ kênh đó tự động nhận đúng phân loại của kênh, không cho AI đoán lại gây lệch tập.
+  - **Series Inheritance & Smart Learn on Manual Fix:** Mọi tập cùng `(channel_id, seriesKey)` tự động kế thừa nhãn đã phân loại hoặc đã khóa tay (`is_manual_tag = true`). Khi người dùng sửa tay nhãn 1 thẻ phim, hệ thống cập nhật Optimistic UI 0ms cho cả series kèm nút 1 chạm **"Áp dụng cho cả kênh"** để khóa luôn `default_category`.
+- **Tầng 2 — Phân Loại Cứng Theo Thứ Tự Ưu Tiên cho Tab "Đã đăng ký" (`classifyByGroundedRules` + Gemini Vision):**
+  1. **`Phim AI` (Ưu tiên 1):** Nhận diện dòng truyện tranh AI / audio drama AI / recap AI (mô-típ truyện hệ thống, xuyên không đô thị, tổng tài, trọng sinh báo thù kèm thời lượng tổng hợp dài `> 45 phút`, kênh dạng *"Bản Tin...", "Trùm Phim...", "Review Phim..."* hoặc đồ họa 3D AI không viền mực).
+  2. **`HH2D` (Ưu tiên 2 — Hoạt hình 3D Trung Quốc / Donghua):** Đối chiếu danh mục tác phẩm Donghua Trung Quốc (*Tiên Nghịch, Đấu Phá Thương Khung, Phàm Nhân Tu Tiên, Thế Giới Hoàn Mỹ, Thôn Phệ Tinh Không...*) hoặc dấu hiệu Donghua / HH3D / Manhua.
+  3. **`2D` (Ưu tiên 3 — Anime Nhật Bản / Hoạt hình 2D):** Đối chiếu kênh Anime bản quyền (*Muse Việt Nam, Ani-One Vietnam, POPS Anime*) hoặc tác phẩm Anime Nhật Bản / hoạt hình 2D truyền thống.
+  - Các bộ phim mơ hồ còn lại mới gom **1 đại diện / 1 Series** (4 series / batch, `hqdefault.jpg`) gửi Gemini Vision xoay vòng theo `GEMINI_FALLBACK_MODELS`.
+- **Tầng 3 — Phân Loại Phim Chiếu Rạp Neo Vào TMDB / AniList / IMDb Grounding (`/api/cinema/discover`):**
+  - Bắt buộc tách **tên gốc (Anh / Nhật / Trung)** và dùng Google Search Grounding (`tools: [{ googleSearch: {} }]` trên `v1beta`) tra cứu trực tiếp hồ sơ phát hành rạp trên **TMDB / AniList / IMDb** (`verifiedSource`). Không tìm thấy hồ sơ xác thực $\rightarrow$ **loại bỏ ngay**.
+  - Gắn nhãn chuẩn Strict Enum: `cinema_format` (`'Anime / Hoạt hình'` | `'Phim Người Đóng'`) và tối đa **2 `cinema_genres`** từ bộ Enum cố định `["Hành động", "Phiêu lưu", "Giả tưởng", "Viễn tưởng", "Tình cảm", "Hài hước", "Tâm lý", "Võ thuật"]`, đồng thời duy trì bộ luật **chặn tuyệt đối Kinh dị (`isHorrorOrGore === false`)** riêng cho Phim Chiếu Rạp.
 - **Structured Output Schema (`Type.ARRAY`):**
   Trả về đúng 1 phần tử JSON cho mỗi `videoId`:
   `{ videoId, detectedGenre: 'Phim AI' | 'HH2D', seriesName: string | null, episodeNumber: integer | null, isMovie: boolean | null, confidence: number }`.

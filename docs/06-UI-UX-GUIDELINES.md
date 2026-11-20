@@ -131,6 +131,7 @@ Mọi component UI **bắt buộc** sử dụng các biến CSS dưới đây (t
 - `--accent-primary`: `#0F766E`
 - `--accent-foreground`: `#FFFFFF`
 
-### 2.3. Nhãn thể loại chuẩn (2 Loại Duy Nhất)
+### 2.3. Nhãn thể loại chuẩn cho Tab Đã đăng ký (3 Nhãn — Kiến trúc 3 Tầng)
 - `Phim AI`: Tím (`bg-purple-500/15 text-purple-700 dark:text-purple-300 border-purple-500/35`)
-- `HH2D`: Xanh dương (`bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/35`)
+- `HH2D` (Hoạt hình 3D Trung Quốc / Donghua): Xanh dương (`bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/35`)
+- `2D` (Anime Nhật Bản / Hoạt hình 2D): Xanh ngọc (`bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/35`)

@@ -8,7 +8,9 @@ export type Json =
 
 export type WebSubStatus = 'pending' | 'active' | 'expired';
 
-export type GenreTag = 'Phim AI' | 'HH2D';
+export type GenreTag = 'Phim AI' | 'HH2D' | '2D';
+
+export type ChannelDefaultCategory = 'AUTO' | 'HH2D' | '2D' | 'PHIM_AI';
 
 export type CinemaFormat = 'Anime / Hoạt hình' | 'Phim Người Đóng';
 
@@ -75,6 +77,8 @@ export type ChannelRow = {
   title: string;
   thumbnail_url: string | null;
   custom_url: string | null;
+  is_subscribed?: boolean | null;
+  default_category?: ChannelDefaultCategory | null;
   websub_status: WebSubStatus;
   websub_expires_at: string | null;
   next_page_token?: string | null;
@@ -171,6 +175,8 @@ export type Database = {
           title: string;
           thumbnail_url?: string | null;
           custom_url?: string | null;
+          is_subscribed?: boolean | null;
+          default_category?: ChannelDefaultCategory | null;
           websub_status?: WebSubStatus;
           websub_expires_at?: string | null;
           next_page_token?: string | null;
@@ -181,6 +187,8 @@ export type Database = {
           title?: string;
           thumbnail_url?: string | null;
           custom_url?: string | null;
+          is_subscribed?: boolean | null;
+          default_category?: ChannelDefaultCategory | null;
           websub_status?: WebSubStatus;
           websub_expires_at?: string | null;
           next_page_token?: string | null;

@@ -19,8 +19,11 @@ import {
 } from '@/lib/series-parser';
 import {
   isTheatricalMovieVideo,
+  mapDefaultCategoryToGenre,
+  mapGenreToDefaultCategory,
   matchesTheatricalSafeCategory,
   resolveCinemaFormat,
+  type ChannelDefaultCategory,
   type ChannelWithSelection,
   type CinemaFormatFilter,
   type CinemaVideoItem,
@@ -1096,6 +1099,84 @@ export function UnifiedCinemaWorkspace({
     }
   };
 
+  const handleChangeChannelDefaultCategory = useCallback(
+    async (channelId: string, defaultCategory: ChannelDefaultCategory) => {
+      const prevChannels = channels;
+      const prevVideos = allVideos;
+      const lockedGenre = mapDefaultCategoryToGenre(defaultCategory);
+
+      // Optimistic UI 0ms: khóa ngay danh mục kênh và đồng bộ các video chưa khóa tay của kênh
+      setChannels((prev) =>
+        prev.map((ch) =>
+          ch.channel_id === channelId
+            ? {
+                ...ch,
+                default_category: defaultCategory,
+                ...(lockedGenre
+                  ? { genre_tag: lockedGenre, genre_tags: [lockedGenre] }
+                  : { genre_tags: ['Phim AI', 'HH2D', '2D'] }),
+              }
+            : ch,
+        ),
+      );
+      if (lockedGenre) {
+        setAllVideos((prev) =>
+          prev.map((v) =>
+            v.channel_id === channelId && !v.is_manual_tag
+              ? { ...v, detected_genre: lockedGenre }
+              : v,
+          ),
+        );
+      }
+
+      setBusyChannelId(channelId);
+      try {
+        const res = await fetch('/api/channels/default-category', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            channelId,
+            defaultCategory,
+            applyToExisting: true,
+          }),
+        });
+
+        const payload = (await res.json().catch(() => ({}))) as {
+          updatedVideosCount?: number;
+          channels?: ChannelWithSelection[];
+          videos?: CinemaVideoItem[];
+          warning?: string | null;
+          error?: string;
+        };
+
+        if (!res.ok) {
+          setChannels(prevChannels);
+          setAllVideos(prevVideos);
+          toast.error(payload.error || 'Không thể khóa danh mục cho kênh.');
+          return;
+        }
+
+        if (payload.channels) setChannels(payload.channels);
+        if (payload.videos) setAllVideos(payload.videos);
+
+        if (lockedGenre) {
+          toast.success(
+            `🔒 Đã khóa kênh ở danh mục ${lockedGenre} & đồng bộ ${payload.updatedVideosCount ?? 0} video!`,
+          );
+        } else {
+          toast.info('Đã chuyển kênh sang chế độ phân loại Tự động (AUTO).');
+        }
+      } catch {
+        setChannels(prevChannels);
+        setAllVideos(prevVideos);
+        toast.error('Lỗi kết nối khi lưu khóa danh mục kênh.');
+      } finally {
+        setBusyChannelId(null);
+      }
+    },
+    [channels, allVideos],
+  );
+
   const handleCycleVideoGenre = useCallback(
     async (video: CinemaVideoItem, nextGenre: PrimaryGenreTag) => {
       const previousVideos = allVideos;
@@ -1175,8 +1256,21 @@ export function UnifiedCinemaWorkspace({
         if (payload.warning) {
           toast.warning(payload.warning);
         } else {
+          // Smart Learn on Manual Fix: cho phép bấm 1 chạm áp dụng luôn làm mặc định cho cả kênh
           toast.success(
             `Đã cập nhật tag ${nextGenre} cho toàn bộ ${propagatedCount} tập của bộ phim`,
+            {
+              duration: 6000,
+              action: {
+                label: 'Áp dụng cho cả kênh',
+                onClick: () => {
+                  void handleChangeChannelDefaultCategory(
+                    video.channel_id,
+                    mapGenreToDefaultCategory(nextGenre),
+                  );
+                },
+              },
+            },
           );
         }
       } catch {
@@ -1184,7 +1278,7 @@ export function UnifiedCinemaWorkspace({
         toast.error('Lỗi kết nối khi lưu nhãn thủ công.');
       }
     },
-    [allVideos],
+    [allVideos, handleChangeChannelDefaultCategory],
   );
 
   const handleReclassifyAll = async () => {
@@ -1945,6 +2039,7 @@ export function UnifiedCinemaWorkspace({
         onReclassifyAll={handleReclassifyAll}
         onToggleChannel={handleToggleChannel}
         onToggleChannelGenreTag={handleToggleChannelGenreTag}
+        onChangeChannelDefaultCategory={handleChangeChannelDefaultCategory}
         onReclassifyChannel={handleReclassifyChannel}
         onLoadMoreChannelVideos={handleLoadMoreChannelVideos}
         onQuickAddChannel={handleSubscribeChannel}

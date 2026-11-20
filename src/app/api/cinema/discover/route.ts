@@ -124,7 +124,7 @@ function normalizeSafeCinemaGenres(raw: unknown): string[] {
     }
   }
 
-  return Array.from(validSet).slice(0, 3);
+  return Array.from(validSet).slice(0, 2);
 }
 
 /**
@@ -158,10 +158,12 @@ function passesCinemaLayer1PreFilter(candidate: CandidateMovieItem): boolean {
 }
 
 /**
- * Lớp 2: Xác minh thực tế qua Gemini + Google Search Grounding (`tools: [{ googleSearch: {} }]` trên `v1beta`)
- * - Đón nhận cả Anime/Hoạt hình chiếu rạp lẫn Phim điện ảnh người đóng (Live-Action)
- * - Chặn tuyệt đối Kinh dị / Máu me (`isHorrorOrGore === false`)
- * - Trả về đầy đủ `cinemaFormat` (`Anime / Hoạt hình` | `Phim Người Đóng`) và `cinemaGenres` an toàn
+ * Tầng 3: Xác minh & Phân loại Phim Chiếu Rạp neo vào dữ liệu điện ảnh thực tế (TMDB / AniList / IMDb Grounding)
+ * thông qua Gemini + Google Search Grounding (`tools: [{ googleSearch: {} }]` trên `v1beta`):
+ * - Tách tên gốc (Anh / Nhật / Trung) và tra cứu trực tiếp trên TMDB / AniList / IMDb.
+ * - Không tìm thấy hồ sơ phát hành rạp xác thực trên TMDB / AniList / IMDb -> LOẠI BỎ NGAY.
+ * - Gắn chuẩn `cinema_format` (`Anime / Hoạt hình` | `Phim Người Đóng`) và tối đa 2 `cinema_genres` thuộc bộ Enum cố định.
+ * - Chặn tuyệt đối Kinh dị (`isHorrorOrGore === false`) riêng cho Phim Chiếu Rạp.
  */
 async function verifyCandidatesWithGoogleSearchGrounding(
   candidates: CandidateMovieItem[],
@@ -185,24 +187,29 @@ async function verifyCandidatesWithGoogleSearchGrounding(
     )
     .join('\n\n');
 
-  const prompt = `Bạn là hệ thống kiểm duyệt & phân loại Phim Chiếu Rạp của AniSub. Hãy sử dụng công cụ Google Search để tra cứu thông tin phát hành thực tế cho từng video ứng viên dưới đây:
+  const prompt = `Bạn là hệ thống kiểm duyệt & phân loại Phim Chiếu Rạp chuẩn 3 tầng của AniSub. Hãy sử dụng công cụ Google Search để truy xuất định danh gốc từ **TMDB / AniList / IMDb** cho từng video ứng viên dưới đây:
 
 ${candidatesBlock}
 
-YÊU CẦU KIỂM DUYỆT & PHÂN LOẠI NGHIÊM NGẶT CHO TỪNG VIDEO:
-1. "isTheatricalMovie": Tra cứu Google xem tác phẩm này có phải là một bộ **Phim Điện Ảnh Chiếu Rạp (bao gồm cả Anime/Hoạt hình chiếu rạp LẪN Phim điện ảnh người đóng Live-Action đã từng công chiếu thương mại ngoài rạp — Theatrical Release)** hay không. Nếu chỉ là TV Series ghép tập, Web Drama, OVA, Phim AI 3D hoặc video tổng hợp/review thì BẮT BUỘC đặt false.
-2. "isHorrorOrGore": Kiểm tra xem bộ phim có thuộc thể loại **Kinh dị / Máu me / Rùng rợn / Ma ám / Xác sống (Horror / Gore / Supernatural Horror / Slasher)** hay không. Nếu có yếu tố kinh dị/máu me thì BẮT BUỘC đặt true.
-3. "canonicalTitle": Tên bộ phim điện ảnh chuẩn hóa ngắn gọn (tiếng Việt hoặc tên quốc tế chính thức).
-4. "releaseYear": Năm công chiếu tại rạp (số nguyên 4 chữ số, ví dụ 2022).
-5. "cinemaFormat": Chọn CHÍNH XÁC 1 trong 2 chuỗi sau:
-   - "Anime / Hoạt hình" (nếu là phim hoạt hình 2D, anime, hoạt hình 3D chiếu rạp)
-   - "Phim Người Đóng" (nếu là phim điện ảnh người thật đóng / Live-Action chiếu rạp)
-6. "cinemaGenres": Mảng 1 đến 3 thể loại an toàn phù hợp nhất từ danh sách chuẩn: ["Hành động", "Phiêu lưu", "Giả tưởng", "Viễn tưởng", "Tình cảm", "Hài hước", "Tâm lý", "Võ thuật"].
+QUY TRÌNH BẮT BUỘC CHO TỪNG VIDEO:
+1. "originalTitle": Tách chính xác **tên gốc tiếng Anh / tiếng Nhật / tiếng Trung** của bộ phim từ tiêu đề YouTube Việt hóa.
+2. "verifiedSource": Dùng Google Search tra cứu trực tiếp hồ sơ phát hành của "originalTitle" trên **TMDB**, **AniList** hoặc **IMDb**. Trả về "TMDB" | "AniList" | "IMDb" nếu tìm thấy hồ sơ phim điện ảnh chiếu rạp xác thực; nếu KHÔNG tìm thấy trên 3 nguồn này thì đặt null.
+3. "isTheatricalMovie": CHỈ đặt true nếu tìm thấy hồ sơ phát hành chiếu rạp thương mại thực tế (Theatrical Release — bao gồm Anime/Hoạt hình chiếu rạp LẪN Phim điện ảnh người đóng Live-Action) trên TMDB / AniList / IMDb. Nếu chỉ là TV Series ghép tập, Web Drama, OVA, Phim AI 3D, video tổng hợp hoặc không tìm thấy trên TMDB/AniList/IMDb thì BẮT BUỘC đặt false.
+4. "isHorrorOrGore": Nếu hồ sơ gốc trên TMDB/AniList/IMDb có thể loại Horror / Gore / Supernatural Horror / Slasher / Kinh dị / Ma ám / Xác sống thì BẮT BUỘC đặt true.
+5. "canonicalTitle": Tên bộ phim chuẩn hóa ngắn gọn (ưu tiên tên tiếng Việt chính thức hoặc tên quốc tế).
+6. "releaseYear": Năm công chiếu rạp theo TMDB/AniList/IMDb (số nguyên 4 chữ số, ví dụ 2022).
+7. "cinemaFormat": Chọn CHÍNH XÁC 1 trong 2 giá trị chuẩn theo nguồn gốc TMDB/AniList:
+   - "Anime / Hoạt hình" (chỉ dành cho phim có thẻ Animation / Anime trên TMDB hoặc AniList)
+   - "Phim Người Đóng" (dành cho phim điện ảnh người đóng Live-Action trên TMDB/IMDb)
+8. "cinemaGenres": Chọn TỐI ĐA **2 thể loại chính xác nhất** map trực tiếp từ thẻ genre gốc của TMDB/AniList sang bộ Enum cố định sau (tuyệt đối không dùng từ ngoài danh sách):
+   ["Hành động", "Phiêu lưu", "Giả tưởng", "Viễn tưởng", "Tình cảm", "Hài hước", "Tâm lý", "Võ thuật"]
 
 Trả về DUY NHẤT 1 mảng JSON hợp lệ (không giải thích ngoài JSON) theo cấu trúc:
 [
   {
     "videoId": "string",
+    "originalTitle": "string | null",
+    "verifiedSource": "TMDB" | "AniList" | "IMDb" | null,
     "isTheatricalMovie": boolean,
     "isHorrorOrGore": boolean,
     "canonicalTitle": "string | null",
@@ -220,6 +227,8 @@ Trả về DUY NHẤT 1 mảng JSON hợp lệ (không giải thích ngoài JSON
     try {
       const parsed = JSON.parse(arrayMatch[0]) as Array<{
         videoId?: string;
+        originalTitle?: string | null;
+        verifiedSource?: string | null;
         isTheatricalMovie?: boolean;
         isHorrorOrGore?: boolean;
         canonicalTitle?: string | null;
@@ -229,6 +238,8 @@ Trả về DUY NHẤT 1 mảng JSON hợp lệ (không giải thích ngoài JSON
       }>;
 
       if (!Array.isArray(parsed)) return 0;
+
+      const validSources = new Set(['tmdb', 'anilist', 'imdb']);
 
       for (const item of parsed) {
         if (!item?.videoId) continue;
@@ -242,11 +253,18 @@ Trả về DUY NHẤT 1 mảng JSON hợp lệ (không giải thích ngoài JSON
           typeof item.canonicalTitle === 'string' &&
           item.canonicalTitle.trim().length >= 2
             ? item.canonicalTitle.trim()
-            : null;
+            : typeof item.originalTitle === 'string' &&
+                item.originalTitle.trim().length >= 2
+              ? item.originalTitle.trim()
+              : null;
+        const hasVerifiedSource =
+          typeof item.verifiedSource === 'string' &&
+          validSources.has(item.verifiedSource.trim().toLowerCase());
 
         const isApproved =
           item.isTheatricalMovie === true &&
           item.isHorrorOrGore === false &&
+          hasVerifiedSource &&
           cleanTitle !== null &&
           year !== null;
 

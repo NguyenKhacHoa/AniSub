@@ -9,6 +9,7 @@ import { extractSeriesInfo } from '@/lib/series-parser';
 import { loadWorkspaceDataForUser } from '@/lib/workspace/loader';
 import {
   PRIMARY_GENRE_OPTIONS,
+  mapDefaultCategoryToGenre,
   type PrimaryGenreTag,
 } from '@/types/workspace';
 
@@ -192,9 +193,12 @@ export async function POST(request: Request) {
 
     if (eligibleRows.length === 0) continue;
 
-    // Kênh chỉ bật 1 tag -> gán thẳng 100% (0 API call)
-    if (allowedTags.length === 1) {
-      const targetGenre = allowedTags[0];
+    // Tầng 1 (Channel Master Lock): Kênh đã khóa default_category khác AUTO hoặc chỉ bật 1 tag -> gán thẳng 100% (0 API call)
+    const channelLockedGenre = mapDefaultCategoryToGenre(
+      channel.default_category,
+    );
+    if (channelLockedGenre || allowedTags.length === 1) {
+      const targetGenre = channelLockedGenre ?? allowedTags[0];
       const eligibleIds = eligibleRows.map((r) => r.video_id);
       const count = await bulkUpdateGenreByIds(admin, eligibleIds, targetGenre);
       updatedCount += count;
@@ -204,12 +208,14 @@ export async function POST(request: Request) {
       continue;
     }
 
-    // Kênh bật >= 2 tag:
+    // Kênh chế độ AUTO (bật >= 2 tag):
     // 1. Kế thừa tag từ các tập cùng Series đã được người dùng khóa tay (is_manual_tag = true)
     const manualSeriesGenreMap = new Map<string, PrimaryGenreTag>();
     for (const m of manualRows) {
       const genre =
-        m.detected_genre === 'Phim AI' || m.detected_genre === 'HH2D'
+        m.detected_genre === 'Phim AI' ||
+        m.detected_genre === 'HH2D' ||
+        m.detected_genre === '2D'
           ? (m.detected_genre as PrimaryGenreTag)
           : null;
       if (!genre || !allowedTags.includes(genre)) continue;
