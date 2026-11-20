@@ -25,8 +25,15 @@ function isPublicOrBypassPath(pathname: string): boolean {
 export async function proxy(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl;
 
-  // Tuyệt đối không chạy getUser() hay can thiệp cookie trên luồng PKCE /auth/callback
-  if (pathname.startsWith('/auth/callback')) {
+  // Tuyệt đối không chạy getUser() hay can thiệp cookie trên luồng PKCE /auth/callback và các tài nguyên PWA công khai
+  if (
+    pathname.startsWith('/auth/callback') ||
+    pathname === '/manifest.webmanifest' ||
+    pathname === '/sw.js' ||
+    pathname.startsWith('/icons/') ||
+    pathname === '/icon' ||
+    pathname === '/apple-icon'
+  ) {
     return NextResponse.next();
   }
 
@@ -154,6 +161,6 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|icon|apple-icon|icons/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 };

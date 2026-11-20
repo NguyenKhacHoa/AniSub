@@ -64,3 +64,7 @@ Tất cả các API dữ liệu người dùng đều bắt buộc đi qua kiể
 | `/api/admin/requests` | `GET`/`POST`/`PATCH` | Phê duyệt hoặc từ chối đơn xin truy cập (chỉ dành cho `ADMIN_EMAIL`). |
 | `/api/admin/clean-cinema-tags` | `POST` | Quét và gỡ bỏ ngay lập tức các nhãn/cờ `Chiếu Rạp` bị gắn nhầm khỏi toàn bộ video `Phim AI`, video ghép nhiều giờ và video tổng hợp `HH2D` trong Supabase, trả lại đúng danh mục gốc. |
 | `/api/whitelist` | `GET`/`POST`/`PATCH`/`DELETE` | Quản lý danh sách email được cấp quyền trong `allowed_emails`. |
+
+## 3. Cấu hình Progressive Web App (PWA Standalone App)
+- **Web App Manifest (`src/app/manifest.ts` → `/manifest.webmanifest`):** Khai báo `display: 'standalone'`, `start_url: '/'`, bảng màu thương hiệu `midnight-void` (`background_color: '#06070A'`, `theme_color: '#E11D48'`) và bộ icon `192x192` / `512x512` (`any` & `maskable` trong `public/icons/`).
+- **Service Worker (`public/sw.js` + `src/components/providers/PwaRegister.tsx`):** Vòng đời `install` / `activate` gọn nhẹ, cơ chế `fetch` pass-through an toàn (không cache cứng `/api/*` hay `/auth/*` để dữ liệu phim, tiến độ xem và AI Insight luôn realtime), cấu hình header `Cache-Control: no-cache, no-store, must-revalidate` trong `next.config.ts` và bypass xác thực trong `src/proxy.ts` để trình duyệt luôn nhận diện cài đặt hợp lệ.

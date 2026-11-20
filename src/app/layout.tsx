@@ -1,8 +1,9 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, Geist_Mono } from "next/font/google";
 import NextTopLoader from "nextjs-toploader";
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
+import { PwaRegister } from "@/components/providers/PwaRegister";
 import "./globals.css";
 
 const interSans = Inter({
@@ -16,10 +17,21 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+export const viewport: Viewport = {
+  themeColor: "#E11D48",
+};
+
 export const metadata: Metadata = {
-  title: "AniSub — Cinema Workspace",
+  title: "AniSub — Cinema & Anime Workspace",
+  applicationName: "AniSub",
   description:
-    "Không gian xem phim cá nhân hóa hợp nhất, đồng bộ kênh YouTube theo thời gian thực.",
+    "Rạp chiếu Anime & Phim điện ảnh cá nhân tích hợp AI Cinema Insight",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "AniSub",
+  },
 };
 
 export default function RootLayout({
@@ -47,6 +59,7 @@ export default function RootLayout({
           shadow="0 0 10px #14b8a6,0 0 5px #10b981"
         />
         <ThemeProvider>
+          <PwaRegister />
           {children}
           <Toaster richColors position="bottom-right" />
         </ThemeProvider>

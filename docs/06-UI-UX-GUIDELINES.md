@@ -49,10 +49,11 @@ Toàn bộ trải nghiệm rạp chiếu phim được hợp nhất trên **1 m�
     - Danh sách kênh đồng bộ từ YouTube, nút **"Đồng bộ kênh từ YouTube"** kèm bộ đếm cooldown 6 tiếng (`last_synced_at`) ở production và nút **"Quét lại nhãn AI"** toàn bộ.
   - *Cột phải:* Danh sách kênh đang kích hoạt trên AniSub kèm cụm **2 nút Pill Multi-Tag** (`Phim AI`, `HH2D`, bắt buộc giữ tối thiểu 1 nhãn), nút **"Đồng bộ đủ video"** và nút **"Quét AI lại"** riêng cho từng kênh đa nhãn.
 
-### 1.5. Hệ Thống Phản Hồi Tải Toàn Cục (Global Loading Feedback)
+### 1.5. Hệ Thống Phản Hồi Tải Toàn Cục & Cài Đặt Ứng Dụng PWA (Standalone App)
 - **Thanh tiến trình chuyển trang (`NextTopLoader` trong `src/app/layout.tsx`):** Màu `#14B8A6` (teal), cao `3px`, không hiển thị spinner góc màn hình, tự động kích hoạt khi điều hướng `<Link>` giữa `/`, `/admin`, `/login`.
 - **Màn hình khung xương (`src/app/loading.tsx` & `src/app/admin/loading.tsx`):** Skeleton UI đồng bộ 100% bố cục rạp phim và trang quản trị trong lúc Server Component tải dữ liệu.
 - **Trạng thái chờ trên nút bấm (Button Pending States):** Mọi nút hành động bất đồng bộ đều hiển thị spinner `Loader2 animate-spin`, đổi nhãn trạng thái và khóa `disabled` chống bấm đúp.
+- **Progressive Web App (PWA Standalone Window):** Khai báo Web App Manifest tại `src/app/manifest.ts` (`display: 'standalone'`, `background_color: '#06070A'`, `theme_color: '#E11D48'`), bộ icon rạp chiếu PNG `192x192` & `512x512` (`any` + `maskable`) tại `public/icons/` kèm `src/app/icon.tsx` và `src/app/apple-icon.tsx`, cùng Service Worker pass-through tại `public/sw.js` đăng ký tự động qua `PwaRegister.tsx`.
 
 ### 1.4. Cổng Đăng Nhập (`/login`), Luồng Xin Duyệt & Bảng Điều Khiển Admin (`/admin`)
 - **Màn hình `/login`:** Thiết kế tối giản theo phong cách rạp chiếu phim sử dụng đầy đủ CSS Variables của Theme hiện tại, kèm nút đổi nhanh Theme ở góc trên.

@@ -109,6 +109,7 @@ AniSub là rạp chiếu phim riêng tư dành cho chủ sở hữu và nhóm b�
 - **AI Engine:** Google Gemini API (`@google/genai` trên `v1beta` — chuỗi fallback tự động `gemini-2.5-flash` → `gemini-3.5-flash-lite` → `gemini-3.8-flash` với timeout 4.5s/model)
 - **Video & Metadata:** YouTube Data API v3 + YouTube IFrame Player API
 - **UI & Components:** Radix/Base UI, Lucide Icons, Sonner Toast, 4 bộ Theme CSS Variables (`midnight-void`, `deep-abyss`, `velvet-espresso`, `crisp-daylight`)
+- **PWA Standalone App:** Next.js App Router Manifest (`src/app/manifest.ts`), bộ icon PNG `192x192` & `512x512` (`public/icons/`), `src/app/icon.tsx`, `src/app/apple-icon.tsx` và Service Worker pass-through (`public/sw.js` + `PwaRegister.tsx`) cho phép cài đặt ứng dụng độc lập trên Windows/macOS/Android/iOS.
 
 ## 2. Tạo dự án Google Cloud Console (YouTube Data API v3 & OAuth)
 
