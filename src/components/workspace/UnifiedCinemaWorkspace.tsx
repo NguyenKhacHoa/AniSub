@@ -178,6 +178,15 @@ export function UnifiedCinemaWorkspace({
 
   const [viewMode, setViewMode] = useState<WorkspaceViewMode>('cinema');
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+
+  // Debounce 250ms cho ô tìm kiếm để gõ phím mượt 60fps trên kho phim lớn
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
   const [videoType, setVideoType] = useState<VideoTypeFilter>('all');
   const [cinemaFormatFilter, setCinemaFormatFilter] =
     useState<CinemaFormatFilter>('all');
@@ -251,7 +260,7 @@ export function UnifiedCinemaWorkspace({
   );
 
   const filteredVideos = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
+    const query = debouncedSearchQuery.trim().toLowerCase();
     const matched = allVideos.filter((v) => {
       if (v.is_short) return false;
 
@@ -334,7 +343,7 @@ export function UnifiedCinemaWorkspace({
     videoType,
     onlyUnwatched,
     genreFilter,
-    searchQuery,
+    debouncedSearchQuery,
     sortBy,
   ]);
 
@@ -357,7 +366,7 @@ export function UnifiedCinemaWorkspace({
   }, [allVideos, selectedChannelIds]);
 
   const filteredSeriesGroups = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
+    const query = debouncedSearchQuery.trim().toLowerCase();
     return allSeriesGroups.filter((series) => {
       if (genreFilter !== 'all' && series.detectedGenre !== genreFilter) {
         return false;
@@ -379,7 +388,7 @@ export function UnifiedCinemaWorkspace({
       }
       return true;
     });
-  }, [allSeriesGroups, genreFilter, onlyUnwatched, searchQuery]);
+  }, [allSeriesGroups, genreFilter, onlyUnwatched, debouncedSearchQuery]);
 
   const totalSeriesEpisodesCount = useMemo(
     () => filteredSeriesGroups.reduce((acc, s) => acc + s.totalEpisodes, 0),
@@ -420,7 +429,7 @@ export function UnifiedCinemaWorkspace({
   }, [activeSeriesKey, allSeriesGroups]);
 
   const filteredExploreVideos = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
+    const query = debouncedSearchQuery.trim().toLowerCase();
     return exploreVideos.filter((v) => {
       if (query) {
         const matchTitle = v.title.toLowerCase().includes(query);
@@ -430,7 +439,7 @@ export function UnifiedCinemaWorkspace({
       }
       return true;
     });
-  }, [exploreVideos, searchQuery]);
+  }, [exploreVideos, debouncedSearchQuery]);
 
   // Danh sách hiển thị ở Vùng B:
   // - Khi ở tab Khám phá: hiển thị video đề xuất (loại video đang phát nếu có)
@@ -1286,8 +1295,10 @@ export function UnifiedCinemaWorkspace({
 
   const handleUpdateSeriesStatus = useCallback(
     async (series: SeriesGroup, nextStatus: UserSeriesStatus | null) => {
-      const prevStatuses = seriesStatuses;
+      // Optimistic UI 0ms: cập nhật giao diện ngay lập tức, lưu trạng thái cũ để rollback nếu đồng bộ thất bại
+      let previousValue: UserSeriesStatus | undefined;
       setSeriesStatuses((prev) => {
+        previousValue = prev[series.seriesKey];
         const copy = { ...prev };
         if (nextStatus === null) {
           delete copy[series.seriesKey];
@@ -1309,31 +1320,45 @@ export function UnifiedCinemaWorkspace({
         });
 
         const payload = (await res.json().catch(() => ({}))) as {
-          warning?: string | null;
+          ok?: boolean;
           error?: string;
         };
 
         if (!res.ok) {
-          setSeriesStatuses(prevStatuses);
-          toast.error(payload.error || 'Không thể cập nhật trạng thái bộ phim.');
+          setSeriesStatuses((prev) => {
+            const copy = { ...prev };
+            if (previousValue === undefined) {
+              delete copy[series.seriesKey];
+            } else {
+              copy[series.seriesKey] = previousValue;
+            }
+            return copy;
+          });
+          toast.error(payload.error || 'Không thể lưu trạng thái bộ phim.');
           return;
         }
 
-        if (payload.warning) {
-          toast.warning(payload.warning);
-        } else if (nextStatus === 'following') {
+        if (nextStatus === 'following') {
           toast.success(`⭐ Đã theo dõi & ghim "${series.seriesTitle}" lên đầu`);
         } else if (nextStatus === 'hidden') {
           toast.info(`Đã ẩn bộ phim "${series.seriesTitle}"`);
         } else {
-          toast.info(`Đã khôi phục trạng thái mặc định cho "${series.seriesTitle}"`);
+          toast.info(`Đã khôi phục "${series.seriesTitle}"`);
         }
       } catch {
-        setSeriesStatuses(prevStatuses);
+        setSeriesStatuses((prev) => {
+          const copy = { ...prev };
+          if (previousValue === undefined) {
+            delete copy[series.seriesKey];
+          } else {
+            copy[series.seriesKey] = previousValue;
+          }
+          return copy;
+        });
         toast.error('Lỗi kết nối khi lưu trạng thái bộ phim.');
       }
     },
-    [seriesStatuses],
+    [],
   );
 
   // Smart Delta Sync: Quét nhanh 10 video mới nhất của các kênh đang bật (background hoặc thủ công)
@@ -1566,7 +1591,8 @@ export function UnifiedCinemaWorkspace({
     [],
   );
 
-  // Tự động chạy ngầm Background Auto-Sync cho kho Phim Chiếu Rạp (chu kỳ 12 giờ hoặc khi bấm mở tab mà kho trống)
+  // Tách luồng chạy ngầm: trì hoãn Background Auto-Sync kho Phim Chiếu Rạp bằng requestIdleCallback / 1500ms
+  // để tuyệt đối không làm đứng thanh điều hướng khi người dùng vừa mở app hoặc vừa chuyển tab
   useEffect(() => {
     if (authStatus !== 'authenticated') return;
 
@@ -1589,19 +1615,43 @@ export function UnifiedCinemaWorkspace({
       // Fallback sang server check
     }
 
-    if (viewMode === 'theatrical' && currentTheatricalCount === 0) {
-      void Promise.resolve().then(() => runTheatricalDiscover(true, false));
-      return;
-    }
+    const shouldForceNow =
+      viewMode === 'theatrical' && currentTheatricalCount === 0;
+    if (!shouldForceNow && !isStaleOrEmpty) return;
 
-    if (!isStaleOrEmpty) return;
+    let cancelled = false;
+    let idleId: number | null = null;
+    const scheduleTask = () => {
+      if (cancelled) return;
+      void runTheatricalDiscover(
+        shouldForceNow || currentTheatricalCount === 0,
+        false,
+      );
+    };
 
-    void Promise.resolve().then(() =>
-      runTheatricalDiscover(currentTheatricalCount === 0, false),
-    );
+    const delayMs = shouldForceNow ? 250 : 1500;
+    const timeoutId = window.setTimeout(() => {
+      if (cancelled) return;
+      if (typeof window.requestIdleCallback === 'function') {
+        idleId = window.requestIdleCallback(scheduleTask, { timeout: 2500 });
+      } else {
+        scheduleTask();
+      }
+    }, delayMs);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+      if (
+        idleId !== null &&
+        typeof window.cancelIdleCallback === 'function'
+      ) {
+        window.cancelIdleCallback(idleId);
+      }
+    };
   }, [authStatus, viewMode, allVideos, runTheatricalDiscover]);
 
-  // Tự động chạy ngầm Smart Delta Sync khi mở app nếu đã quá >= 60 phút từ lần quét trước
+  // Tự động chạy ngầm Smart Delta Sync khi mở app (trì hoãn 1500ms sau mount để giữ 60fps ban đầu)
   useEffect(() => {
     if (
       hasTriggeredAutoDeltaRef.current ||
@@ -1626,9 +1676,12 @@ export function UnifiedCinemaWorkspace({
       // Fallback sang server cooldown
     }
 
-    if (shouldRun) {
+    if (!shouldRun) return;
+
+    const timer = window.setTimeout(() => {
       void runDeltaSync(false);
-    }
+    }, 1500);
+    return () => window.clearTimeout(timer);
   }, [authStatus, selectedChannelIds.size, runDeltaSync]);
 
   const handleScrollToMainStage = useCallback(() => {

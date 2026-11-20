@@ -5,6 +5,17 @@ import type { UserSeriesStatus } from '@/types/database';
 
 const VALID_STATUSES: UserSeriesStatus[] = ['following', 'completed', 'hidden'];
 
+function isMissingTableError(error: { code?: string; message?: string }): boolean {
+  const code = error.code ?? '';
+  const msg = (error.message ?? '').toLowerCase();
+  return (
+    code === '42P01' ||
+    code === 'PGRST205' ||
+    msg.includes('could not find the table') ||
+    msg.includes('does not exist')
+  );
+}
+
 export async function POST(request: Request) {
   const auth = await verifyWhitelistedUser();
   if (!auth.allowed || !auth.userId) {
@@ -55,15 +66,18 @@ export async function POST(request: Request) {
 
     if (error) {
       console.error('[SeriesStatus] Lỗi xóa trạng thái:', error);
-      return NextResponse.json({
-        seriesKey,
-        status: null,
-        warning:
-          'Chưa tạo bảng user_series_status trong Supabase. Hãy chạy SQL trong docs/03-DATABASE.md để lưu bền vững.',
-      });
+      return NextResponse.json(
+        {
+          error: isMissingTableError(error)
+            ? 'Bảng user_series_status chưa được tạo trên Supabase.'
+            : 'Không thể đồng bộ trạng thái bộ phim lên máy chủ.',
+          code: isMissingTableError(error) ? 'TABLE_MISSING' : error.code,
+        },
+        { status: isMissingTableError(error) ? 503 : 500 },
+      );
     }
 
-    return NextResponse.json({ seriesKey, status: null });
+    return NextResponse.json({ ok: true, seriesKey, status: null });
   }
 
   const nowIso = new Date().toISOString();
@@ -80,13 +94,16 @@ export async function POST(request: Request) {
 
   if (error) {
     console.error('[SeriesStatus] Lỗi upsert trạng thái:', error);
-    return NextResponse.json({
-      seriesKey,
-      status,
-      warning:
-        'Chưa tạo bảng user_series_status trong Supabase. Hãy chạy SQL trong docs/03-DATABASE.md để lưu bền vững.',
-    });
+    return NextResponse.json(
+      {
+        error: isMissingTableError(error)
+          ? 'Bảng user_series_status chưa được tạo trên Supabase.'
+          : 'Không thể lưu trạng thái bộ phim lên Supabase.',
+        code: isMissingTableError(error) ? 'TABLE_MISSING' : error.code,
+      },
+      { status: isMissingTableError(error) ? 503 : 500 },
+    );
   }
 
-  return NextResponse.json({ seriesKey, status, updatedAt: nowIso });
+  return NextResponse.json({ ok: true, seriesKey, status, updatedAt: nowIso });
 }

@@ -11,8 +11,8 @@ interface VideoThumbnailProps {
   sizes?: string;
   className?: string;
   /**
-   * Ưu tiên dùng hqdefault.jpg (480x360) cho thẻ lưới ngoài danh sách:
-   * nhẹ hơn nhiều so với maxresdefault.jpg và đảm bảo 100% video cũ trên YouTube đều có ảnh.
+   * Ưu tiên dùng mqdefault/hqdefault cho thẻ lưới ngoài danh sách:
+   * nhẹ hơn nhiều so với maxresdefault.jpg, tăng tốc độ giải mã ảnh và đảm bảo 60fps khi cuộn.
    */
   preferHq?: boolean;
 }
@@ -33,12 +33,16 @@ function buildThumbnailCandidates(
     }
   };
 
-  const hqFallback = videoId
-    ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
-    : null;
   const mqFallback = videoId
     ? `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`
     : null;
+  const hqFallback = videoId
+    ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+    : null;
+
+  if (preferHq && mqFallback) {
+    pushUnique(mqFallback);
+  }
 
   if (thumbnailUrl?.trim()) {
     const normalized =
@@ -54,7 +58,7 @@ function buildThumbnailCandidates(
   return candidates;
 }
 
-export function VideoThumbnail({
+export const VideoThumbnail = React.memo(function VideoThumbnail({
   videoId,
   thumbnailUrl,
   alt,
@@ -90,6 +94,8 @@ export function VideoThumbnail({
       alt={alt}
       fill
       unoptimized
+      loading="lazy"
+      decoding="async"
       sizes={sizes}
       className={className}
       onError={() => {
@@ -100,4 +106,4 @@ export function VideoThumbnail({
       }}
     />
   );
-}
+});

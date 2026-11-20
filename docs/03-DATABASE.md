@@ -200,7 +200,7 @@ CREATE POLICY "Users read own explore cache"
   USING (auth.uid() = user_id);
 
 -- 10. Bảng Trạng thái Theo Dõi / Ẩn Bộ Phim theo từng User (Series Status)
-CREATE TABLE public.user_series_status (
+CREATE TABLE IF NOT EXISTS public.user_series_status (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   channel_id TEXT NOT NULL REFERENCES public.channels(channel_id) ON DELETE CASCADE,
@@ -211,13 +211,23 @@ CREATE TABLE public.user_series_status (
   UNIQUE(user_id, series_key)
 );
 
-CREATE INDEX idx_user_series_status_user ON public.user_series_status(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_user_series_status_user ON public.user_series_status(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_user_series_status_lookup ON public.user_series_status(user_id, series_key);
 
 ALTER TABLE public.user_series_status ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users manage own series status" ON public.user_series_status;
 CREATE POLICY "Users manage own series status"
   ON public.user_series_status FOR ALL
   TO authenticated
-  USING (auth.uid() = user_id);
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+-- Index hiệu năng cao cho truy vấn lưới phim & không gian Phim Chiếu Rạp
+CREATE INDEX IF NOT EXISTS idx_videos_channel_published ON public.videos(channel_id, published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_videos_duration_seconds ON public.videos(duration_seconds);
+CREATE INDEX IF NOT EXISTS idx_videos_theatrical_published ON public.videos(is_theatrical_movie, published_at DESC) WHERE is_theatrical_movie = TRUE;
+CREATE INDEX IF NOT EXISTS idx_videos_cinema_format ON public.videos(cinema_format) WHERE is_theatrical_movie = TRUE;
+CREATE INDEX IF NOT EXISTS idx_videos_cinema_genres ON public.videos USING GIN (cinema_genres) WHERE is_theatrical_movie = TRUE;
 
 -- 11. Bảng Danh sách Lưu Xem Sau (Watch Later / Bookmarks)
 CREATE TABLE public.user_watch_later (

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Clapperboard,
   FolderKanban,
@@ -84,6 +84,224 @@ const STRUCTURAL_ROW_DEFINITIONS = [
   },
 ];
 
+const PROGRESSIVE_WINDOW_STEP = 30;
+
+interface MovieCardProps {
+  video: CinemaVideoItem;
+  viewMode: WorkspaceViewMode;
+  isPlaying: boolean;
+  isWatchLater: boolean;
+  isChannelSubscribed: boolean;
+  isSubscribing: boolean;
+  onSelectVideo: (video: CinemaVideoItem) => void;
+  onCycleVideoGenre?: (
+    video: CinemaVideoItem,
+    nextGenre: PrimaryGenreTag,
+  ) => void;
+  onToggleWatchLater?: (videoId: string) => void;
+  onSubscribeChannel?: (channelId: string, channelTitle?: string) => void;
+}
+
+const MovieCard = React.memo(function MovieCard({
+  video,
+  viewMode,
+  isPlaying,
+  isWatchLater,
+  isChannelSubscribed,
+  isSubscribing,
+  onSelectVideo,
+  onCycleVideoGenre,
+  onToggleWatchLater,
+  onSubscribeChannel,
+}: MovieCardProps) {
+  const percent = getProgressPercent(
+    video.progress_seconds,
+    video.duration_seconds,
+  );
+  const currentPrimaryGenre: PrimaryGenreTag =
+    video.detected_genre &&
+    PRIMARY_GENRE_OPTIONS.includes(video.detected_genre as PrimaryGenreTag)
+      ? (video.detected_genre as PrimaryGenreTag)
+      : 'HH2D';
+  const nextGenre: PrimaryGenreTag =
+    PRIMARY_GENRE_OPTIONS[
+      (PRIMARY_GENRE_OPTIONS.indexOf(currentPrimaryGenre) + 1) %
+        PRIMARY_GENRE_OPTIONS.length
+    ];
+  const genreStyle = GENRE_DOT_STYLES[currentPrimaryGenre];
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelectVideo(video)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelectVideo(video);
+        }
+      }}
+      className={`cinema-card-cv group flex flex-col overflow-hidden rounded-xl border text-left transition-colors cursor-pointer ${
+        isPlaying
+          ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]'
+          : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:border-[var(--accent-primary)]/60'
+      }`}
+    >
+      <div className="relative aspect-video w-full overflow-hidden bg-[var(--bg-elevated)]">
+        <VideoThumbnail
+          videoId={video.video_id}
+          thumbnailUrl={video.thumbnail_url}
+          alt={video.title}
+          sizes="(max-width: 640px) 100vw, 25vw"
+          className="object-cover"
+        />
+
+        <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/35">
+          <div className="flex size-10 items-center justify-center rounded-full bg-[var(--accent-primary)] text-[var(--accent-foreground)] opacity-0 transition-opacity group-hover:opacity-100">
+            <Play className="ml-0.5 size-4 fill-current" />
+          </div>
+        </div>
+
+        {isTheatricalMovieVideo(video) && (
+          <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-md border border-amber-400/50 bg-black/85 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-amber-300 shadow-sm">
+            <Clapperboard className="size-3 shrink-0 text-amber-400" />
+            <span>CHIẾU RẠP</span>
+          </span>
+        )}
+
+        {onToggleWatchLater && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleWatchLater(video.video_id);
+            }}
+            aria-label={
+              isWatchLater
+                ? 'Xóa khỏi danh sách Xem sau'
+                : 'Lưu vào danh sách Xem sau'
+            }
+            title={
+              isWatchLater ? 'Đã lưu Xem sau — Bấm để gỡ' : 'Lưu Xem sau'
+            }
+            className={`absolute right-2 top-2 flex size-7 items-center justify-center rounded-lg transition-all cursor-pointer ${
+              isWatchLater
+                ? 'bg-amber-500 text-black shadow-md opacity-100'
+                : 'bg-black/80 text-white/85 opacity-85 hover:bg-black/95 hover:text-white sm:opacity-0 sm:group-hover:opacity-100'
+            }`}
+          >
+            <Bookmark
+              className={`size-3.5 ${isWatchLater ? 'fill-current' : ''}`}
+            />
+          </button>
+        )}
+
+        <span className="absolute bottom-2 right-2 rounded bg-black/85 px-1.5 py-0.5 text-xs font-medium tabular-nums text-white">
+          {formatDuration(video.duration_seconds)}
+        </span>
+
+        {percent > 0 && (
+          <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/50">
+            <div
+              className="h-full bg-[var(--accent-primary)]"
+              style={{ width: `${percent}%` }}
+            />
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-1 flex-col justify-between p-3.5">
+        <div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {viewMode === 'theatrical' ? (
+              <>
+                {(() => {
+                  const fmt = resolveCinemaFormat(video);
+                  const fmtStyle = CINEMA_FORMAT_STYLES[fmt];
+                  return (
+                    <span
+                      className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-medium ${fmtStyle.badgeClass}`}
+                    >
+                      {fmtStyle.label}
+                    </span>
+                  );
+                })()}
+                {Array.isArray(video.cinema_genres) &&
+                  video.cinema_genres.slice(0, 2).map((g) => (
+                    <span
+                      key={g}
+                      className="inline-flex items-center rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-secondary)]"
+                    >
+                      {g}
+                    </span>
+                  ))}
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCycleVideoGenre?.(video, nextGenre);
+                }}
+                title={
+                  video.is_manual_tag
+                    ? `Đã khóa thủ công (${genreStyle.label}) — Bấm để đổi sang ${nextGenre}`
+                    : `Bấm để đổi nhanh sang ${nextGenre}`
+                }
+                className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-medium transition-opacity hover:opacity-85 cursor-pointer ${genreStyle.badgeClass}`}
+              >
+                {video.is_manual_tag && (
+                  <Lock className="size-2.5 shrink-0" />
+                )}
+                <span>
+                  {genreStyle.label}
+                  {video.episode_number !== null
+                    ? ` • Tập ${video.episode_number}`
+                    : ''}
+                </span>
+              </button>
+            )}
+          </div>
+          <h3 className="mt-2 line-clamp-2 text-sm font-semibold text-[var(--text-primary)]">
+            {video.title}
+          </h3>
+        </div>
+
+        <div className="mt-2.5 flex items-center justify-between gap-2">
+          <p className="min-w-0 flex-1 truncate text-xs text-[var(--text-secondary)]">
+            {video.channel_title || video.channel_id}
+          </p>
+
+          {(viewMode === 'explore' || viewMode === 'theatrical') &&
+            (isChannelSubscribed ? (
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-emerald-500/35 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                <Check className="size-3" />
+                <span>Đã theo dõi</span>
+              </span>
+            ) : (
+              <button
+                type="button"
+                disabled={isSubscribing}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSubscribeChannel?.(video.channel_id, video.channel_title);
+                }}
+                className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-2.5 text-[11px] font-semibold text-[var(--accent-foreground)] transition-opacity hover:opacity-90 disabled:opacity-60 cursor-pointer"
+              >
+                {isSubscribing ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <Plus className="size-3" />
+                )}
+                <span>Đăng ký kênh</span>
+              </button>
+            ))}
+        </div>
+      </div>
+    </div>
+  );
+});
+
 export function StructuredCinemaRows({
   authStatus,
   selectedChannelCount,
@@ -112,17 +330,12 @@ export function StructuredCinemaRows({
   onTriggerGoogleSignIn,
 }: StructuredCinemaRowsProps) {
   const exploreSentinelRef = useRef<HTMLDivElement>(null);
-  const theatricalSentinelRef = useRef<HTMLDivElement>(null);
+  const windowSentinelRef = useRef<HTMLDivElement>(null);
   const exploreObserverRef = useRef({
     hasMoreExplore,
     isLoadingMoreExplore,
     isLoadingExplore,
     onLoadMoreExplore,
-  });
-  const theatricalObserverRef = useRef({
-    isLoadingTheatrical,
-    isLoadingMoreTheatrical,
-    onLoadMoreTheatrical,
   });
 
   useEffect(() => {
@@ -132,23 +345,65 @@ export function StructuredCinemaRows({
       isLoadingExplore,
       onLoadMoreExplore,
     };
-    theatricalObserverRef.current = {
-      isLoadingTheatrical,
-      isLoadingMoreTheatrical,
-      onLoadMoreTheatrical,
-    };
   });
+
+  const displayVideos = useMemo(
+    () =>
+      viewMode === 'continue'
+        ? videos.filter((v) => v.progress_seconds > 0 && !v.is_completed)
+        : videos,
+    [videos, viewMode],
+  );
+
+  // Zero-Latency Progressive Window Rendering (30 thẻ/lô từ RAM, reset về 30 khi đổi tab/bộ lọc)
+  const windowKey = `${viewMode}|${displayVideos.length}|${displayVideos[0]?.video_id ?? ''}`;
+  const [windowState, setWindowState] = useState<{
+    key: string;
+    count: number;
+  }>({ key: windowKey, count: PROGRESSIVE_WINDOW_STEP });
+
+  const visibleCount =
+    windowState.key === windowKey ? windowState.count : PROGRESSIVE_WINDOW_STEP;
+  const renderedVideos = useMemo(
+    () => displayVideos.slice(0, visibleCount),
+    [displayVideos, visibleCount],
+  );
+  const hasMoreInMemory = visibleCount < displayVideos.length;
+
+  useEffect(() => {
+    if (!hasMoreInMemory) return;
+    const node = windowSentinelRef.current;
+    if (!node) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting) return;
+        setWindowState((prev) => {
+          const current =
+            prev.key === windowKey ? prev.count : PROGRESSIVE_WINDOW_STEP;
+          if (current >= displayVideos.length) return prev;
+          return {
+            key: windowKey,
+            count: Math.min(
+              displayVideos.length,
+              current + PROGRESSIVE_WINDOW_STEP,
+            ),
+          };
+        });
+      },
+      { rootMargin: '0px 0px 800px 0px' },
+    );
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMoreInMemory, windowKey, displayVideos.length]);
 
   const shouldObserveExploreSentinel =
     viewMode === 'explore' &&
-    videos.length > 0 &&
+    !hasMoreInMemory &&
+    displayVideos.length > 0 &&
     hasMoreExplore &&
     Boolean(onLoadMoreExplore);
-
-  const shouldObserveTheatricalSentinel =
-    viewMode === 'theatrical' &&
-    videos.length > 0 &&
-    Boolean(onLoadMoreTheatrical);
 
   useEffect(() => {
     if (!shouldObserveExploreSentinel) return;
@@ -175,33 +430,6 @@ export function StructuredCinemaRows({
     observer.observe(node);
     return () => observer.disconnect();
   }, [shouldObserveExploreSentinel]);
-
-  useEffect(() => {
-    if (!shouldObserveTheatricalSentinel) return;
-    const node = theatricalSentinelRef.current;
-    if (!node) return;
-
-    let hasTriggeredForCurrentRender = false;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!entries[0]?.isIntersecting || hasTriggeredForCurrentRender) return;
-        const st = theatricalObserverRef.current;
-        if (
-          st.isLoadingTheatrical ||
-          st.isLoadingMoreTheatrical ||
-          !st.onLoadMoreTheatrical
-        ) {
-          return;
-        }
-        hasTriggeredForCurrentRender = true;
-        st.onLoadMoreTheatrical();
-      },
-      { rootMargin: '240px' },
-    );
-
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [shouldObserveTheatricalSentinel, videos.length]);
 
   // 1. Trạng thái: Chưa đăng nhập Google
   if (authStatus === 'unauthenticated') {
@@ -496,12 +724,7 @@ export function StructuredCinemaRows({
     );
   }
 
-  // 5. Khi có dữ liệu thực từ Supabase: hiển thị lưới khe phim tương tác
-  const displayVideos =
-    viewMode === 'continue'
-      ? videos.filter((v) => v.progress_seconds > 0 && !v.is_completed)
-      : videos;
-
+  // 5. Khi có dữ liệu thực từ Supabase: hiển thị lưới khe phim tương tác (30 thẻ/lô cuốn chiếu 0ms từ RAM)
   return (
     <section aria-label="Danh sách khe phim" className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -537,212 +760,39 @@ export function StructuredCinemaRows({
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {displayVideos.map((video) => {
-            const isPlaying = video.video_id === activeVideoId;
-            const percent = getProgressPercent(
-              video.progress_seconds,
-              video.duration_seconds,
-            );
-            const currentPrimaryGenre: PrimaryGenreTag =
-              video.detected_genre &&
-              PRIMARY_GENRE_OPTIONS.includes(
-                video.detected_genre as PrimaryGenreTag,
-              )
-                ? (video.detected_genre as PrimaryGenreTag)
-                : 'HH2D';
-            const nextGenre: PrimaryGenreTag =
-              PRIMARY_GENRE_OPTIONS[
-                (PRIMARY_GENRE_OPTIONS.indexOf(currentPrimaryGenre) + 1) %
-                  PRIMARY_GENRE_OPTIONS.length
-              ];
-            const genreStyle = GENRE_DOT_STYLES[currentPrimaryGenre];
-
-            return (
-              <div
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {renderedVideos.map((video) => (
+              <MovieCard
                 key={video.video_id}
-                role="button"
-                tabIndex={0}
-                onClick={() => onSelectVideo(video)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    onSelectVideo(video);
-                  }
-                }}
-                className={`group flex flex-col overflow-hidden rounded-xl border text-left transition-colors cursor-pointer ${
-                  isPlaying
-                    ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]'
-                    : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:border-[var(--accent-primary)]/60'
-                }`}
-              >
-                <div className="relative aspect-video w-full overflow-hidden bg-[var(--bg-elevated)]">
-                  <VideoThumbnail
-                    videoId={video.video_id}
-                    thumbnailUrl={video.thumbnail_url}
-                    alt={video.title}
-                    sizes="(max-width: 640px) 100vw, 25vw"
-                    className="object-cover"
-                  />
+                video={video}
+                viewMode={viewMode}
+                isPlaying={video.video_id === activeVideoId}
+                isWatchLater={Boolean(watchLaterIds?.has(video.video_id))}
+                isChannelSubscribed={Boolean(
+                  selectedChannelIds?.has(video.channel_id),
+                )}
+                isSubscribing={subscribingChannelId === video.channel_id}
+                onSelectVideo={onSelectVideo}
+                onCycleVideoGenre={onCycleVideoGenre}
+                onToggleWatchLater={onToggleWatchLater}
+                onSubscribeChannel={onSubscribeChannel}
+              />
+            ))}
+          </div>
 
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/35">
-                    <div className="flex size-10 items-center justify-center rounded-full bg-[var(--accent-primary)] text-[var(--accent-foreground)] opacity-0 transition-opacity group-hover:opacity-100">
-                      <Play className="ml-0.5 size-4 fill-current" />
-                    </div>
-                  </div>
-
-                  {isTheatricalMovieVideo(video) && (
-                    <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-md border border-amber-400/50 bg-black/85 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-amber-300 shadow-sm backdrop-blur-sm">
-                      <Clapperboard className="size-3 shrink-0 text-amber-400" />
-                      <span>CHIẾU RẠP</span>
-                    </span>
-                  )}
-
-                  {onToggleWatchLater && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onToggleWatchLater(video.video_id);
-                      }}
-                      aria-label={
-                        watchLaterIds?.has(video.video_id)
-                          ? 'Xóa khỏi danh sách Xem sau'
-                          : 'Lưu vào danh sách Xem sau'
-                      }
-                      title={
-                        watchLaterIds?.has(video.video_id)
-                          ? 'Đã lưu Xem sau — Bấm để gỡ'
-                          : 'Lưu Xem sau'
-                      }
-                      className={`absolute right-2 top-2 flex size-7 items-center justify-center rounded-lg backdrop-blur-sm transition-all cursor-pointer ${
-                        watchLaterIds?.has(video.video_id)
-                          ? 'bg-amber-500 text-black shadow-md opacity-100'
-                          : 'bg-black/70 text-white/85 opacity-85 hover:bg-black/90 hover:text-white sm:opacity-0 sm:group-hover:opacity-100'
-                      }`}
-                    >
-                      <Bookmark
-                        className={`size-3.5 ${
-                          watchLaterIds?.has(video.video_id)
-                            ? 'fill-current'
-                            : ''
-                        }`}
-                      />
-                    </button>
-                  )}
-
-                  <span className="absolute bottom-2 right-2 rounded bg-black/80 px-1.5 py-0.5 text-xs font-medium tabular-nums text-white">
-                    {formatDuration(video.duration_seconds)}
-                  </span>
-
-                  {percent > 0 && (
-                    <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/50">
-                      <div
-                        className="h-full bg-[var(--accent-primary)]"
-                        style={{ width: `${percent}%` }}
-                      />
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex flex-1 flex-col justify-between p-3.5">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {viewMode === 'theatrical' ? (
-                        <>
-                          {(() => {
-                            const fmt = resolveCinemaFormat(video);
-                            const fmtStyle = CINEMA_FORMAT_STYLES[fmt];
-                            return (
-                              <span
-                                className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-medium ${fmtStyle.badgeClass}`}
-                              >
-                                {fmtStyle.label}
-                              </span>
-                            );
-                          })()}
-                          {Array.isArray(video.cinema_genres) &&
-                            video.cinema_genres.slice(0, 2).map((g) => (
-                              <span
-                                key={g}
-                                className="inline-flex items-center rounded border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-secondary)]"
-                              >
-                                {g}
-                              </span>
-                            ))}
-                        </>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onCycleVideoGenre?.(video, nextGenre);
-                          }}
-                          title={
-                            video.is_manual_tag
-                              ? `Đã khóa thủ công (${genreStyle.label}) — Bấm để đổi sang ${nextGenre}`
-                              : `Bấm để đổi nhanh sang ${nextGenre}`
-                          }
-                          className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-medium transition-opacity hover:opacity-85 cursor-pointer ${genreStyle.badgeClass}`}
-                        >
-                          {video.is_manual_tag && (
-                            <Lock className="size-2.5 shrink-0" />
-                          )}
-                          <span>
-                            {genreStyle.label}
-                            {video.episode_number !== null
-                              ? ` • Tập ${video.episode_number}`
-                              : ''}
-                          </span>
-                        </button>
-                      )}
-                    </div>
-                    <h3 className="mt-2 line-clamp-2 text-sm font-semibold text-[var(--text-primary)]">
-                      {video.title}
-                    </h3>
-                  </div>
-
-                  <div className="mt-2.5 flex items-center justify-between gap-2">
-                    <p className="min-w-0 flex-1 truncate text-xs text-[var(--text-secondary)]">
-                      {video.channel_title || video.channel_id}
-                    </p>
-
-                    {(viewMode === 'explore' || viewMode === 'theatrical') &&
-                      (selectedChannelIds?.has(video.channel_id) ? (
-                        <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-emerald-500/35 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-                          <Check className="size-3" />
-                          <span>Đã theo dõi</span>
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={subscribingChannelId === video.channel_id}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onSubscribeChannel?.(
-                              video.channel_id,
-                              video.channel_title,
-                            );
-                          }}
-                          className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg bg-[var(--accent-primary)] px-2.5 text-[11px] font-semibold text-[var(--accent-foreground)] transition-opacity hover:opacity-90 disabled:opacity-60 cursor-pointer"
-                        >
-                          {subscribingChannelId === video.channel_id ? (
-                            <Loader2 className="size-3 animate-spin" />
-                          ) : (
-                            <Plus className="size-3" />
-                          )}
-                          <span>Đăng ký kênh</span>
-                        </button>
-                      ))}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+          {/* Sentinel cuốn chiếu 30 thẻ từ RAM (rootMargin 800px — 0ms, không skeleton/spinner) */}
+          {hasMoreInMemory && (
+            <div
+              ref={windowSentinelRef}
+              aria-hidden="true"
+              className="h-4 w-full"
+            />
+          )}
+        </>
       )}
 
-      {viewMode === 'cinema' && displayVideos.length > 0 && (
+      {viewMode === 'cinema' && displayVideos.length > 0 && !hasMoreInMemory && (
         <div className="flex items-center justify-center pt-3 pb-4">
           <p className="py-2 text-xs text-[var(--text-secondary)]">
             Đang hiển thị toàn bộ {displayVideos.length} phim trong kho
@@ -750,16 +800,15 @@ export function StructuredCinemaRows({
         </div>
       )}
 
-      {/* Cuộn vô tận & nút Tải thêm phim chiếu rạp không giới hạn */}
-      {viewMode === 'theatrical' && displayVideos.length > 0 && (
-        <div
-          ref={theatricalSentinelRef}
-          className="flex flex-col items-center justify-center gap-2.5 pt-3 pb-5"
-        >
-          <p className="text-xs tabular-nums text-[var(--text-secondary)]">
-            Đang hiển thị{' '}
-            <strong className="font-semibold text-[var(--text-primary)]">
-              {displayVideos.length}
+      {/* Nút Tải thêm phim chiếu rạp không giới hạn khi đã hiển thị hết phim trong RAM */}
+      {viewMode === 'theatrical' &&
+        displayVideos.length > 0 &&
+        !hasMoreInMemory && (
+          <div className="flex flex-col items-center justify-center gap-2.5 pt-3 pb-5">
+            <p className="text-xs tabular-nums text-[var(--text-secondary)]">
+              Đang hiển thị{' '}
+              <strong className="font-semibold text-[var(--text-primary)]">
+                {displayVideos.length}
             </strong>{' '}
             / Tổng{' '}
             <strong className="font-semibold text-[var(--text-primary)]">

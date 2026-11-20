@@ -239,3 +239,9 @@
 .scrollbar-clean::-webkit-scrollbar {
   display: none;
 }
+
+/* Tối ưu 60fps: Bỏ qua layout/paint cho các thẻ phim ngoài vùng nhìn thấy */
+.cinema-card-cv {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 320px;
+}

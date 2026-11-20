@@ -44,7 +44,7 @@ interface RawVideoRow {
   video_id: string;
   channel_id: string;
   title: string;
-  description: string | null;
+  description?: string | null;
   thumbnail_url: string | null;
   published_at: string;
   duration_seconds: number;
@@ -53,7 +53,7 @@ interface RawVideoRow {
   detected_genre: CinemaVideoItem['detected_genre'];
   series_name: string | null;
   episode_number: number | null;
-  ai_summary: string | null;
+  ai_summary?: string | null;
   is_manual_tag?: boolean;
   is_theatrical_movie?: boolean | null;
   theatrical_release_year?: number | null;
@@ -62,12 +62,14 @@ interface RawVideoRow {
   created_at: string;
 }
 
+// Chỉ SELECT các cột nhẹ cần thiết cho lưới thẻ phim ngoài màn hình chính
+// (loại bỏ cột nặng như description, ai_summary, insight_data; chỉ tải chi tiết khi mở TheaterStage)
 const VIDEO_SELECT_FULL =
-  'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, is_manual_tag, is_theatrical_movie, theatrical_release_year, cinema_format, cinema_genres, created_at';
+  'video_id, channel_id, title, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, is_manual_tag, is_theatrical_movie, theatrical_release_year, cinema_format, cinema_genres, created_at';
 const VIDEO_SELECT_THEATRICAL =
-  'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, is_manual_tag, is_theatrical_movie, theatrical_release_year, created_at';
+  'video_id, channel_id, title, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, is_manual_tag, is_theatrical_movie, theatrical_release_year, created_at';
 const VIDEO_SELECT_BASIC =
-  'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, created_at';
+  'video_id, channel_id, title, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, created_at';
 
 /**
  * Tải KHÔNG GIỚI HẠN toàn bộ kho Phim Chiếu Rạp đã xác minh (`is_theatrical_movie = true` hoặc `[CHIẾU RẠP]`)
@@ -382,6 +384,8 @@ export async function loadWorkspaceDataForUser(
     const channel = channelMap.get(v.channel_id);
     return {
       ...v,
+      description: v.description ?? null,
+      ai_summary: v.ai_summary ?? null,
       detected_genre:
         v.detected_genre === 'Phim AI' || v.detected_genre === 'HH2D'
           ? v.detected_genre

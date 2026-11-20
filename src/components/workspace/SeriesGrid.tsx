@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Clapperboard,
   ListVideo,
@@ -11,13 +11,14 @@ import {
   Star,
   EyeOff,
   Eye,
-  Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { VideoThumbnail } from '@/components/workspace/VideoThumbnail';
 import { GENRE_DOT_STYLES, type SortOption } from '@/types/workspace';
 import { isTheatricalSeries, type SeriesGroup } from '@/lib/series-parser';
 import type { UserSeriesStatus } from '@/types/database';
+
+const PROGRESSIVE_WINDOW_STEP = 30;
 
 interface SeriesGridProps {
   seriesList: SeriesGroup[];
@@ -33,6 +34,215 @@ interface SeriesGridProps {
   onOpenVault?: () => void;
 }
 
+interface SeriesCardProps {
+  series: SeriesGroup;
+  isSelected: boolean;
+  status: UserSeriesStatus | null;
+  isHiddenView: boolean;
+  onSelectSeries: (series: SeriesGroup) => void;
+  onUpdateSeriesStatus: (
+    series: SeriesGroup,
+    nextStatus: UserSeriesStatus | null,
+  ) => void;
+}
+
+const SeriesCard = React.memo(function SeriesCard({
+  series,
+  isSelected,
+  status,
+  isHiddenView,
+  onSelectSeries,
+  onUpdateSeriesStatus,
+}: SeriesCardProps) {
+  const genreStyle = GENRE_DOT_STYLES[series.detectedGenre];
+  const isFollowing = status === 'following';
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelectSeries(series)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelectSeries(series);
+        }
+      }}
+      className="cinema-card-cv group flex flex-col text-left cursor-pointer focus:outline-none"
+    >
+      {/* Hiệu ứng xếp lớp phía sau (Playlist Stack) */}
+      <div
+        className={`mx-3 h-1.5 rounded-t-lg border-x border-t transition-colors ${
+          isFollowing
+            ? 'border-amber-500/40 bg-amber-500/15'
+            : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)]/55 group-hover:border-[var(--accent-primary)]/40'
+        }`}
+      />
+      <div
+        className={`mx-1.5 h-1.5 rounded-t-lg border-x border-t transition-colors ${
+          isFollowing
+            ? 'border-amber-500/60 bg-amber-500/20'
+            : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)]/85 group-hover:border-[var(--accent-primary)]/60'
+        }`}
+      />
+
+      {/* Thân thẻ Bộ phim */}
+      <div
+        className={`flex flex-1 flex-col overflow-hidden rounded-xl border transition-colors ${
+          isSelected
+            ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]'
+            : isFollowing
+              ? 'border-amber-500/55 bg-[var(--bg-surface)] group-hover:border-amber-400'
+              : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] group-hover:border-[var(--accent-primary)]/70'
+        }`}
+      >
+        {/* Ảnh bìa tập mới nhất */}
+        <div className="relative aspect-video w-full overflow-hidden bg-[var(--bg-elevated)]">
+          <VideoThumbnail
+            videoId={series.latestEpisode.video.video_id}
+            thumbnailUrl={series.coverThumbnailUrl}
+            alt={series.seriesTitle}
+            sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
+            className="object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+          />
+
+          {/* Lớp phủ hover Play */}
+          <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/35">
+            <div className="flex size-11 items-center justify-center rounded-full bg-[var(--accent-primary)] text-[var(--accent-foreground)] opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+              <Play className="ml-0.5 size-5 fill-current" />
+            </div>
+          </div>
+
+          {/* Badge góc trái: ⭐ Theo dõi / 🎬 CHIẾU RẠP / 🔥 TẬP MỚI / Đã xem (nền đặc bg-black/85 không blur nặng GPU) */}
+          <div className="absolute left-2 top-2 flex flex-wrap items-center gap-1">
+            {isFollowing && (
+              <span className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-1.5 py-0.5 text-[11px] font-bold text-black shadow-sm">
+                <Star className="size-3 fill-current" />
+                <span>THEO DÕI</span>
+              </span>
+            )}
+            {isTheatricalSeries(series) && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-amber-400/50 bg-black/85 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-amber-300 shadow-sm">
+                <Clapperboard className="size-3 shrink-0 text-amber-400" />
+                <span>CHIẾU RẠP</span>
+              </span>
+            )}
+            {series.hasNewEpisode ? (
+              <span className="inline-flex items-center gap-1 rounded-md bg-[var(--accent-primary)] px-2 py-0.5 text-[11px] font-bold tracking-wide text-[var(--accent-foreground)] shadow-sm">
+                <Flame className="size-3 shrink-0" />
+                <span>TẬP MỚI</span>
+              </span>
+            ) : series.lastWatchedEpisode ? (
+              <span className="inline-flex items-center gap-1 rounded-md bg-black/80 px-2 py-0.5 text-[11px] font-medium text-emerald-300">
+                <CheckCircle2 className="size-3 shrink-0" />
+                <span>Đã xem {series.lastWatchedEpisode.episodeLabel}</span>
+              </span>
+            ) : null}
+          </div>
+
+          {/* Badge góc phải: ≡ {totalEpisodes} tập */}
+          <span className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-md bg-black/85 px-2 py-0.5 text-xs font-semibold tabular-nums text-white">
+            <ListVideo className="size-3.5 shrink-0" />
+            <span>{series.totalEpisodes} tập</span>
+          </span>
+        </div>
+
+        {/* Thông tin bộ phim */}
+        <div className="flex flex-1 flex-col justify-between gap-2.5 p-3.5">
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-1.5">
+              <span
+                className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-medium ${genreStyle.badgeClass}`}
+              >
+                <span
+                  className={`size-1.5 rounded-full ${genreStyle.dotClass}`}
+                />
+                <span>{genreStyle.label}</span>
+              </span>
+
+              <span className="truncate text-[11px] font-medium text-[var(--accent-primary)]">
+                Mới nhất: {series.latestEpisode.episodeLabel}
+              </span>
+            </div>
+
+            <h3 className="mt-2 line-clamp-2 text-sm font-semibold leading-snug text-[var(--text-primary)]">
+              {series.seriesTitle}
+            </h3>
+          </div>
+
+          <div className="flex flex-col gap-2 border-t border-[var(--border-subtle)] pt-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="min-w-0 flex-1 truncate text-xs text-[var(--text-secondary)]">
+                {series.channelTitle}
+              </p>
+              {series.lastWatchedEpisode && series.hasNewEpisode && (
+                <span className="shrink-0 text-[11px] text-[var(--text-secondary)]">
+                  Đã xem {series.lastWatchedEpisode.episodeLabel}
+                </span>
+              )}
+            </div>
+
+            {/* Nút hành động Optimistic UI 0ms: ⭐ Theo dõi & Ẩn / Hiện lại */}
+            <div className="flex items-center gap-1.5">
+              {isHiddenView ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUpdateSeriesStatus(series, null);
+                  }}
+                  className="inline-flex h-7 flex-1 items-center justify-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 text-[11px] font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-elevated)] cursor-pointer"
+                >
+                  <Eye className="size-3.5" />
+                  <span>Hiện lại bộ phim</span>
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onUpdateSeriesStatus(
+                        series,
+                        isFollowing ? null : 'following',
+                      );
+                    }}
+                    className={`inline-flex h-7 flex-1 items-center justify-center gap-1 rounded-lg border px-2 text-[11px] font-medium transition-colors cursor-pointer ${
+                      isFollowing
+                        ? 'border-amber-500/50 bg-amber-500/15 text-amber-500 dark:text-amber-300'
+                        : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    <Star
+                      className={`size-3 shrink-0 ${
+                        isFollowing ? 'fill-current' : ''
+                      }`}
+                    />
+                    <span>{isFollowing ? 'Đang theo dõi' : 'Theo dõi'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onUpdateSeriesStatus(series, 'hidden');
+                    }}
+                    title="Ẩn bớt bộ phim này khỏi danh sách chính"
+                    className="inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 text-[11px] font-medium text-[var(--text-secondary)] transition-colors hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-400 cursor-pointer"
+                  >
+                    <EyeOff className="size-3 shrink-0" />
+                    <span>Ẩn</span>
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
 export function SeriesGrid({
   seriesList,
   activeSeriesKey,
@@ -44,20 +254,6 @@ export function SeriesGrid({
   onOpenVault,
 }: SeriesGridProps) {
   const [showHiddenSection, setShowHiddenSection] = useState(false);
-  const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
-
-  const handleStatusClick = async (
-    series: SeriesGroup,
-    nextStatus: UserSeriesStatus | null,
-    actionId: string,
-  ) => {
-    setPendingActionKey(actionId);
-    try {
-      await Promise.resolve(onUpdateSeriesStatus(series, nextStatus));
-    } finally {
-      setPendingActionKey((prev) => (prev === actionId ? null : prev));
-    }
-  };
 
   // Phân tách danh sách:
   // 1) Bộ phim đang hiển thị (ghim nhóm ⭐ Theo dõi lên đầu tiên, nổi bật bộ có tập mới)
@@ -113,242 +309,49 @@ export function SeriesGrid({
     };
   }, [seriesList, seriesStatuses, sortBy]);
 
-  const renderSeriesCard = (series: SeriesGroup, isHiddenView = false) => {
-    const isSelected = series.seriesKey === activeSeriesKey;
-    const genreStyle = GENRE_DOT_STYLES[series.detectedGenre];
-    const status = seriesStatuses[series.seriesKey] ?? null;
-    const isFollowing = status === 'following';
+  // Zero-Latency Progressive Window Rendering (cụm 30 thẻ từ RAM, tự động reset về 30 khi đổi bộ lọc)
+  const windowKey = `${sortBy}|${seriesList.length}|${seriesList[0]?.seriesKey ?? ''}`;
+  const [windowState, setWindowState] = useState<{
+    key: string;
+    count: number;
+  }>({ key: windowKey, count: PROGRESSIVE_WINDOW_STEP });
 
-    return (
-      <div
-        key={series.seriesKey}
-        role="button"
-        tabIndex={0}
-        onClick={() => onSelectSeries(series)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            onSelectSeries(series);
-          }
-        }}
-        className="group flex flex-col text-left cursor-pointer focus:outline-none"
-      >
-        {/* Hiệu ứng xếp lớp phía sau (Playlist Stack) */}
-        <div
-          className={`mx-3 h-1.5 rounded-t-lg border-x border-t transition-colors ${
-            isFollowing
-              ? 'border-amber-500/40 bg-amber-500/15'
-              : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)]/55 group-hover:border-[var(--accent-primary)]/40'
-          }`}
-        />
-        <div
-          className={`mx-1.5 h-1.5 rounded-t-lg border-x border-t transition-colors ${
-            isFollowing
-              ? 'border-amber-500/60 bg-amber-500/20'
-              : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)]/85 group-hover:border-[var(--accent-primary)]/60'
-          }`}
-        />
+  const visibleCount =
+    windowState.key === windowKey ? windowState.count : PROGRESSIVE_WINDOW_STEP;
+  const renderedSeries = useMemo(
+    () => visibleSeries.slice(0, visibleCount),
+    [visibleSeries, visibleCount],
+  );
+  const hasMoreInMemory = visibleCount < visibleSeries.length;
 
-        {/* Thân thẻ Bộ phim */}
-        <div
-          className={`flex flex-1 flex-col overflow-hidden rounded-xl border transition-colors ${
-            isSelected
-              ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]'
-              : isFollowing
-                ? 'border-amber-500/55 bg-[var(--bg-surface)] group-hover:border-amber-400'
-                : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] group-hover:border-[var(--accent-primary)]/70'
-          }`}
-        >
-          {/* Ảnh bìa tập mới nhất */}
-          <div className="relative aspect-video w-full overflow-hidden bg-[var(--bg-elevated)]">
-            <VideoThumbnail
-              videoId={series.latestEpisode.video.video_id}
-              thumbnailUrl={series.coverThumbnailUrl}
-              alt={series.seriesTitle}
-              sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
-              className="object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-            />
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!hasMoreInMemory) return;
+    const node = sentinelRef.current;
+    if (!node) return;
 
-            {/* Lớp phủ hover Play */}
-            <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/35">
-              <div className="flex size-11 items-center justify-center rounded-full bg-[var(--accent-primary)] text-[var(--accent-foreground)] opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
-                <Play className="ml-0.5 size-5 fill-current" />
-              </div>
-            </div>
-
-            {/* Badge góc trái: ⭐ Theo dõi / 🎬 CHIẾU RẠP / 🔥 TẬP MỚI / Đã xem */}
-            <div className="absolute left-2 top-2 flex flex-wrap items-center gap-1">
-              {isFollowing && (
-                <span className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-1.5 py-0.5 text-[11px] font-bold text-black shadow-sm">
-                  <Star className="size-3 fill-current" />
-                  <span>THEO DÕI</span>
-                </span>
-              )}
-              {isTheatricalSeries(series) && (
-                <span className="inline-flex items-center gap-1 rounded-md border border-amber-400/50 bg-black/85 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-amber-300 shadow-sm backdrop-blur-sm">
-                  <Clapperboard className="size-3 shrink-0 text-amber-400" />
-                  <span>CHIẾU RẠP</span>
-                </span>
-              )}
-              {series.hasNewEpisode ? (
-                <span className="inline-flex items-center gap-1 rounded-md bg-[var(--accent-primary)] px-2 py-0.5 text-[11px] font-bold tracking-wide text-[var(--accent-foreground)] shadow-sm">
-                  <Flame className="size-3 shrink-0" />
-                  <span>TẬP MỚI</span>
-                </span>
-              ) : series.lastWatchedEpisode ? (
-                <span className="inline-flex items-center gap-1 rounded-md bg-black/80 px-2 py-0.5 text-[11px] font-medium text-emerald-300 backdrop-blur-sm">
-                  <CheckCircle2 className="size-3 shrink-0" />
-                  <span>Đã xem {series.lastWatchedEpisode.episodeLabel}</span>
-                </span>
-              ) : null}
-            </div>
-
-            {/* Badge góc phải: ≡ {totalEpisodes} tập */}
-            <span className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-md bg-black/85 px-2 py-0.5 text-xs font-semibold tabular-nums text-white backdrop-blur-sm">
-              <ListVideo className="size-3.5 shrink-0" />
-              <span>{series.totalEpisodes} tập</span>
-            </span>
-          </div>
-
-          {/* Thông tin bộ phim */}
-          <div className="flex flex-1 flex-col justify-between gap-2.5 p-3.5">
-            <div>
-              <div className="flex flex-wrap items-center justify-between gap-1.5">
-                <span
-                  className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-medium ${genreStyle.badgeClass}`}
-                >
-                  <span
-                    className={`size-1.5 rounded-full ${genreStyle.dotClass}`}
-                  />
-                  <span>{genreStyle.label}</span>
-                </span>
-
-                <span className="truncate text-[11px] font-medium text-[var(--accent-primary)]">
-                  Mới nhất: {series.latestEpisode.episodeLabel}
-                </span>
-              </div>
-
-              <h3 className="mt-2 line-clamp-2 text-sm font-semibold leading-snug text-[var(--text-primary)]">
-                {series.seriesTitle}
-              </h3>
-            </div>
-
-            <div className="flex flex-col gap-2 border-t border-[var(--border-subtle)] pt-2">
-              <div className="flex items-center justify-between gap-2">
-                <p className="min-w-0 flex-1 truncate text-xs text-[var(--text-secondary)]">
-                  {series.channelTitle}
-                </p>
-                {series.lastWatchedEpisode && series.hasNewEpisode && (
-                  <span className="shrink-0 text-[11px] text-[var(--text-secondary)]">
-                    Đã xem {series.lastWatchedEpisode.episodeLabel}
-                  </span>
-                )}
-              </div>
-
-              {/* Nút hành động: ⭐ Theo dõi & Ẩn / Hiện lại */}
-              <div className="flex items-center gap-1.5">
-                {isHiddenView ? (
-                  <button
-                    type="button"
-                    disabled={pendingActionKey === `${series.seriesKey}:restore`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void handleStatusClick(
-                        series,
-                        null,
-                        `${series.seriesKey}:restore`,
-                      );
-                    }}
-                    className="inline-flex h-7 flex-1 items-center justify-center gap-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 text-[11px] font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-elevated)] disabled:opacity-60 cursor-pointer"
-                  >
-                    {pendingActionKey === `${series.seriesKey}:restore` ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <Eye className="size-3.5" />
-                    )}
-                    <span>
-                      {pendingActionKey === `${series.seriesKey}:restore`
-                        ? 'Đang khôi phục...'
-                        : 'Hiện lại bộ phim'}
-                    </span>
-                  </button>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      disabled={
-                        pendingActionKey === `${series.seriesKey}:follow` ||
-                        pendingActionKey === `${series.seriesKey}:hide`
-                      }
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void handleStatusClick(
-                          series,
-                          isFollowing ? null : 'following',
-                          `${series.seriesKey}:follow`,
-                        );
-                      }}
-                      className={`inline-flex h-7 flex-1 items-center justify-center gap-1 rounded-lg border px-2 text-[11px] font-medium transition-colors disabled:opacity-60 cursor-pointer ${
-                        isFollowing
-                          ? 'border-amber-500/50 bg-amber-500/15 text-amber-500 dark:text-amber-300'
-                          : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
-                      }`}
-                    >
-                      {pendingActionKey === `${series.seriesKey}:follow` ? (
-                        <Loader2 className="size-3 shrink-0 animate-spin" />
-                      ) : (
-                        <Star
-                          className={`size-3 shrink-0 ${
-                            isFollowing ? 'fill-current' : ''
-                          }`}
-                        />
-                      )}
-                      <span>
-                        {pendingActionKey === `${series.seriesKey}:follow`
-                          ? 'Đang lưu...'
-                          : isFollowing
-                            ? 'Đang theo dõi'
-                            : 'Theo dõi'}
-                      </span>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={
-                        pendingActionKey === `${series.seriesKey}:follow` ||
-                        pendingActionKey === `${series.seriesKey}:hide`
-                      }
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void handleStatusClick(
-                          series,
-                          'hidden',
-                          `${series.seriesKey}:hide`,
-                        );
-                      }}
-                      title="Ẩn bớt bộ phim này khỏi danh sách chính"
-                      className="inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 text-[11px] font-medium text-[var(--text-secondary)] transition-colors hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-400 disabled:opacity-60 cursor-pointer"
-                    >
-                      {pendingActionKey === `${series.seriesKey}:hide` ? (
-                        <Loader2 className="size-3 shrink-0 animate-spin" />
-                      ) : (
-                        <EyeOff className="size-3 shrink-0" />
-                      )}
-                      <span>
-                        {pendingActionKey === `${series.seriesKey}:hide`
-                          ? 'Đang ẩn...'
-                          : 'Ẩn'}
-                      </span>
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting) return;
+        setWindowState((prev) => {
+          const currentCount =
+            prev.key === windowKey ? prev.count : PROGRESSIVE_WINDOW_STEP;
+          if (currentCount >= visibleSeries.length) return prev;
+          return {
+            key: windowKey,
+            count: Math.min(
+              visibleSeries.length,
+              currentCount + PROGRESSIVE_WINDOW_STEP,
+            ),
+          };
+        });
+      },
+      { rootMargin: '0px 0px 800px 0px' },
     );
-  };
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMoreInMemory, windowKey, visibleSeries.length]);
 
   return (
     <section
@@ -400,14 +403,29 @@ export function SeriesGrid({
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {visibleSeries.map((series) => renderSeriesCard(series, false))}
-        </div>
+        <>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {renderedSeries.map((series) => (
+              <SeriesCard
+                key={series.seriesKey}
+                series={series}
+                isSelected={series.seriesKey === activeSeriesKey}
+                status={seriesStatuses[series.seriesKey] ?? null}
+                isHiddenView={false}
+                onSelectSeries={onSelectSeries}
+                onUpdateSeriesStatus={onUpdateSeriesStatus}
+              />
+            ))}
+          </div>
+          {hasMoreInMemory && (
+            <div ref={sentinelRef} aria-hidden="true" className="h-4 w-full" />
+          )}
+        </>
       )}
 
       {/* Khu vực cuối trang: Bộ đếm + Nút Hiện X bộ đã ẩn */}
       <div className="flex flex-col items-center justify-center gap-3 pt-2 pb-4">
-        {visibleSeries.length > 0 && (
+        {visibleSeries.length > 0 && !hasMoreInMemory && (
           <p className="text-xs text-[var(--text-secondary)]">
             Đang hiển thị trọn bộ {visibleSeries.length} bộ phim (
             {totalEpisodesCount} tập) trong kho
@@ -435,7 +453,17 @@ export function SeriesGrid({
 
             {showHiddenSection && (
               <div className="grid w-full grid-cols-1 gap-4 opacity-85 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {hiddenSeries.map((series) => renderSeriesCard(series, true))}
+                {hiddenSeries.map((series) => (
+                  <SeriesCard
+                    key={series.seriesKey}
+                    series={series}
+                    isSelected={series.seriesKey === activeSeriesKey}
+                    status={seriesStatuses[series.seriesKey] ?? null}
+                    isHiddenView={true}
+                    onSelectSeries={onSelectSeries}
+                    onUpdateSeriesStatus={onUpdateSeriesStatus}
+                  />
+                ))}
               </div>
             )}
           </div>

@@ -23,16 +23,17 @@ User bật kênh / đăng ký kênh -> POST /api/channels/toggle | /api/youtube/
                                                                                            ▼
                                                                     Lưu vào bảng `videos` (Supabase)
 
-[2. Full-Catalog In-Memory Store & Instant Filtering (0ms)]
-Mở ứng dụng (SSR) -> loadWorkspaceDataForUser() -> Truy vấn phân đoạn .range() theo lô 1.000 dòng lấy 100% kho video
+[2. Full Client Memory Preload + 30-item Progressive Window Rendering + Optimistic UI 0ms]
+Mở ứng dụng (SSR) -> loadWorkspaceDataForUser() -> Chỉ SELECT cột nhẹ (loại bỏ description, ai_summary, insight_data) theo lô .range(1000) lấy 100% kho phim
                                                           │
                                                           ▼
-              Giữ toàn bộ `allVideos` trong bộ nhớ `UnifiedCinemaWorkspace` + Per-Tab Scroll Restoration
+              Giữ 100% `allVideos` trong RAM `UnifiedCinemaWorkspace` + Debounce tìm kiếm 250ms + Per-Tab Scroll Restoration
                                                           │
                          ┌────────────────────────────────┴────────────────────────────────┐
                          ▼                                                                 ▼
-             [Tab Tập mới -> SeriesGrid]                                  [Các tab khác -> Grid thẻ phim]
-     (Lọc & gom nhóm tức thì 0ms bằng useMemo)                            (1 chạm lan truyền tag cả bộ phim)
+      [Render cuốn chiếu 30 thẻ/lô (rootMargin 800px)]                  [Tách luồng nền requestIdleCallback / 1500ms]
+   (React.memo SeriesCard/MovieCard + content-visibility: auto,        (Background Auto-Sync /api/cinema/discover & Delta Sync
+    0ms chờ mạng, không skeleton khi cuộn, 60fps GPU)                   chạy trễ sau mount, không làm đứng thanh điều hướng)
 ```
 
 ## 2. Danh sách API Routes hiện hành (`src/app/api/`)
