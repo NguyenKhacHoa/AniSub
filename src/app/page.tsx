@@ -25,6 +25,7 @@ export default async function HomePage() {
   let initialSeriesStatuses: Record<string, UserSeriesStatus> = {};
   let initialWatchLaterIds: string[] = [];
   let initialTotalVideosCount = 0;
+  let initialHasMoreVideos = false;
 
   const isSupabaseConfigured = Boolean(
     process.env.NEXT_PUBLIC_SUPABASE_URL &&
@@ -81,12 +82,16 @@ export default async function HomePage() {
 
           if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
             try {
-              const workspaceData = await loadWorkspaceDataForUser(user.id);
+              // Giai đoạn 1 (Two-Stage Fast Hydration): chỉ lấy 90 video mới nhất để First Paint < 200ms
+              const workspaceData = await loadWorkspaceDataForUser(user.id, {
+                initialLimit: 90,
+              });
               initialChannels = workspaceData.channels;
               initialVideos = workspaceData.videos;
               initialSeriesStatuses = workspaceData.seriesStatuses;
               initialWatchLaterIds = workspaceData.watchLaterIds;
               initialTotalVideosCount = workspaceData.totalVideosCount;
+              initialHasMoreVideos = workspaceData.hasMoreVideos;
               if (workspaceData.lastSyncedAt) {
                 initialUser.lastSyncedAt = workspaceData.lastSyncedAt;
               }
@@ -125,6 +130,7 @@ export default async function HomePage() {
       initialSeriesStatuses={initialSeriesStatuses}
       initialWatchLaterIds={initialWatchLaterIds}
       initialTotalVideosCount={initialTotalVideosCount}
+      initialHasMoreVideos={initialHasMoreVideos}
       isAdmin={isAdmin}
       pendingRequestsCount={pendingRequestsCount}
     />

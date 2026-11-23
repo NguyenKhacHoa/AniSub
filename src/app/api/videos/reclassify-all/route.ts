@@ -212,12 +212,12 @@ export async function POST(request: Request) {
     // 1. Kế thừa tag từ các tập cùng Series đã được người dùng khóa tay (is_manual_tag = true)
     const manualSeriesGenreMap = new Map<string, PrimaryGenreTag>();
     for (const m of manualRows) {
-      const genre =
-        m.detected_genre === 'Phim AI' ||
-        m.detected_genre === 'HH2D' ||
-        m.detected_genre === '2D'
-          ? (m.detected_genre as PrimaryGenreTag)
-          : null;
+      const genre: PrimaryGenreTag | null =
+        m.detected_genre === 'Phim AI'
+          ? 'Phim AI'
+          : m.detected_genre === 'HH2D' || m.detected_genre === '2D'
+            ? 'HH2D'
+            : null;
       if (!genre || !allowedTags.includes(genre)) continue;
 
       const info = extractSeriesInfo({

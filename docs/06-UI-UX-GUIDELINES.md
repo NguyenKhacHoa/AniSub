@@ -36,11 +36,11 @@ Toàn bộ trải nghiệm rạp chiếu phim được hợp nhất trên **1 m�
       2. **Chế độ Danh sách phát Bộ phim (`Series Playlist`):** Bảng cuộn dọc hiển thị tên bộ phim, tổng số tập, nút **`⭐ Theo dõi`**, **`Ẩn`**, nút đảo chiều (**Mới nhất** ↔ **Từ Tập 1**), đánh dấu nổi bật tập đang phát (`▶`), badge **`MỚI`**, và dấu tích đã xem (`✓`).
 - **Vùng B — Dòng Chảy Nội Dung Cấu Trúc (`Structured Cinema Rows` & `Series Grid`):**
   - Chỉ hiển thị badge **`CHIẾU RẠP`** (icon `Clapperboard` màu vàng hổ phách trên nền tối) trên góc trái poster khi bản ghi trong database thực sự đã được xác minh cờ `is_theatrical_movie = true` / `[CHIẾU RẠP]` qua Google Search Grounding (`isTheatricalMovie === true && isHorrorOrGore === false`, thời lượng chuẩn rạp 65–165 phút, loại trừ 100% `Phim AI` và video tổng hợp/ghép tập).
-  - **Hiệu năng Cuộn 60fps (Full Client Memory Preload + 30-item Progressive Window Rendering + Optimistic UI 0ms):**
-    - Toàn bộ danh sách rút gọn (chỉ SELECT các cột nhẹ, loại bỏ `description`, `ai_summary`, `insight_data`) được nạp sẵn vào RAM; ô tìm kiếm (`Ctrl + K`) áp dụng **debounce `250ms`** kết hợp `useMemo`.
-    - Cả `SeriesGrid` lẫn `StructuredCinemaRows` chỉ render trước **`30` thẻ đầu tiên** (tự động reset về `30` khi đổi tab/bộ lọc), gắn `IntersectionObserver` (`rootMargin: '0px 0px 800px 0px'`) để nối thêm `30` thẻ trực tiếp từ RAM trong `0ms` không hiện skeleton/spinner.
-    - Mỗi thẻ phim (`SeriesCard`, `MovieCard`, `VideoThumbnail`) được bọc `React.memo`, ảnh dùng `loading="lazy"`, `decoding="async"`, tỷ lệ cứng `aspect-video`, ưu tiên `mqdefault`/`hqdefault`, gỡ bỏ `backdrop-blur` nặng GPU trên thẻ lưới (dùng nền đặc `bg-black/80` / `bg-black/85`) và bật `content-visibility: auto` (`.cinema-card-cv`).
-    - Các tác vụ nền (`/api/cinema/discover`, `delta-sync`) được trì hoãn qua `requestIdleCallback` / `1500ms` sau mount; mọi thao tác Chuyển tab, Lọc, Ẩn, Theo dõi, Lưu Xem sau phản hồi **Optimistic UI 0ms**.
+  - **Hiệu năng Cuộn 60fps (Two-Stage Fast Hydration < 200ms + 30-item Progressive Window Rendering + Thumbnail HD):**
+    - **Two-Stage Fast Hydration:** Giai đoạn 1 (SSR) chỉ tải 90 video mới nhất (chỉ SELECT cột nhẹ, loại bỏ `description`, `ai_summary`, `insight_data`) và render ngay 30 thẻ đầu tiên trong `< 200ms`; Giai đoạn 2 tự động chạy ngầm qua `GET /api/workspace` lặp phân trang `.range(from, from + 999)` vượt giới hạn 1.000 dòng PostgREST để nạp đủ 100% kho 6.000+ video vào RAM cho `Ctrl + K` (debounce `250ms`) và gom đủ 100% tập của Phim Bộ.
+    - **Thumbnail chuẩn HD (`VideoThumbnail`):** Ưu tiên `sddefault.jpg` (640×480) sắc nét trên màn hình desktop kèm `onError` tự động fallback sang `hqdefault.jpg` (480×360), giữ `loading="lazy"`, `decoding="async"` và tỷ lệ cứng `aspect-video` (không dùng `mqdefault.jpg` vỡ nét).
+    - **Ẩn bộ lọc theo ngữ cảnh tab:** Khối `THỂ LOẠI` (`Phim AI`, `HH2D` — đã gộp `2D` vào `HH2D`) ở Sidebar bên trái (`FloatingRail`) chỉ hiển thị khi ở không gian **`Đã đăng ký`** (đồng bộ 2 chiều với thanh lọc ngang `CommandHub`), tự động ẩn hoàn toàn khi chuyển sang `Phim Chiếu Rạp`, `Khám phá`, `Đang Cày Dở` hay `Xem sau`.
+    - Mỗi thẻ phim (`SeriesCard`, `MovieCard`, `VideoThumbnail`) được bọc `React.memo`, gỡ bỏ `backdrop-blur` nặng GPU trên thẻ lưới (dùng nền đặc `bg-black/80` / `bg-black/85`) và bật `content-visibility: auto` (`.cinema-card-cv`).
   - Tại tab **`Phim Bộ`**: hiển thị **Lưới Thẻ Bộ Phim (`SeriesGrid`)** trượt dọc với hiệu ứng xếp lớp danh sách phát, ghim nhóm **`⭐ THEO DÕI`** lên đầu, badge góc trái **`🔥 TẬP MỚI`** hoặc **`Đã xem Tập X`**, badge góc phải **`≡ N tập`**, nút **`⭐ Theo dõi`** / **`Ẩn`** và nút khôi phục *"Hiện X bộ đã ẩn"* ở cuối trang.
   - Tại các tab khác (`Tất cả`, `Phim Chiếu Rạp`, `Phim Full`, `Đang cày dở`, `Xem sau`): hiển thị lưới thẻ video thực từ **Full-Catalog In-Memory Store** (`allVideos`), lọc tức thì **0ms** bằng `useMemo` và tự động **lưu/khôi phục vị trí cuộn của từng Tab (`scrollPositionsRef`)**.
   - Tại không gian **Khám phá YouTube (`Explore`)**: gắn **Cuộn Vô Hạn (`IntersectionObserver` + `exploreSentinelRef`)** và nút dự phòng **"Khám phá thêm phim mới"** kèm nút **"+ Đăng ký kênh"** 1 chạm chuyển ngay sang **"Đã theo dõi"**.
@@ -131,7 +131,6 @@ Mọi component UI **bắt buộc** sử dụng các biến CSS dưới đây (t
 - `--accent-primary`: `#0F766E`
 - `--accent-foreground`: `#FFFFFF`
 
-### 2.3. Nhãn thể loại chuẩn cho Tab Đã đăng ký (3 Nhãn — Kiến trúc 3 Tầng)
+### 2.3. Nhãn thể loại chuẩn cho Tab Đã đăng ký (2 Nhãn Rõ Ràng — Đã gộp `2D` vào `HH2D`)
 - `Phim AI`: Tím (`bg-purple-500/15 text-purple-700 dark:text-purple-300 border-purple-500/35`)
-- `HH2D` (Hoạt hình 3D Trung Quốc / Donghua): Xanh dương (`bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/35`)
-- `2D` (Anime Nhật Bản / Hoạt hình 2D): Xanh ngọc (`bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/35`)
+- `HH2D` (Hoạt hình 2D / Anime & Donghua): Xanh dương (`bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/35`)

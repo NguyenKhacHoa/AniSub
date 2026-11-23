@@ -56,12 +56,12 @@ function normalizeClassificationMap(
   const toRecord = (val: unknown): ClassificationRecord | null => {
     if (!val || typeof val !== 'object') return null;
     const item = val as Partial<MultimodalClassificationResult>;
-    const genre =
-      item.detectedGenre === 'Phim AI' ||
-      item.detectedGenre === 'HH2D' ||
-      item.detectedGenre === '2D'
-        ? item.detectedGenre
-        : fallbackGenre;
+    const genre: PrimaryGenreTag =
+      item.detectedGenre === 'Phim AI'
+        ? 'Phim AI'
+        : item.detectedGenre === 'HH2D'
+          ? 'HH2D'
+          : fallbackGenre;
     return {
       detectedGenre: genre,
       seriesName: typeof item.seriesName === 'string' ? item.seriesName : null,
@@ -414,7 +414,7 @@ async function persistAndClassifyFetchedVideos(options: {
     { genre: PrimaryGenreTag; isManual: boolean; seriesName: string | null }
   >();
 
-  let existingChannelVideos: Array<{
+  const existingChannelVideos: Array<{
     video_id: string;
     title: string;
     series_name: string | null;
@@ -422,23 +422,38 @@ async function persistAndClassifyFetchedVideos(options: {
     is_manual_tag?: boolean;
   }> = [];
 
-  const withManualRes = await admin
-    .from('videos')
-    .select('video_id, title, series_name, detected_genre, is_manual_tag')
-    .eq('channel_id', channelId)
-    .eq('is_short', false)
-    .limit(2500);
+  // Vượt giới hạn 1.000 dòng PostgREST bằng vòng lặp `.range(from, from + 999)`
+  let fromExisting = 0;
+  let supportsManualCol = true;
+  while (true) {
+    if (supportsManualCol) {
+      const withManualRes = await admin
+        .from('videos')
+        .select('video_id, title, series_name, detected_genre, is_manual_tag')
+        .eq('channel_id', channelId)
+        .eq('is_short', false)
+        .range(fromExisting, fromExisting + 999);
 
-  if (withManualRes.error) {
-    const fallbackRes = await admin
-      .from('videos')
-      .select('video_id, title, series_name, detected_genre')
-      .eq('channel_id', channelId)
-      .eq('is_short', false)
-      .limit(2500);
-    existingChannelVideos = fallbackRes.data ?? [];
-  } else {
-    existingChannelVideos = withManualRes.data ?? [];
+      if (withManualRes.error) {
+        supportsManualCol = false;
+        continue;
+      }
+      const batch = withManualRes.data ?? [];
+      existingChannelVideos.push(...batch);
+      if (batch.length < 1000) break;
+      fromExisting += 1000;
+    } else {
+      const fallbackRes = await admin
+        .from('videos')
+        .select('video_id, title, series_name, detected_genre')
+        .eq('channel_id', channelId)
+        .eq('is_short', false)
+        .range(fromExisting, fromExisting + 999);
+      const batch = fallbackRes.data ?? [];
+      existingChannelVideos.push(...batch);
+      if (batch.length < 1000) break;
+      fromExisting += 1000;
+    }
   }
 
   for (const row of existingChannelVideos) {

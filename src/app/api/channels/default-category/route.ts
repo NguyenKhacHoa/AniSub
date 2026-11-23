@@ -93,25 +93,31 @@ export async function POST(request: Request) {
     await admin
       .from('user_channels')
       .update({
-        genre_tags: ['Phim AI', 'HH2D', '2D'],
+        genre_tags: ['Phim AI', 'HH2D'],
       })
       .eq('user_id', auth.userId)
       .eq('channel_id', channelId);
   }
 
-  // 3. Nếu đã khóa danh mục (khác AUTO) -> đồng bộ toàn bộ video chưa khóa tay của kênh
+  // 3. Nếu đã khóa danh mục (khác AUTO) -> đồng bộ toàn bộ video chưa khóa tay của kênh (vượt giới hạn 1.000 dòng bằng .range())
   let updatedVideosCount = 0;
   if (lockedGenre && applyToExisting) {
-    const { data: rows } = await admin
-      .from('videos')
-      .select('video_id, is_manual_tag')
-      .eq('channel_id', channelId)
-      .eq('is_short', false)
-      .limit(3000);
-
-    const targetIds = (rows ?? [])
-      .filter((r) => !r.is_manual_tag)
-      .map((r) => r.video_id);
+    const targetIds: string[] = [];
+    let from = 0;
+    while (true) {
+      const { data: rows, error } = await admin
+        .from('videos')
+        .select('video_id, is_manual_tag')
+        .eq('channel_id', channelId)
+        .eq('is_short', false)
+        .range(from, from + 999);
+      if (error || !rows || rows.length === 0) break;
+      for (const r of rows) {
+        if (!r.is_manual_tag) targetIds.push(r.video_id);
+      }
+      if (rows.length < 1000) break;
+      from += 1000;
+    }
 
     for (let i = 0; i < targetIds.length; i += UPDATE_CHUNK_SIZE) {
       const chunk = targetIds.slice(i, i + UPDATE_CHUNK_SIZE);

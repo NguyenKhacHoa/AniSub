@@ -244,17 +244,15 @@ export function classifyByGroundedRules(
     }
   }
 
-  // 2. Ưu tiên 2: Nhận diện HH2D (Donghua / Hoạt hình 3D Trung Quốc)
+  // 2. Ưu tiên 2: Nhận diện HH2D (Hoạt hình 2D / Anime Nhật Bản & Donghua Trung Quốc)
   if (allowedTags.includes('HH2D')) {
-    if (DONGHUA_HH2D_RE.test(hay) || /\b(hh3d|donghua)\b/i.test(channel)) {
+    if (
+      DONGHUA_HH2D_RE.test(hay) ||
+      /\b(hh3d|donghua)\b/i.test(channel) ||
+      ANIME_2D_CHANNEL_RE.test(channel) ||
+      ANIME_2D_TITLES_RE.test(hay)
+    ) {
       return 'HH2D';
-    }
-  }
-
-  // 3. Ưu tiên 3: Nhận diện 2D (Anime Nhật Bản / Hoạt hình 2D)
-  if (allowedTags.includes('2D')) {
-    if (ANIME_2D_CHANNEL_RE.test(channel) || ANIME_2D_TITLES_RE.test(hay)) {
-      return '2D';
     }
   }
 

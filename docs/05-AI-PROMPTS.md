@@ -18,10 +18,9 @@ Sử dụng SDK chính thức `@google/genai` phía server trên endpoint `v1bet
 - **Tầng 1 — Khóa Định Danh Cấp Kênh & Cấp Bộ Phim (Channel & Series Master Lock):**
   - **Channel Master Lock (`channels.default_category`):** `AUTO` | `HH2D` | `2D` | `PHIM_AI`. Nếu khác `AUTO`, 100% video mới đồng bộ từ kênh đó tự động nhận đúng phân loại của kênh, không cho AI đoán lại gây lệch tập.
   - **Series Inheritance & Smart Learn on Manual Fix:** Mọi tập cùng `(channel_id, seriesKey)` tự động kế thừa nhãn đã phân loại hoặc đã khóa tay (`is_manual_tag = true`). Khi người dùng sửa tay nhãn 1 thẻ phim, hệ thống cập nhật Optimistic UI 0ms cho cả series kèm nút 1 chạm **"Áp dụng cho cả kênh"** để khóa luôn `default_category`.
-- **Tầng 2 — Phân Loại Cứng Theo Thứ Tự Ưu Tiên cho Tab "Đã đăng ký" (`classifyByGroundedRules` + Gemini Vision):**
+- **Tầng 2 — Phân Loại Cứng Theo Thứ Tự Ưu Tiên cho Tab "Đã đăng ký" (Gộp `2D` vào `HH2D` — `classifyByGroundedRules` + Gemini Vision):**
   1. **`Phim AI` (Ưu tiên 1):** Nhận diện dòng truyện tranh AI / audio drama AI / recap AI (mô-típ truyện hệ thống, xuyên không đô thị, tổng tài, trọng sinh báo thù kèm thời lượng tổng hợp dài `> 45 phút`, kênh dạng *"Bản Tin...", "Trùm Phim...", "Review Phim..."* hoặc đồ họa 3D AI không viền mực).
-  2. **`HH2D` (Ưu tiên 2 — Hoạt hình 3D Trung Quốc / Donghua):** Đối chiếu danh mục tác phẩm Donghua Trung Quốc (*Tiên Nghịch, Đấu Phá Thương Khung, Phàm Nhân Tu Tiên, Thế Giới Hoàn Mỹ, Thôn Phệ Tinh Không...*) hoặc dấu hiệu Donghua / HH3D / Manhua.
-  3. **`2D` (Ưu tiên 3 — Anime Nhật Bản / Hoạt hình 2D):** Đối chiếu kênh Anime bản quyền (*Muse Việt Nam, Ani-One Vietnam, POPS Anime*) hoặc tác phẩm Anime Nhật Bản / hoạt hình 2D truyền thống.
+  2. **`HH2D` (Ưu tiên 2 — Gộp toàn bộ Hoạt hình 2D/Anime Nhật Bản & Donghua Trung Quốc):** Đối chiếu danh mục tác phẩm Donghua Trung Quốc, kênh Anime bản quyền (*Muse Việt Nam, Ani-One Vietnam, POPS Anime*) và tác phẩm Anime Nhật Bản; tự động quy đổi mọi nhãn `2D` cũ sang `HH2D` để loại bỏ sự trùng lặp.
   - Các bộ phim mơ hồ còn lại mới gom **1 đại diện / 1 Series** (4 series / batch, `hqdefault.jpg`) gửi Gemini Vision xoay vòng theo `GEMINI_FALLBACK_MODELS`.
 - **Tầng 3 — Phân Loại Phim Chiếu Rạp Neo Vào TMDB / AniList / IMDb Grounding (`/api/cinema/discover`):**
   - Bắt buộc tách **tên gốc (Anh / Nhật / Trung)** và dùng Google Search Grounding (`tools: [{ googleSearch: {} }]` trên `v1beta`) tra cứu trực tiếp hồ sơ phát hành rạp trên **TMDB / AniList / IMDb** (`verifiedSource`). Không tìm thấy hồ sơ xác thực $\rightarrow$ **loại bỏ ngay**.

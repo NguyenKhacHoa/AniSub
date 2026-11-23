@@ -14,7 +14,6 @@ export type { ChannelDefaultCategory };
 export const CHANNEL_DEFAULT_CATEGORIES: ChannelDefaultCategory[] = [
   'AUTO',
   'HH2D',
-  '2D',
   'PHIM_AI',
 ];
 
@@ -25,9 +24,8 @@ export function mapDefaultCategoryToGenre(
     case 'PHIM_AI':
       return 'Phim AI';
     case 'HH2D':
-      return 'HH2D';
     case '2D':
-      return '2D';
+      return 'HH2D';
     default:
       return null;
   }
@@ -37,7 +35,6 @@ export function mapGenreToDefaultCategory(
   genre: GenreTag,
 ): ChannelDefaultCategory {
   if (genre === 'Phim AI') return 'PHIM_AI';
-  if (genre === '2D') return '2D';
   return 'HH2D';
 }
 
@@ -354,12 +351,8 @@ export function matchesTheatricalSafeCategory(
   }
 }
 
-export const PRIMARY_GENRE_OPTIONS: PrimaryGenreTag[] = [
-  'Phim AI',
-  'HH2D',
-  '2D',
-];
-export const GENRE_OPTIONS: GenreTag[] = ['Phim AI', 'HH2D', '2D'];
+export const PRIMARY_GENRE_OPTIONS: PrimaryGenreTag[] = ['Phim AI', 'HH2D'];
+export const GENRE_OPTIONS: GenreTag[] = ['Phim AI', 'HH2D'];
 
 export interface ChannelWithSelection extends ChannelRow {
   is_selected: boolean;
@@ -403,20 +396,13 @@ export const GENRE_DOT_STYLES: Record<
       'bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/35',
     label: 'HH2D',
   },
-  '2D': {
-    dotClass: 'bg-emerald-500 dark:bg-emerald-400',
-    badgeClass:
-      'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/35',
-    label: '2D',
-  },
 };
 
 /**
- * Chuẩn hóa nhãn cũ ('Hoạt hình cát', 'Khác', null) về 3 nhãn chuẩn ('Phim AI' | 'HH2D' | '2D').
+ * Chuẩn hóa toàn bộ nhãn cũ ('2D', 'Hoạt hình cát', 'Khác', null) về 2 nhãn chuẩn ('Phim AI' | 'HH2D').
  */
 export function normalizeGenreTag(value: string | null | undefined): GenreTag {
   if (value === 'Phim AI') return 'Phim AI';
-  if (value === '2D') return '2D';
   return 'HH2D';
 }
 

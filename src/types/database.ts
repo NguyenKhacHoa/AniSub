@@ -8,9 +8,9 @@ export type Json =
 
 export type WebSubStatus = 'pending' | 'active' | 'expired';
 
-export type GenreTag = 'Phim AI' | 'HH2D' | '2D';
+export type GenreTag = 'Phim AI' | 'HH2D';
 
-export type ChannelDefaultCategory = 'AUTO' | 'HH2D' | '2D' | 'PHIM_AI';
+export type ChannelDefaultCategory = 'AUTO' | 'HH2D' | 'PHIM_AI';
 
 export type CinemaFormat = 'Anime / Hoạt hình' | 'Phim Người Đóng';
 

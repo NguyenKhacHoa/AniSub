@@ -355,56 +355,61 @@ export function FloatingRail({
             )}
           </nav>
 
-          <div className="my-0.5 h-px w-full bg-[var(--border-subtle)]" />
+          {/* Chỉ hiển thị khối THỂ LOẠI (Phim AI / HH2D) khi đang ở không gian Đã đăng ký */}
+          {viewMode === 'cinema' && (
+            <>
+              <div className="my-0.5 h-px w-full bg-[var(--border-subtle)]" />
 
-          {/* Cụm chấm lọc nhanh thể loại */}
-          <div
-            role="group"
-            aria-label="Lọc nhanh thể loại"
-            className={`flex w-full flex-col gap-1.5 ${
-              expanded ? 'px-1' : 'items-center'
-            }`}
-          >
-            {expanded && (
-              <span className="px-2 text-[11px] font-medium uppercase tracking-wider text-[var(--text-secondary)]">
-                Thể loại
-              </span>
-            )}
-            {GENRE_DOTS.map((genre) => {
-              const style = GENRE_DOT_STYLES[genre];
-              const isSelected = genreFilter === genre;
+              {/* Cụm chấm lọc nhanh thể loại — đồng bộ 2 chiều với CommandHub */}
+              <div
+                role="group"
+                aria-label="Lọc nhanh thể loại"
+                className={`flex w-full flex-col gap-1.5 ${
+                  expanded ? 'px-1' : 'items-center'
+                }`}
+              >
+                {expanded && (
+                  <span className="px-2 text-[11px] font-medium uppercase tracking-wider text-[var(--text-secondary)]">
+                    Thể loại
+                  </span>
+                )}
+                {GENRE_DOTS.map((genre) => {
+                  const style = GENRE_DOT_STYLES[genre];
+                  const isSelected = genreFilter === genre;
 
-              return (
-                <button
-                  key={genre}
-                  type="button"
-                  onClick={() => handleToggleGenreDot(genre)}
-                  aria-pressed={isSelected}
-                  title={`Lọc nhanh: ${style.label}`}
-                  className={`flex h-9 items-center rounded-xl transition-colors cursor-pointer ${
-                    expanded ? 'w-full gap-3 px-2.5' : 'size-9 justify-center'
-                  } ${
-                    isSelected
-                      ? 'bg-[var(--bg-elevated)] ring-1 ring-[var(--accent-primary)] text-[var(--text-primary)]'
-                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
-                  }`}
-                >
-                  <span
-                    className={`size-2.5 shrink-0 rounded-full ${style.dotClass} ${
-                      isSelected
-                        ? 'ring-2 ring-offset-2 ring-offset-[var(--bg-surface)] ring-current'
-                        : ''
-                    }`}
-                  />
-                  {expanded && (
-                    <span className="truncate text-xs font-medium">
-                      {style.label}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
+                  return (
+                    <button
+                      key={genre}
+                      type="button"
+                      onClick={() => handleToggleGenreDot(genre)}
+                      aria-pressed={isSelected}
+                      title={`Lọc nhanh: ${style.label}`}
+                      className={`flex h-9 items-center rounded-xl transition-colors cursor-pointer ${
+                        expanded ? 'w-full gap-3 px-2.5' : 'size-9 justify-center'
+                      } ${
+                        isSelected
+                          ? 'bg-[var(--bg-elevated)] ring-1 ring-[var(--accent-primary)] text-[var(--text-primary)]'
+                          : 'text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]'
+                      }`}
+                    >
+                      <span
+                        className={`size-2.5 shrink-0 rounded-full ${style.dotClass} ${
+                          isSelected
+                            ? 'ring-2 ring-offset-2 ring-offset-[var(--bg-surface)] ring-current'
+                            : ''
+                        }`}
+                      />
+                      {expanded && (
+                        <span className="truncate text-xs font-medium">
+                          {style.label}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Phần dưới: Đổi Theme + Tài khoản Google */}

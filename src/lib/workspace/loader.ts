@@ -137,17 +137,53 @@ async function fetchGlobalTheatricalVideos(
 }
 
 /**
- * Truy vấn phân đoạn tự động phía server theo từng lô 1.000 dòng (`.range(from, to)`)
- * cho đến khi lấy trọn vẹn 100% toàn bộ video không phải Shorts của các kênh đang bật.
+ * Truy vấn phân đoạn tự động phía server theo từng lô 1.000 dòng (`.range(from, from + 999)`)
+ * cho đến khi lấy trọn vẹn 100% toàn bộ video không phải Shorts của các kênh đang bật (vượt giới hạn 1.000 dòng của PostgREST).
+ * Khi truyền `initialLimit` (Giai đoạn 1 Fast Hydration), chỉ lấy đúng `initialLimit` video mới nhất (< 200ms First Paint).
  */
 async function fetchAllSelectedVideos(
   admin: ReturnType<typeof createAdminClient>,
   selectedChannelIds: string[],
-): Promise<RawVideoRow[]> {
-  if (selectedChannelIds.length === 0) return [];
+  initialLimit?: number,
+): Promise<{ rows: RawVideoRow[]; hasMore: boolean }> {
+  if (selectedChannelIds.length === 0) return { rows: [], hasMore: false };
   const allRows: RawVideoRow[] = [];
   let from = 0;
   let selectTier: 'full' | 'theatrical' | 'basic' = 'full';
+
+  if (typeof initialLimit === 'number' && initialLimit > 0) {
+    while (true) {
+      const selectStr =
+        selectTier === 'full'
+          ? VIDEO_SELECT_FULL
+          : selectTier === 'theatrical'
+            ? VIDEO_SELECT_THEATRICAL
+            : VIDEO_SELECT_BASIC;
+
+      const res = await admin
+        .from('videos')
+        .select(selectStr)
+        .in('channel_id', selectedChannelIds)
+        .eq('is_short', false)
+        .order('published_at', { ascending: false })
+        .range(0, initialLimit - 1);
+
+      if (res.error) {
+        if (selectTier === 'full') {
+          selectTier = 'theatrical';
+          continue;
+        }
+        if (selectTier === 'theatrical') {
+          selectTier = 'basic';
+          continue;
+        }
+        return { rows: [], hasMore: false };
+      }
+
+      const batch = (res.data ?? []) as unknown as RawVideoRow[];
+      return { rows: batch, hasMore: batch.length >= initialLimit };
+    }
+  }
 
   while (true) {
     const to = from + DB_FETCH_BATCH_SIZE - 1;
@@ -185,15 +221,18 @@ async function fetchAllSelectedVideos(
     from += DB_FETCH_BATCH_SIZE;
   }
 
-  return allRows;
+  return { rows: allRows, hasMore: false };
 }
 
 /**
- * Tải toàn bộ danh sách kênh (`user_channels` + `channels`) và 100% kho video thật
- * thuộc các kênh đang bật (`is_selected = true`) trong 1 lần tải duy nhất (Full-Catalog In-Memory Store).
+ * Tải danh sách kênh (`user_channels` + `channels`) và kho video thật thuộc các kênh đang bật.
+ * Hỗ trợ Two-Stage Fast Hydration:
+ * - Giai đoạn 1 (`options.initialLimit = 90`): tải nhanh 90 video mới nhất cho First Paint < 200ms.
+ * - Giai đoạn 2 (không giới hạn): vòng lặp `.range(from, from + 999)` lấy 100% kho 6.000+ video.
  */
 export async function loadWorkspaceDataForUser(
   userId: string,
+  options?: { initialLimit?: number },
 ): Promise<LoadedWorkspaceData> {
   const admin = createAdminClient();
 
@@ -297,15 +336,17 @@ export async function loadWorkspaceDataForUser(
     .filter((c) => c.is_selected)
     .map((c) => c.channel_id);
 
-  // Tải 100% toàn bộ video kênh đã chọn, kho Phim Chiếu Rạp toàn cục, watch_progress, user_series_status và user_watch_later song song
+  // Two-Stage Fast Hydration:
+  // - Khi truyền `options.initialLimit` (90): chỉ lấy 90 video mới nhất để First Paint < 200ms
+  // - Khi không giới hạn (Giai đoạn 2 chạy ngầm): lấy 100% kho 6.000+ video qua vòng lặp `.range(from, from + 999)`
   const [
-    selectedVideos,
+    selectedVideosResult,
     globalTheatricalVideos,
     progressRes,
     seriesStatusRes,
     watchLaterRes,
   ] = await Promise.all([
-    fetchAllSelectedVideos(admin, selectedChannelIds),
+    fetchAllSelectedVideos(admin, selectedChannelIds, options?.initialLimit),
     fetchGlobalTheatricalVideos(admin),
     admin
       .from('watch_progress')
@@ -321,6 +362,9 @@ export async function loadWorkspaceDataForUser(
       .eq('user_id', userId)
       .order('created_at', { ascending: false }),
   ]);
+
+  const selectedVideos = selectedVideosResult.rows;
+  const hasMoreVideos = selectedVideosResult.hasMore;
 
   const seriesStatuses: Record<string, UserSeriesStatus> = {};
   if (!seriesStatusRes.error && Array.isArray(seriesStatusRes.data)) {
@@ -399,11 +443,11 @@ export async function loadWorkspaceDataForUser(
       description: v.description ?? null,
       ai_summary: v.ai_summary ?? null,
       detected_genre:
-        v.detected_genre === 'Phim AI' ||
-        v.detected_genre === 'HH2D' ||
-        v.detected_genre === '2D'
-          ? v.detected_genre
-          : (genreByChannel.get(v.channel_id) ?? 'HH2D'),
+        v.detected_genre === 'Phim AI'
+          ? 'Phim AI'
+          : v.detected_genre === 'HH2D' || String(v.detected_genre) === '2D'
+            ? 'HH2D'
+            : (genreByChannel.get(v.channel_id) ?? 'HH2D'),
       channel_title: channel?.title ?? v.channel_id,
       progress_seconds: progress?.progress_seconds ?? 0,
       is_completed: progress?.is_completed ?? false,
@@ -417,7 +461,7 @@ export async function loadWorkspaceDataForUser(
     seriesStatuses,
     watchLaterIds,
     totalVideosCount: mergedVideos.length,
-    hasMoreVideos: false,
+    hasMoreVideos,
     lastSyncedAt,
   };
 }

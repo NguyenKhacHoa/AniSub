@@ -58,6 +58,7 @@ interface UnifiedCinemaWorkspaceProps {
   initialSeriesStatuses?: Record<string, UserSeriesStatus>;
   initialWatchLaterIds?: string[];
   initialTotalVideosCount?: number;
+  initialHasMoreVideos?: boolean;
   isAdmin?: boolean;
   pendingRequestsCount?: number;
 }
@@ -135,6 +136,7 @@ export function UnifiedCinemaWorkspace({
   initialVideos = [],
   initialSeriesStatuses = {},
   initialWatchLaterIds = [],
+  initialHasMoreVideos = false,
   isAdmin = false,
   pendingRequestsCount = 0,
 }: UnifiedCinemaWorkspaceProps) {
@@ -145,6 +147,7 @@ export function UnifiedCinemaWorkspace({
   const skipNextScrollRestoreRef = useRef(false);
   const hasTriggeredAutoDeltaRef = useRef(false);
   const hasTriggeredCleanCinemaRef = useRef(false);
+  const hasHydratedFullCatalogRef = useRef(false);
 
   const [authStatus, setAuthStatus] =
     useState<WorkspaceAuthStatus>(initialAuthStatus);
@@ -1114,7 +1117,7 @@ export function UnifiedCinemaWorkspace({
                 default_category: defaultCategory,
                 ...(lockedGenre
                   ? { genre_tag: lockedGenre, genre_tags: [lockedGenre] }
-                  : { genre_tags: ['Phim AI', 'HH2D', '2D'] }),
+                  : { genre_tags: ['Phim AI', 'HH2D'] }),
               }
             : ch,
         ),
@@ -1684,6 +1687,97 @@ export function UnifiedCinemaWorkspace({
     },
     [],
   );
+
+  // Giai đoạn 2 (Two-Stage Fast Hydration): Ngay sau khi 30 thẻ đầu tiên đã hiển thị tức thì (< 200ms),
+  // âm thầm nạp nốt toàn bộ phần còn lại của kho 6.000+ video qua GET /api/workspace (vượt giới hạn 1.000 dòng PostgREST)
+  // và gộp mượt vào RAM để Ctrl+K và Phim Bộ luôn đủ 100% tập mà không làm đơ lần mở trang đầu
+  useEffect(() => {
+    if (
+      hasHydratedFullCatalogRef.current ||
+      !initialHasMoreVideos ||
+      authStatus !== 'authenticated'
+    ) {
+      return;
+    }
+
+    hasHydratedFullCatalogRef.current = true;
+    let cancelled = false;
+    let idleId: number | null = null;
+
+    const hydrateRemainingCatalog = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch('/api/workspace', { cache: 'no-store' });
+        if (!res.ok || cancelled) return;
+        const data = (await res.json().catch(() => ({}))) as {
+          videos?: CinemaVideoItem[];
+          channels?: ChannelWithSelection[];
+        };
+        if (cancelled) return;
+
+        if (Array.isArray(data.videos) && data.videos.length > 0) {
+          setAllVideos((prev) => {
+            const localProgressMap = new Map(
+              prev.map((v) => [
+                v.video_id,
+                {
+                  progress_seconds: v.progress_seconds,
+                  is_completed: v.is_completed,
+                  last_watched_at: v.last_watched_at,
+                  ai_summary: v.ai_summary,
+                },
+              ]),
+            );
+            return data.videos!.map((item) => {
+              const local = localProgressMap.get(item.video_id);
+              if (!local) return item;
+              return {
+                ...item,
+                progress_seconds: Math.max(
+                  item.progress_seconds,
+                  local.progress_seconds,
+                ),
+                is_completed: item.is_completed || local.is_completed,
+                last_watched_at: local.last_watched_at ?? item.last_watched_at,
+                ai_summary: local.ai_summary ?? item.ai_summary,
+              };
+            });
+          });
+        }
+
+        if (Array.isArray(data.channels) && data.channels.length > 0) {
+          setChannels(data.channels);
+        }
+      } catch {
+        // Silent background fail — người dùng vẫn xem mượt 90 video đầu tiên
+      }
+    };
+
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      if (typeof window.requestIdleCallback === 'function') {
+        idleId = window.requestIdleCallback(
+          () => {
+            void hydrateRemainingCatalog();
+          },
+          { timeout: 1200 },
+        );
+      } else {
+        void hydrateRemainingCatalog();
+      }
+    }, 120);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      if (
+        idleId !== null &&
+        typeof window.cancelIdleCallback === 'function'
+      ) {
+        window.cancelIdleCallback(idleId);
+      }
+    };
+  }, [authStatus, initialHasMoreVideos]);
 
   // Tách luồng chạy ngầm: trì hoãn Background Auto-Sync kho Phim Chiếu Rạp bằng requestIdleCallback / 1500ms
   // để tuyệt đối không làm đứng thanh điều hướng khi người dùng vừa mở app hoặc vừa chuyển tab

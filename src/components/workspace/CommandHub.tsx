@@ -62,7 +62,6 @@ const GENRE_PILLS: Array<{ value: GenreFilter; label: string }> = [
   { value: 'all', label: 'Tất cả thể loại' },
   { value: 'Phim AI', label: 'Phim AI' },
   { value: 'HH2D', label: 'HH2D' },
-  { value: '2D', label: '2D' },
 ];
 
 const CINEMA_FORMAT_PILLS: Array<{ value: CinemaFormatFilter; label: string }> =

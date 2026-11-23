@@ -23,17 +23,17 @@ User bật kênh / đăng ký kênh -> POST /api/channels/toggle | /api/youtube/
                                                                                            ▼
                                                                     Lưu vào bảng `videos` (Supabase)
 
-[2. Full Client Memory Preload + 30-item Progressive Window Rendering + Optimistic UI 0ms]
-Mở ứng dụng (SSR) -> loadWorkspaceDataForUser() -> Chỉ SELECT cột nhẹ (loại bỏ description, ai_summary, insight_data) theo lô .range(1000) lấy 100% kho phim
+[2. Two-Stage Fast Hydration (< 200ms First Paint) + 30-item Progressive Window Rendering + Optimistic UI 0ms]
+Giai đoạn 1 (SSR < 200ms): HomePage -> loadWorkspaceDataForUser(userId, { initialLimit: 90 }) -> Render ngay 30 thẻ đầu tiên tức thì
                                                           │
                                                           ▼
-              Giữ 100% `allVideos` trong RAM `UnifiedCinemaWorkspace` + Debounce tìm kiếm 250ms + Per-Tab Scroll Restoration
+Giai đoạn 2 (Background RAM Preload): requestIdleCallback -> GET /api/workspace -> Vòng lặp .range(from, from + 999) vượt mốc 1.000 dòng PostgREST lấy 100% kho 6.000+ video vào RAM
                                                           │
                          ┌────────────────────────────────┴────────────────────────────────┐
                          ▼                                                                 ▼
       [Render cuốn chiếu 30 thẻ/lô (rootMargin 800px)]                  [Tách luồng nền requestIdleCallback / 1500ms]
-   (React.memo SeriesCard/MovieCard + content-visibility: auto,        (Background Auto-Sync /api/cinema/discover & Delta Sync
-    0ms chờ mạng, không skeleton khi cuộn, 60fps GPU)                   chạy trễ sau mount, không làm đứng thanh điều hướng)
+   (React.memo SeriesCard/MovieCard + sddefault/hqdefault HD,          (Background Auto-Sync /api/cinema/discover & Delta Sync
+    content-visibility: auto, 0ms chờ mạng, 60fps GPU)                  chạy trễ sau mount, không làm đứng thanh điều hướng)
 ```
 
 ## 2. Danh sách API Routes hiện hành (`src/app/api/`)

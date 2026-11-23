@@ -82,24 +82,30 @@ export async function POST(request: Request) {
   const matchedIdsSet = new Set<string>([videoId]);
 
   if (!targetSeriesInfo.isStandalone) {
-    const { data: channelVideos } = await admin
-      .from('videos')
-      .select('video_id, title, series_name')
-      .eq('channel_id', targetVideo.channel_id)
-      .limit(2500);
+    let from = 0;
+    while (true) {
+      const { data: channelVideos, error: pageErr } = await admin
+        .from('videos')
+        .select('video_id, title, series_name')
+        .eq('channel_id', targetVideo.channel_id)
+        .range(from, from + 999);
+      if (pageErr || !channelVideos || channelVideos.length === 0) break;
 
-    for (const candidate of channelVideos ?? []) {
-      const candidateInfo = extractSeriesInfo({
-        videoId: candidate.video_id,
-        channelId: targetVideo.channel_id,
-        title: candidate.title,
-        channelTitle,
-        seriesName: candidate.series_name,
-      });
+      for (const candidate of channelVideos) {
+        const candidateInfo = extractSeriesInfo({
+          videoId: candidate.video_id,
+          channelId: targetVideo.channel_id,
+          title: candidate.title,
+          channelTitle,
+          seriesName: candidate.series_name,
+        });
 
-      if (candidateInfo.seriesKey === targetSeriesInfo.seriesKey) {
-        matchedIdsSet.add(candidate.video_id);
+        if (candidateInfo.seriesKey === targetSeriesInfo.seriesKey) {
+          matchedIdsSet.add(candidate.video_id);
+        }
       }
+      if (channelVideos.length < 1000) break;
+      from += 1000;
     }
   }
 

@@ -90,7 +90,6 @@ interface ChannelVaultDrawerProps {
 const DEFAULT_CATEGORY_LABELS: Record<ChannelDefaultCategory, string> = {
   AUTO: 'Tự động (AUTO)',
   HH2D: 'Khóa HH2D',
-  '2D': 'Khóa 2D',
   PHIM_AI: 'Khóa Phim AI',
 };
 
@@ -682,8 +681,8 @@ export function ChannelVaultDrawer({
                               )}
                               <span>
                                 {isBusy && activeChannelAction === 'load_more'
-                                  ? 'Đang kéo video...'
-                                  : 'Đồng bộ đủ video'}
+                                  ? 'Đang vét lịch sử tập...'
+                                  : 'Đồng bộ toàn bộ lịch sử tập'}
                               </span>
                             </button>
 

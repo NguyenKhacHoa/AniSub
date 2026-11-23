@@ -11,14 +11,14 @@ interface VideoThumbnailProps {
   sizes?: string;
   className?: string;
   /**
-   * Ưu tiên dùng mqdefault/hqdefault cho thẻ lưới ngoài danh sách:
-   * nhẹ hơn nhiều so với maxresdefault.jpg, tăng tốc độ giải mã ảnh và đảm bảo 60fps khi cuộn.
+   * Ưu tiên dùng sddefault.jpg (640x480) sắc nét trên desktop -> tự động fallback về hqdefault.jpg (480x360)
+   * nếu video YouTube không có bản SD. Tuyệt đối không dùng mqdefault.jpg (320x180) làm ảnh chính.
    */
   preferHq?: boolean;
 }
 
-const YT_HIGH_RES_RE =
-  /^https?:\/\/i\.ytimg\.com\/vi(?:_webp)?\/([^/]+)\/(?:maxresdefault|sddefault)\.(?:jpg|webp)(?:\?.*)?$/i;
+const YT_MQ_RE =
+  /^https?:\/\/i\.ytimg\.com\/vi(?:_webp)?\/([^/]+)\/mqdefault\.(?:jpg|webp)(?:\?.*)?$/i;
 
 function buildThumbnailCandidates(
   videoId: string,
@@ -33,27 +33,25 @@ function buildThumbnailCandidates(
     }
   };
 
-  const mqFallback = videoId
-    ? `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`
+  const sdFallback = videoId
+    ? `https://i.ytimg.com/vi/${videoId}/sddefault.jpg`
     : null;
   const hqFallback = videoId
     ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
     : null;
 
-  if (preferHq && mqFallback) {
-    pushUnique(mqFallback);
+  if (preferHq && videoId) {
+    // Chuẩn HD sắc nét cho desktop: sddefault (640x480) -> fallback hqdefault (480x360)
+    pushUnique(sdFallback);
+    pushUnique(hqFallback);
   }
 
-  if (thumbnailUrl?.trim()) {
-    const normalized =
-      preferHq && videoId && YT_HIGH_RES_RE.test(thumbnailUrl.trim())
-        ? hqFallback
-        : thumbnailUrl.trim();
-    pushUnique(normalized);
+  if (thumbnailUrl?.trim() && !YT_MQ_RE.test(thumbnailUrl.trim())) {
+    pushUnique(thumbnailUrl.trim());
   }
 
   pushUnique(hqFallback);
-  pushUnique(mqFallback);
+  pushUnique(sdFallback);
 
   return candidates;
 }
