@@ -47,7 +47,9 @@ Tất cả các API dữ liệu người dùng đều bắt buộc đi qua kiể
 | `/api/youtube/sync-channels` | `POST` | Đồng bộ danh sách kênh YouTube của user (`subscriptions.list`, cooldown 6 giờ ở production). |
 | `/api/channels/toggle` | `POST` | Bật/tắt kênh, cập nhật đa nhãn `genre_tags` (`Phim AI` / `HH2D` / `2D`), chạy `syncAllChannelVideos` tôn trọng Tầng 1 (`channels.default_category` Channel Master Lock + Series Inheritance) trước khi gọi Tầng 2. |
 | `/api/channels/default-category` | `POST` | **Tầng 1 (Channel Master Lock):** Khóa danh mục mặc định của kênh (`AUTO` | `HH2D` | `2D` | `PHIM_AI`) trong `public.channels.default_category` và tự động đồng bộ toàn bộ video chưa khóa tay của kênh đó. |
-| `/api/channels/load-more` | `POST` | Chạy `syncAllChannelVideos` đồng bộ trọn vẹn lịch sử video của 1 kênh. |
+| `/api/channels/sync` | `POST` | **Cursor-Based Chunked Channel Sync (`maxDuration = 30`):** Mỗi lượt kéo tối đa 4 trang `playlistItems.list` (~200 video, `< 4s`, chống Vercel timeout 100%), lưu `sync_page_token` & `is_fully_synced` trên bảng `channels` và trả về `{ hasMore, nextPageToken, fetchedCount }` để client tự gọi cuốn chiếu tới Tập 1. |
+| `/api/videos/unavailable` | `POST` | Đánh dấu `videos.is_unavailable = true` khi client phát hiện cả thumbnail thật lẫn `hqdefault.jpg` đều trả về ảnh placeholder xám `120x90` (video đã bị xóa/ẩn trên YouTube). |
+| `/api/channels/load-more` | `POST` | Endpoint tương thích ngược gọi đồng bộ lịch sử video của 1 kênh. |
 | `/api/channels/delta-sync` | `POST` | Smart Delta Sync: quét nhanh 10 video mới nhất (`maxResults=10`, 1 điểm quota/kênh) của các kênh đang bật (tự động chạy ngầm khi qua ≥ 60 phút hoặc chạy chủ động `force: true`), tự động phân loại Series-Aware và trả về kho cập nhật. |
 | `/api/series/status` | `POST` | Lưu/xóa trạng thái `following` (⭐ Theo dõi), `completed` hoặc `hidden` (Ẩn bớt) cho từng bộ phim trong `public.user_series_status`. |
 | `/api/videos/watch-later` | `POST` | Toggle thêm/xóa video khỏi danh sách **Lưu Xem Sau** (`public.user_watch_later`). |

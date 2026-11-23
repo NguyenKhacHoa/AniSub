@@ -181,6 +181,17 @@ export function UnifiedCinemaWorkspace({
   const [isSyncing, setIsSyncing] = useState(false);
   const [isReclassifyingAll, setIsReclassifyingAll] = useState(false);
   const [busyChannelId, setBusyChannelId] = useState<string | null>(null);
+  const [channelSyncProgress, setChannelSyncProgress] = useState<{
+    channelId: string;
+    fetchedCount: number;
+    newCount: number;
+  } | null>(null);
+  const [unavailableVideoIds, setUnavailableVideoIds] = useState<string[]>([]);
+  const unavailableSet = useMemo(
+    () => new Set(unavailableVideoIds),
+    [unavailableVideoIds],
+  );
+  const reportedUnavailableRef = useRef<Set<string>>(new Set());
 
   const [viewMode, setViewMode] = useState<WorkspaceViewMode>('cinema');
   const [searchQuery, setSearchQuery] = useState('');
@@ -268,7 +279,9 @@ export function UnifiedCinemaWorkspace({
   const filteredVideos = useMemo(() => {
     const query = debouncedSearchQuery.trim().toLowerCase();
     const matched = allVideos.filter((v) => {
-      if (v.is_short) return false;
+      if (v.is_short || v.is_unavailable || unavailableSet.has(v.video_id)) {
+        return false;
+      }
 
       // Không gian "Phim Chiếu Rạp" độc lập hoàn toàn với bộ lọc kênh Đã đăng ký
       if (viewMode === 'theatrical') {
@@ -351,6 +364,7 @@ export function UnifiedCinemaWorkspace({
     genreFilter,
     debouncedSearchQuery,
     sortBy,
+    unavailableSet,
   ]);
 
   const activeVideo = useMemo(() => {
@@ -366,10 +380,12 @@ export function UnifiedCinemaWorkspace({
   const allSeriesGroups = useMemo(() => {
     const channelVideos = allVideos.filter(
       (v) =>
-        selectedChannelIds.size === 0 || selectedChannelIds.has(v.channel_id),
+        !v.is_unavailable &&
+        !unavailableSet.has(v.video_id) &&
+        (selectedChannelIds.size === 0 || selectedChannelIds.has(v.channel_id)),
     );
     return groupVideosIntoSeries(channelVideos);
-  }, [allVideos, selectedChannelIds]);
+  }, [allVideos, selectedChannelIds, unavailableSet]);
 
   const filteredSeriesGroups = useMemo(() => {
     const query = debouncedSearchQuery.trim().toLowerCase();
@@ -1050,55 +1066,114 @@ export function UnifiedCinemaWorkspace({
     }
   };
 
+  const handleVideoUnavailable = useCallback(
+    (videoId: string) => {
+      if (!videoId || reportedUnavailableRef.current.has(videoId)) return;
+      reportedUnavailableRef.current.add(videoId);
+
+      // Ẩn ngay thẻ video chết link (120x90 placeholder) trong 0ms
+      setUnavailableVideoIds((prev) =>
+        prev.includes(videoId) ? prev : [...prev, videoId],
+      );
+
+      if (authStatus !== 'authenticated') return;
+      void fetch('/api/videos/unavailable', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoId }),
+        keepalive: true,
+      }).catch(() => {});
+    },
+    [authStatus],
+  );
+
+  // Cursor-Based Chunked Channel Sync: gọi cuốn chiếu từng cụm ~200 video (< 4s/lượt, chống timeout Vercel 100%)
   const handleLoadMoreChannelVideos = async (channelId: string) => {
     const current = channels.find((c) => c.channel_id === channelId);
     if (!current) return;
 
     setBusyChannelId(channelId);
+    setChannelSyncProgress({ channelId, fetchedCount: 0, newCount: 0 });
+
+    let totalFetched = 0;
+    let totalNew = 0;
+    let nextPageToken: string | null = null;
+    let hasMore = true;
+    let isFirstChunk = true;
+    let lastWarning: string | null = null;
+    let safetyRounds = 0;
+
     try {
-      const res = await fetch('/api/channels/load-more', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      while (hasMore && safetyRounds < 30) {
+        safetyRounds += 1;
+        const res = await fetch('/api/channels/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            channelId,
+            genreTags: current.genre_tags,
+            pageToken: nextPageToken,
+            resetCursor: isFirstChunk,
+            maxPages: 4,
+          }),
+        });
+        isFirstChunk = false;
+
+        const payload = (await res.json().catch(() => ({}))) as {
+          hasMore?: boolean;
+          nextPageToken?: string | null;
+          fetchedCount?: number;
+          newVideosCount?: number;
+          warning?: string | null;
+          error?: string;
+        };
+
+        if (!res.ok) {
+          toast.error(
+            payload.error || 'Không thể đồng bộ cụm video cũ cho kênh này.',
+          );
+          return;
+        }
+
+        totalFetched += payload.fetchedCount ?? 0;
+        totalNew += payload.newVideosCount ?? 0;
+        if (payload.warning) lastWarning = payload.warning;
+
+        setChannelSyncProgress({
           channelId,
-          genreTags: current.genre_tags,
-        }),
-      });
+          fetchedCount: totalFetched,
+          newCount: totalNew,
+        });
 
-      const payload = (await res.json().catch(() => ({}))) as {
-        fetchedCount?: number;
-        newVideosCount?: number;
-        aiClassifiedCount?: number;
-        hasMoreChannelVideos?: boolean;
-        warning?: string | null;
-        channels?: ChannelWithSelection[];
-        videos?: CinemaVideoItem[];
-        totalVideosCount?: number;
-        hasMoreVideos?: boolean;
-        error?: string;
-      };
-
-      if (!res.ok) {
-        toast.error(payload.error || 'Không thể kéo thêm video cũ cho kênh này.');
-        return;
+        hasMore = Boolean(payload.hasMore && payload.nextPageToken);
+        nextPageToken = payload.nextPageToken ?? null;
       }
 
-      if (payload.channels) setChannels(payload.channels);
-      if (payload.videos) setAllVideos(payload.videos);
+      // Sau khi vét sạch tới Tập 1, đồng bộ lại 1 lần duy nhất từ /api/workspace vào RAM
+      const wsRes = await fetch('/api/workspace', { cache: 'no-store' });
+      if (wsRes.ok) {
+        const wsData = (await wsRes.json().catch(() => ({}))) as {
+          channels?: ChannelWithSelection[];
+          videos?: CinemaVideoItem[];
+        };
+        if (Array.isArray(wsData.channels)) setChannels(wsData.channels);
+        if (Array.isArray(wsData.videos)) setAllVideos(wsData.videos);
+      }
 
-      if (payload.warning) {
-        toast.warning(payload.warning);
-      } else if ((payload.fetchedCount ?? 0) === 0) {
+      if (lastWarning) {
+        toast.warning(lastWarning);
+      } else if (totalFetched === 0) {
         toast.info(`Kênh "${current.title}" không còn video cũ hơn để kéo.`);
       } else {
         toast.success(
-          `Đã đồng bộ trọn bộ ${payload.fetchedCount ?? 0} video (${payload.newVideosCount ?? 0} mới) cho kênh "${current.title}"!`,
+          `Đã đồng bộ trọn bộ ${totalFetched} video (${totalNew} mới) từ Tập 1 cho kênh "${current.title}"!`,
         );
       }
     } catch {
-      toast.error('Lỗi kết nối khi đồng bộ toàn bộ video kênh.');
+      toast.error('Lỗi kết nối khi đồng bộ toàn bộ lịch sử tập kênh.');
     } finally {
       setBusyChannelId(null);
+      setChannelSyncProgress(null);
     }
   };
 
@@ -2067,6 +2142,7 @@ export function UnifiedCinemaWorkspace({
             sortBy={sortBy}
             onSelectSeries={handleSelectSeries}
             onUpdateSeriesStatus={handleUpdateSeriesStatus}
+            onVideoUnavailable={handleVideoUnavailable}
             onOpenVault={() => setIsVaultOpen(true)}
           />
         ) : (
@@ -2114,6 +2190,7 @@ export function UnifiedCinemaWorkspace({
             onCycleVideoGenre={handleCycleVideoGenre}
             onToggleWatchLater={handleToggleWatchLater}
             onSubscribeChannel={handleSubscribeChannel}
+            onVideoUnavailable={handleVideoUnavailable}
             onOpenVault={() => setIsVaultOpen(true)}
             onTriggerGoogleSignIn={handleNavigateLogin}
           />
@@ -2128,6 +2205,7 @@ export function UnifiedCinemaWorkspace({
         isSyncing={isSyncing}
         isReclassifyingAll={isReclassifyingAll}
         busyChannelId={busyChannelId}
+        channelSyncProgress={channelSyncProgress}
         quickAddingHandle={subscribingChannelId}
         onSyncFromYouTube={handleSyncFromYouTube}
         onReclassifyAll={handleReclassifyAll}

@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
-import Image from 'next/image';
 import { Film } from 'lucide-react';
 
 interface VideoThumbnailProps {
@@ -10,20 +9,20 @@ interface VideoThumbnailProps {
   alt: string;
   sizes?: string;
   className?: string;
-  /**
-   * Ưu tiên dùng sddefault.jpg (640x480) sắc nét trên desktop -> tự động fallback về hqdefault.jpg (480x360)
-   * nếu video YouTube không có bản SD. Tuyệt đối không dùng mqdefault.jpg (320x180) làm ảnh chính.
-   */
   preferHq?: boolean;
+  /**
+   * Callback gọi khi cả thumbnail thật lẫn hqdefault.jpg đều trả về ảnh placeholder xám 120x90
+   * (tức là video gốc trên YouTube đã bị xóa/ẩn vĩnh viễn).
+   */
+  onUnavailable?: (videoId: string) => void;
 }
 
-const YT_MQ_RE =
-  /^https?:\/\/i\.ytimg\.com\/vi(?:_webp)?\/([^/]+)\/mqdefault\.(?:jpg|webp)(?:\?.*)?$/i;
+const YT_MQ_OR_DEFAULT_RE =
+  /^https?:\/\/i\.ytimg\.com\/vi(?:_webp)?\/([^/]+)\/(?:mqdefault|default)\.(?:jpg|webp)(?:\?.*)?$/i;
 
 function buildThumbnailCandidates(
   videoId: string,
   thumbnailUrl: string | null | undefined,
-  preferHq: boolean,
 ): string[] {
   const candidates: string[] = [];
   const pushUnique = (url: string | null | undefined) => {
@@ -33,25 +32,16 @@ function buildThumbnailCandidates(
     }
   };
 
-  const sdFallback = videoId
-    ? `https://i.ytimg.com/vi/${videoId}/sddefault.jpg`
-    : null;
-  const hqFallback = videoId
-    ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
-    : null;
-
-  if (preferHq && videoId) {
-    // Chuẩn HD sắc nét cho desktop: sddefault (640x480) -> fallback hqdefault (480x360)
-    pushUnique(sdFallback);
-    pushUnique(hqFallback);
-  }
-
-  if (thumbnailUrl?.trim() && !YT_MQ_RE.test(thumbnailUrl.trim())) {
+  // 1. Ưu tiên tuyệt đối URL thumbnail thật lưu từ YouTube API (standard?.url || high?.url)
+  // Tuyệt đối không tự ép mù quáng sddefault.jpg cho các video không có bản SD
+  if (thumbnailUrl?.trim() && !YT_MQ_OR_DEFAULT_RE.test(thumbnailUrl.trim())) {
     pushUnique(thumbnailUrl.trim());
   }
 
-  pushUnique(hqFallback);
-  pushUnique(sdFallback);
+  // 2. Fallback chuẩn sắc nét 480x360 có mặt trên mọi video hợp lệ của YouTube
+  if (videoId) {
+    pushUnique(`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`);
+  }
 
   return candidates;
 }
@@ -60,16 +50,15 @@ export const VideoThumbnail = React.memo(function VideoThumbnail({
   videoId,
   thumbnailUrl,
   alt,
-  sizes = '(max-width: 640px) 100vw, 25vw',
   className = 'object-cover',
-  preferHq = true,
+  onUnavailable,
 }: VideoThumbnailProps) {
   const candidates = useMemo(
-    () => buildThumbnailCandidates(videoId, thumbnailUrl, preferHq),
-    [videoId, thumbnailUrl, preferHq],
+    () => buildThumbnailCandidates(videoId, thumbnailUrl),
+    [videoId, thumbnailUrl],
   );
 
-  const sourceKey = `${videoId}|${thumbnailUrl ?? ''}|${preferHq ? '1' : '0'}`;
+  const sourceKey = `${videoId}|${thumbnailUrl ?? ''}`;
   const [errorState, setErrorState] = useState<{
     key: string;
     index: number;
@@ -77,6 +66,14 @@ export const VideoThumbnail = React.memo(function VideoThumbnail({
 
   const activeIndex = errorState.key === sourceKey ? errorState.index : 0;
   const currentSrc = candidates[activeIndex] ?? null;
+
+  const advanceToFallback = () => {
+    const nextIndex = activeIndex + 1;
+    setErrorState({ key: sourceKey, index: nextIndex });
+    if (nextIndex >= candidates.length && videoId) {
+      onUnavailable?.(videoId);
+    }
+  };
 
   if (!currentSrc) {
     return (
@@ -87,20 +84,19 @@ export const VideoThumbnail = React.memo(function VideoThumbnail({
   }
 
   return (
-    <Image
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
       src={currentSrc}
       alt={alt}
-      fill
-      unoptimized
       loading="lazy"
       decoding="async"
-      sizes={sizes}
-      className={className}
-      onError={() => {
-        setErrorState((prev) => {
-          const nextIndex = prev.key === sourceKey ? prev.index + 1 : 1;
-          return { key: sourceKey, index: nextIndex };
-        });
+      className={`absolute inset-0 size-full ${className}`}
+      onError={advanceToFallback}
+      onLoad={(e) => {
+        // Phát hiện ảnh placeholder xám 3 dấu chấm kích thước 120x90 của YouTube
+        if (e.currentTarget.naturalWidth <= 120) {
+          advanceToFallback();
+        }
       }}
     />
   );

@@ -69,6 +69,11 @@ interface ChannelVaultDrawerProps {
   isSyncing: boolean;
   isReclassifyingAll?: boolean;
   busyChannelId?: string | null;
+  channelSyncProgress?: {
+    channelId: string;
+    fetchedCount: number;
+    newCount: number;
+  } | null;
   quickAddingHandle?: string | null;
   onSyncFromYouTube: () => void;
   onReclassifyAll: () => void;
@@ -103,6 +108,7 @@ export function ChannelVaultDrawer({
   isSyncing,
   isReclassifyingAll = false,
   busyChannelId = null,
+  channelSyncProgress = null,
   quickAddingHandle = null,
   onSyncFromYouTube,
   onReclassifyAll,
@@ -680,9 +686,12 @@ export function ChannelVaultDrawer({
                                 <History className="size-3.5 text-[var(--accent-primary)]" />
                               )}
                               <span>
-                                {isBusy && activeChannelAction === 'load_more'
-                                  ? 'Đang vét lịch sử tập...'
-                                  : 'Đồng bộ toàn bộ lịch sử tập'}
+                                {isBusy &&
+                                channelSyncProgress?.channelId === ch.channel_id
+                                  ? `Đang đồng bộ tập cũ: đã kéo ${channelSyncProgress.fetchedCount} video...`
+                                  : isBusy && activeChannelAction === 'load_more'
+                                    ? 'Đang vét lịch sử tập...'
+                                    : 'Đồng bộ toàn bộ lịch sử tập'}
                               </span>
                             </button>
 

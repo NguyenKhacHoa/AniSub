@@ -712,3 +712,104 @@ export async function syncAllChannelVideos(options: {
     pagesFetched,
   });
 }
+
+export interface ChunkedChannelSyncResult extends SyncChannelVideosPageResult {
+  hasMore: boolean;
+  isFullySynced: boolean;
+}
+
+/**
+ * Cursor-Based Chunked Channel Sync (chống Vercel Timeout 100%):
+ * - Mỗi lượt gọi chỉ kéo tối đa 3–4 trang `playlistItems.list` (~150–200 video, chạy gọn < 4 giây).
+ * - Lưu ngay video vào Supabase và cập nhật `sync_page_token` + `is_fully_synced` trên bảng `channels`.
+ * - Trả về `{ hasMore, nextPageToken, fetchedCount, newVideosCount, isFullySynced }` để client gọi nối tiếp cho tới Tập 1.
+ */
+export async function syncChannelVideosChunk(options: {
+  channelId: string;
+  genreTags: PrimaryGenreTag[];
+  pageToken?: string | null;
+  resetCursor?: boolean;
+  maxPages?: number;
+}): Promise<ChunkedChannelSyncResult> {
+  const {
+    channelId,
+    genreTags,
+    resetCursor = false,
+    maxPages = 4,
+  } = options;
+  const clampedMaxPages = Math.min(5, Math.max(1, maxPages));
+  const admin = createAdminClient();
+
+  let startToken: string | null = options.pageToken ?? null;
+  if (!startToken && !resetCursor) {
+    const { data: chRow } = await admin
+      .from('channels')
+      .select('sync_page_token')
+      .eq('channel_id', channelId)
+      .maybeSingle();
+    if (
+      chRow &&
+      typeof chRow.sync_page_token === 'string' &&
+      chRow.sync_page_token.trim() &&
+      !isChannelHistoryExhausted(chRow.sync_page_token)
+    ) {
+      startToken = chRow.sync_page_token.trim();
+    }
+  }
+
+  const seenVideoIds = new Set<string>();
+  const chunkVideos: YouTubeFetchedVideo[] = [];
+  const seenTokens = new Set<string>();
+
+  let currentToken: string | null = startToken;
+  let pagesFetched = 0;
+
+  while (pagesFetched < clampedMaxPages) {
+    const page = await fetchChannelVideosPage(channelId, 50, currentToken);
+    pagesFetched += 1;
+
+    for (const v of page.videos) {
+      if (!seenVideoIds.has(v.video_id)) {
+        seenVideoIds.add(v.video_id);
+        chunkVideos.push(v);
+      }
+    }
+
+    const nextTok = page.nextPageToken;
+    if (!nextTok || seenTokens.has(nextTok)) {
+      currentToken = null;
+      break;
+    }
+
+    seenTokens.add(nextTok);
+    currentToken = nextTok;
+  }
+
+  const hasMore = Boolean(currentToken);
+  const isFullySynced = !hasMore;
+
+  // Cập nhật `sync_page_token`, `is_fully_synced` và `next_page_token` trên bảng `channels` (fallback an toàn nếu chưa chạy SQL)
+  await saveChannelNextPageToken(channelId, currentToken);
+  await admin
+    .from('channels')
+    .update({
+      sync_page_token: currentToken,
+      is_fully_synced: isFullySynced,
+      updated_at: new Date().toISOString(),
+    } as never)
+    .eq('channel_id', channelId);
+
+  const persisted = await persistAndClassifyFetchedVideos({
+    channelId,
+    genreTags,
+    fetchedVideos: chunkVideos,
+    nextPageToken: currentToken,
+    pagesFetched,
+  });
+
+  return {
+    ...persisted,
+    hasMore,
+    isFullySynced,
+  };
+}

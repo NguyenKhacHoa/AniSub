@@ -31,6 +31,7 @@ interface SeriesGridProps {
     series: SeriesGroup,
     nextStatus: UserSeriesStatus | null,
   ) => void;
+  onVideoUnavailable?: (videoId: string) => void;
   onOpenVault?: () => void;
 }
 
@@ -44,6 +45,7 @@ interface SeriesCardProps {
     series: SeriesGroup,
     nextStatus: UserSeriesStatus | null,
   ) => void;
+  onVideoUnavailable?: (videoId: string) => void;
 }
 
 const SeriesCard = React.memo(function SeriesCard({
@@ -53,6 +55,7 @@ const SeriesCard = React.memo(function SeriesCard({
   isHiddenView,
   onSelectSeries,
   onUpdateSeriesStatus,
+  onVideoUnavailable,
 }: SeriesCardProps) {
   const genreStyle = GENRE_DOT_STYLES[series.detectedGenre];
   const isFollowing = status === 'following';
@@ -104,6 +107,7 @@ const SeriesCard = React.memo(function SeriesCard({
             alt={series.seriesTitle}
             sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
             className="object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+            onUnavailable={onVideoUnavailable}
           />
 
           {/* Lớp phủ hover Play */}
@@ -251,6 +255,7 @@ export function SeriesGrid({
   sortBy = 'newest',
   onSelectSeries,
   onUpdateSeriesStatus,
+  onVideoUnavailable,
   onOpenVault,
 }: SeriesGridProps) {
   const [showHiddenSection, setShowHiddenSection] = useState(false);
@@ -414,6 +419,7 @@ export function SeriesGrid({
                 isHiddenView={false}
                 onSelectSeries={onSelectSeries}
                 onUpdateSeriesStatus={onUpdateSeriesStatus}
+                onVideoUnavailable={onVideoUnavailable}
               />
             ))}
           </div>

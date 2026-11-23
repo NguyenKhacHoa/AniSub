@@ -59,13 +59,14 @@ interface RawVideoRow {
   theatrical_release_year?: number | null;
   cinema_format?: CinemaVideoItem['cinema_format'];
   cinema_genres?: string[] | null;
+  is_unavailable?: boolean | null;
   created_at: string;
 }
 
 // Chỉ SELECT các cột nhẹ cần thiết cho lưới thẻ phim ngoài màn hình chính
 // (loại bỏ cột nặng như description, ai_summary, insight_data; chỉ tải chi tiết khi mở TheaterStage)
 const VIDEO_SELECT_FULL =
-  'video_id, channel_id, title, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, is_manual_tag, is_theatrical_movie, theatrical_release_year, cinema_format, cinema_genres, created_at';
+  'video_id, channel_id, title, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, is_manual_tag, is_theatrical_movie, theatrical_release_year, cinema_format, cinema_genres, is_unavailable, created_at';
 const VIDEO_SELECT_THEATRICAL =
   'video_id, channel_id, title, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, is_manual_tag, is_theatrical_movie, theatrical_release_year, created_at';
 const VIDEO_SELECT_BASIC =
@@ -435,7 +436,9 @@ export async function loadWorkspaceDataForUser(
     mergedChannels.map((c) => [c.channel_id, c.genre_tags[0] ?? 'HH2D']),
   );
 
-  const mergedVideos: CinemaVideoItem[] = fetchedVideos.map((v) => {
+  const mergedVideos: CinemaVideoItem[] = fetchedVideos
+    .filter((v) => v.is_unavailable !== true)
+    .map((v) => {
     const progress = progressMap.get(v.video_id);
     const channel = channelMap.get(v.channel_id);
     return {

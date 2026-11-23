@@ -52,10 +52,12 @@ export function isTheatricalSeries(series: SeriesGroup): boolean {
 }
 
 /**
- * Chuẩn hóa chuỗi tiếng Việt thành slug không dấu để gom nhóm chính xác
+ * Chuẩn hóa chuỗi tiếng Việt (Unicode NFC -> bỏ dấu câu thừa -> lowercase không dấu)
+ * để gom nhóm 100% các tập của cùng 1 bộ phim vào đúng 1 series_key duy nhất.
  */
 export function normalizeSeriesSlug(input: string): string {
   return input
+    .normalize('NFC')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[đĐ]/g, 'd')
@@ -255,24 +257,27 @@ function isMetadataOnlySegment(segment: string, channelTitle?: string): boolean 
 }
 
 /**
- * Chuẩn hóa tên gốc bộ phim từ tiêu đề video:
- * - Cắt bỏ tiền tố/hậu tố số tập ("TẬP 01-02 |", "TẬP 258-259 MÙA 3 |")
- * - Cắt bỏ tên kênh phía sau ("| 2K Sub", "| Aan VietSub")
- * - Cắt bỏ tên gốc chữ Hán phụ ("- 见微知燃")
+ * Chuẩn hóa tên gốc bộ phim từ tiêu đề video (Normalized Series Grouping):
+ * - Chuẩn hóa Unicode NFC trước khi xử lý
+ * - Loại bỏ triệt để mọi tiền tố/hậu tố nhiễu: `Tập \d+(-\d+)?`, `Full( Version)?`, `Thuyết Minh`,
+ *   `Vietsub`, `Lồng Tiếng`, `Phần \d+`, `SS\d+`, `Mùa \d+`, `HD`, `1080p`, dấu ngoặc `[...]`, `(...)`, `【...】`,
+ *   và tên kênh phía sau dấu `|` hoặc `-`
  */
 export function extractSeriesTitle(
   title: string,
   channelTitle?: string,
   fallbackSeriesName?: string | null,
 ): string {
-  // 1. Gỡ các thẻ ngoặc vuông/ngoặc hoa chứa sub/tag kỹ thuật
-  const cleanedRaw = title
-    .replace(/\[[^\]]*(?:vietsub|thuyết\s*minh|thuyet\s*minh|4k|2k|hd|hh3d|hh2d|sub|raw|full|tập|ep|mùa|phần|ss)[^\]]*\]/gi, ' ')
+  const nfcTitle = title.normalize('NFC');
+
+  // 1. Gỡ triệt để mọi thẻ trong ngoặc vuông [...], ngoặc hoa 【...】, và ngoặc tròn (...)
+  const cleanedRaw = nfcTitle
+    .replace(/\[[^\]]*\]/g, ' ')
     .replace(/【[^】]*】/g, ' ')
-    .replace(/\((?:vietsub|thuyết\s*minh|thuyet\s*minh|full\s*hd|4k|2k|hd|end|tập\s*cuối)\)/gi, ' ')
+    .replace(/\([^)]*\)/g, ' ')
     .trim();
 
-  // 2. Tách theo dấu gạch đứng | ｜ │ ┃
+  // 2. Tách theo dấu gạch đứng | ｜ │ ┃ và loại bỏ phân đoạn tên kênh/metadata
   const pipeSegments = cleanedRaw
     .split(/\s*[|｜│┃]\s*/)
     .map((s) => s.trim())
@@ -290,6 +295,24 @@ export function extractSeriesTitle(
     candidate = pipeSegments[0] ?? cleanedRaw;
   }
 
+  // 2b. Gỡ tên kênh phía sau dấu "-" / "–" / "—" nếu khớp channelTitle
+  if (channelTitle) {
+    const normChannel = normalizeSeriesSlug(channelTitle);
+    const dashParts = candidate.split(/\s+[-–—]\s+/);
+    if (dashParts.length > 1 && normChannel) {
+      const keptParts = dashParts.filter((part) => {
+        const normPart = normalizeSeriesSlug(part);
+        return !(
+          normPart &&
+          (normPart === normChannel || normChannel.includes(normPart))
+        );
+      });
+      if (keptParts.length > 0) {
+        candidate = keptParts.join(' - ');
+      }
+    }
+  }
+
   // 3. Cắt bỏ tiền tố số tập / phần / mùa ở đầu chuỗi
   candidate = candidate.replace(
     /^(?:(?:tập|tap|ep|episode|chương|chuong|phần|phan|mùa|mua|season|ss)\s*\.?\s*\d+(?:\s*[-–~&+]\s*\d+)?\s*[-–—:•]?\s*)+/i,
@@ -298,27 +321,26 @@ export function extractSeriesTitle(
 
   // 4. Cắt bỏ hậu tố số tập từ "Tập X..." hoặc "Ep X..." trở về sau
   candidate = candidate.replace(
-    /\s*[-–—:•(]?\s*\b(?:tập|tap|ep|episode|chương|chuong)\s*\.?\s*\d+(?:\s*[-–~&+]\s*\d+)?.*$/i,
+    /\s*[-–—:•]?\s*\b(?:tập|tap|ep|episode|chương|chuong)\s*\.?\s*\d+(?:\s*[-–~&+]\s*\d+)?.*$/i,
     '',
   );
 
   // 4b. Gỡ nhãn mùa / phần ở cuối tên phim (vd: "Mùa 3", "Phần 2", "SS2") để gom chung các mùa về 1 bộ
   candidate = candidate.replace(
-    /\s*[-–—:•(]?\s*\b(?:mùa|mua|phần|phan|season|ss)\s*\.?\s*\d{1,2}\)?\s*$/i,
+    /\s*[-–—:•]?\s*\b(?:mùa|mua|phần|phan|season|ss)\s*\.?\s*\d{1,2}\s*$/i,
     '',
   );
 
   // 5. Cắt bỏ tên gốc chữ Hán phụ sau dấu gạch ngang hoặc cuối chuỗi
   candidate = candidate
     .replace(/\s*[-–—~:/]\s*[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef].*$/, '')
-    .replace(/\s*\([\u4e00-\u9fff\u3400-\u4dbf\s]+\)\s*/g, ' ')
     .replace(/[\u4e00-\u9fff\u3400-\u4dbf]+/g, ' ');
 
-  // 6. Cắt bỏ hậu tố chất lượng / sub / hashtag
+  // 6. Cắt bỏ hậu tố chất lượng / sub / thuyết minh / lồng tiếng / full version / hashtag
   candidate = candidate
     .replace(/#\S+/g, ' ')
     .replace(
-      /\s*[-–—:•]?\s*\b(?:vietsub|thuyết\s*minh|thuyet\s*minh|full\s*hd|4k|2k|1080p|hd|engsub|raw)\b.*$/i,
+      /\s*[-–—:•]?\s*\b(?:full(?:\s*version)?|vietsub|thuyết\s*minh|thuyet\s*minh|lồng\s*tiếng|long\s*tieng|full\s*hd|4k|2k|1080p|720p|hd|engsub|raw)\b.*$/gi,
       '',
     )
     .replace(/^[\s\-–—:|•,.;!?()[\]]+|[\s\-–—:|•,.;!?()[\]]+$/g, '')
@@ -326,14 +348,14 @@ export function extractSeriesTitle(
     .trim();
 
   if (candidate.length >= 2) {
-    return candidate;
+    return candidate.normalize('NFC');
   }
 
   if (fallbackSeriesName?.trim()) {
-    return fallbackSeriesName.trim();
+    return fallbackSeriesName.normalize('NFC').trim();
   }
 
-  return title.trim();
+  return nfcTitle.trim();
 }
 
 export interface ExtractedSeriesInfo {

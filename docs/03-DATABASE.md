@@ -67,14 +67,18 @@ CREATE TABLE public.channels (
   default_category TEXT DEFAULT 'AUTO', -- Khóa danh mục cấp kênh Tầng 1: 'AUTO' | 'HH2D' | '2D' | 'PHIM_AI'
   websub_status TEXT DEFAULT 'pending', -- 'pending' | 'active' | 'expired'
   websub_expires_at TIMESTAMPTZ,
-  next_page_token TEXT, -- Token phân trang YouTube playlistItems để kéo thêm 50 video cũ
+  next_page_token TEXT, -- Token phân trang YouTube playlistItems
+  sync_page_token TEXT, -- Cursor phân trang cho Cursor-Based Chunked Channel Sync (chống Vercel timeout)
+  is_fully_synced BOOLEAN DEFAULT FALSE, -- TRUE khi đã vét cạn tới Tập 1 của kênh
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Migration bổ sung cột next_page_token, is_subscribed và default_category cho DB đã khởi tạo trước đó:
+-- Migration bổ sung cột cho bảng channels:
 -- ALTER TABLE public.channels ADD COLUMN IF NOT EXISTS next_page_token TEXT;
 -- ALTER TABLE public.channels ADD COLUMN IF NOT EXISTS is_subscribed BOOLEAN DEFAULT FALSE;
 -- ALTER TABLE public.channels ADD COLUMN IF NOT EXISTS default_category TEXT DEFAULT 'AUTO';
+-- ALTER TABLE public.channels ADD COLUMN IF NOT EXISTS sync_page_token TEXT;
+-- ALTER TABLE public.channels ADD COLUMN IF NOT EXISTS is_fully_synced BOOLEAN DEFAULT FALSE;
 
 ALTER TABLE public.channels ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Authenticated users can read channels"
@@ -127,16 +131,18 @@ CREATE TABLE public.videos (
   theatrical_release_year INTEGER, -- Năm công chiếu tại rạp
   cinema_format TEXT, -- 'Anime / Hoạt hình' | 'Phim Người Đóng'
   cinema_genres TEXT[], -- Mảng thể loại an toàn chuẩn xác: {'Hành động','Phiêu lưu','Giả tưởng','Viễn tưởng','Tình cảm','Hài hước','Tâm lý','Võ thuật'}
+  is_unavailable BOOLEAN DEFAULT FALSE, -- TRUE khi video gốc bị xóa/ẩn trên YouTube (thumbnail trả về 120x90)
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Migration bổ sung cột is_manual_tag, insight_data, is_theatrical_movie, theatrical_release_year, cinema_format và cinema_genres cho DB đã khởi tạo trước đó:
+-- Migration bổ sung cột cho bảng videos:
 -- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS is_manual_tag BOOLEAN DEFAULT FALSE;
 -- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS insight_data JSONB;
 -- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS is_theatrical_movie BOOLEAN DEFAULT FALSE;
 -- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS theatrical_release_year INTEGER;
 -- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS cinema_format TEXT;
 -- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS cinema_genres TEXT[];
+-- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS is_unavailable BOOLEAN DEFAULT FALSE;
 
 CREATE INDEX idx_videos_channel_published ON public.videos(channel_id, published_at DESC);
 CREATE INDEX idx_videos_type ON public.videos(video_type, is_short);

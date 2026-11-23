@@ -56,6 +56,7 @@ interface StructuredCinemaRowsProps {
   onCycleVideoGenre?: (video: CinemaVideoItem, nextGenre: PrimaryGenreTag) => void;
   onToggleWatchLater?: (videoId: string) => void;
   onSubscribeChannel?: (channelId: string, channelTitle?: string) => void;
+  onVideoUnavailable?: (videoId: string) => void;
   onOpenVault: () => void;
   onTriggerGoogleSignIn: () => void;
 }
@@ -100,6 +101,7 @@ interface MovieCardProps {
   ) => void;
   onToggleWatchLater?: (videoId: string) => void;
   onSubscribeChannel?: (channelId: string, channelTitle?: string) => void;
+  onVideoUnavailable?: (videoId: string) => void;
 }
 
 const MovieCard = React.memo(function MovieCard({
@@ -113,6 +115,7 @@ const MovieCard = React.memo(function MovieCard({
   onCycleVideoGenre,
   onToggleWatchLater,
   onSubscribeChannel,
+  onVideoUnavailable,
 }: MovieCardProps) {
   const percent = getProgressPercent(
     video.progress_seconds,
@@ -154,6 +157,7 @@ const MovieCard = React.memo(function MovieCard({
           alt={video.title}
           sizes="(max-width: 640px) 100vw, 25vw"
           className="object-cover"
+          onUnavailable={onVideoUnavailable}
         />
 
         <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/35">
@@ -326,6 +330,7 @@ export function StructuredCinemaRows({
   onCycleVideoGenre,
   onToggleWatchLater,
   onSubscribeChannel,
+  onVideoUnavailable,
   onOpenVault,
   onTriggerGoogleSignIn,
 }: StructuredCinemaRowsProps) {
@@ -777,6 +782,7 @@ export function StructuredCinemaRows({
                 onCycleVideoGenre={onCycleVideoGenre}
                 onToggleWatchLater={onToggleWatchLater}
                 onSubscribeChannel={onSubscribeChannel}
+                onVideoUnavailable={onVideoUnavailable}
               />
             ))}
           </div>

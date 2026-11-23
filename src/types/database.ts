@@ -82,6 +82,8 @@ export type ChannelRow = {
   websub_status: WebSubStatus;
   websub_expires_at: string | null;
   next_page_token?: string | null;
+  sync_page_token?: string | null;
+  is_fully_synced?: boolean | null;
   updated_at: string;
 };
 
@@ -115,6 +117,7 @@ export type VideoRow = {
   theatrical_release_year?: number | null;
   cinema_format?: CinemaFormat | null;
   cinema_genres?: string[] | null;
+  is_unavailable?: boolean | null;
   created_at: string;
 };
 
