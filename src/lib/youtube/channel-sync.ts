@@ -229,40 +229,93 @@ function stripExtendedSyncColumns(item: VideoInsertRow): Record<string, unknown>
   return copy;
 }
 
+function extractMissingColumnName(errorMessage?: string | null): string | null {
+  if (!errorMessage) return null;
+  const match = errorMessage.match(
+    /(?:Could not find the|column)\s+['"]([a-zA-Z0-9_]+)['"]/i,
+  );
+  return match?.[1] ?? null;
+}
+
 async function upsertVideosChunked(
   admin: ReturnType<typeof createAdminClient>,
   rows: VideoInsertRow[],
-): Promise<void> {
+): Promise<{
+  upsertedCount: number;
+  droppedColumns: string[];
+  errorMessage: string | null;
+}> {
+  if (rows.length === 0) {
+    return { upsertedCount: 0, droppedColumns: [], errorMessage: null };
+  }
+
+  let upsertedCount = 0;
+  const droppedColumns = new Set<string>();
+  let lastErrorMessage: string | null = null;
+
   for (let i = 0; i < rows.length; i += DB_CHUNK_SIZE) {
-    const chunk = rows.slice(i, i + DB_CHUNK_SIZE);
-    const { error } = await admin
-      .from('videos')
-      .upsert(chunk as never, { onConflict: 'video_id' });
-
-    if (!error) continue;
-
-    // Fallback tầng 1: Nếu DB chưa chạy ALTER TABLE thêm cột playlist/view/hot
-    const fallbackNoStats = chunk.map(stripExtendedSyncColumns);
-    const { error: err1 } = await admin
-      .from('videos')
-      .upsert(fallbackNoStats as never, { onConflict: 'video_id' });
-
-    if (!err1) continue;
-
-    // Fallback tầng 2: Nếu DB chưa có cả cột is_manual_tag
-    const fallbackBasic = fallbackNoStats.map((item) => {
-      const rest = { ...item };
-      delete rest.is_manual_tag;
-      return rest;
+    const rawChunk = rows.slice(i, i + DB_CHUNK_SIZE);
+    let workingChunk: Array<Record<string, unknown>> = rawChunk.map((item) => {
+      const copy = { ...item } as Record<string, unknown>;
+      for (const col of droppedColumns) {
+        delete copy[col];
+      }
+      return copy;
     });
-    const { error: err2 } = await admin
-      .from('videos')
-      .upsert(fallbackBasic as never, { onConflict: 'video_id' });
 
-    if (err2) {
-      console.error('[SyncChannelVideos] Lỗi upsert chunk:', err2);
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const { error } = await admin
+        .from('videos')
+        .upsert(workingChunk as never, { onConflict: 'video_id' });
+
+      if (!error) {
+        upsertedCount += workingChunk.length;
+        break;
+      }
+
+      lastErrorMessage = error.message || String(error);
+      const missingCol = extractMissingColumnName(error.message);
+
+      if (missingCol && !droppedColumns.has(missingCol)) {
+        console.warn(
+          `[SyncChannelVideos] Cột "${missingCol}" chưa tồn tại trên bảng videos -> tự động bỏ qua cột này để lưu ${workingChunk.length} video.`,
+        );
+        droppedColumns.add(missingCol);
+        workingChunk = workingChunk.map((item) => {
+          const rest = { ...item };
+          delete rest[missingCol];
+          return rest;
+        });
+        continue;
+      }
+
+      if (attempt === 0) {
+        console.warn(
+          `[SyncChannelVideos] Lỗi upsert chunk (${error.message}), thử lược bỏ các cột mở rộng để vẫn lưu video...`,
+        );
+        workingChunk = workingChunk.map((item) => {
+          const rest = stripExtendedSyncColumns(
+            item as unknown as VideoInsertRow,
+          );
+          delete rest.is_manual_tag;
+          return rest;
+        });
+        continue;
+      }
+
+      console.error(
+        `[SyncChannelVideos] Upsert thất bại cho chunk ${workingChunk.length} video:`,
+        error,
+      );
+      break;
     }
   }
+
+  return {
+    upsertedCount,
+    droppedColumns: Array.from(droppedColumns),
+    errorMessage: upsertedCount > 0 ? null : lastErrorMessage,
+  };
 }
 
 /**
@@ -1004,20 +1057,28 @@ export async function syncAllChannelVideos(options: {
 }
 
 export interface ChunkedChannelSyncResult extends SyncChannelVideosPageResult {
+  phase: 'playlists' | 'uploads';
+  processedCount: number;
+  upsertedCount: number;
+  totalPlaylists: number;
+  nextPlaylistOffset: number;
   hasMore: boolean;
   isFullySynced: boolean;
 }
 
 /**
- * Cursor-Based Chunked Channel Sync (chống Vercel Timeout 100%):
- * - Ở lượt đầu (`resetCursor === true` hoặc chưa có `pageToken`), tự động đồng bộ toàn bộ
- *   YouTube Playlists chính thức của kênh để đảm bảo 100% bộ phim trong Playlist không bao giờ thiếu tập.
- * - Mỗi lượt gọi chỉ kéo tối đa 3–4 trang `uploads` (~150–200 video, chạy gọn < 4 giây), lưu ngay vào Supabase,
- *   cập nhật `sync_page_token` + `is_fully_synced` và trả về `{ hasMore, nextPageToken, fetchedCount, newVideosCount }`.
+ * Cursor-Based Chunked Channel Sync (chống Vercel Timeout 100%, không bao giờ kẹt ở 0 video):
+ * - Chế độ `mode: 'playlists'`: Kéo theo từng lô nhỏ `playlistBatchSize` (mặc định 6 Playlist/lượt, ~2–3 giây),
+ *   lặp đủ 100% `nextPageToken` của từng Playlist để UPSERT toàn bộ tập gốc (`youtube_playlist_id`, `playlist_position`, `view_count`, `hot_badge`).
+ * - Chế độ `mode: 'uploads'`: Kéo tối đa 3 trang `uploads` (~150 video/lượt, ~2 giây), KHÔNG dừng sớm khi gặp video trùng,
+ *   chỉ kết thúc khi YouTube trả về `nextPageToken = undefined`, đồng thời làm mới `view_count`/`hot_badge`.
  */
 export async function syncChannelVideosChunk(options: {
   channelId: string;
   genreTags: PrimaryGenreTag[];
+  mode?: 'playlists' | 'uploads';
+  playlistOffset?: number;
+  playlistBatchSize?: number;
   pageToken?: string | null;
   resetCursor?: boolean;
   maxPages?: number;
@@ -1025,12 +1086,92 @@ export async function syncChannelVideosChunk(options: {
   const {
     channelId,
     genreTags,
+    mode = 'uploads',
+    playlistOffset = 0,
+    playlistBatchSize = 6,
     resetCursor = false,
-    maxPages = 4,
+    maxPages = 3,
   } = options;
-  const clampedMaxPages = Math.min(5, Math.max(1, maxPages));
   const admin = createAdminClient();
 
+  // PHASE 1: Đồng bộ từng lô nhỏ YouTube Playlists (mỗi lượt ~2-3s, không bao giờ timeout Vercel)
+  if (mode === 'playlists') {
+    const safeOffset = Math.max(0, Math.floor(playlistOffset));
+    const safeBatch = Math.min(12, Math.max(1, Math.floor(playlistBatchSize)));
+    const allPlaylists = (await fetchChannelPlaylists(channelId))
+      .filter((p) => p.item_count > 0)
+      .sort((a, b) => a.item_count - b.item_count);
+
+    const totalPlaylists = allPlaylists.length;
+    const slice = allPlaylists.slice(safeOffset, safeOffset + safeBatch);
+    const nextPlaylistOffset = safeOffset + slice.length;
+    const hasMore = nextPlaylistOffset < totalPlaylists;
+
+    if (slice.length === 0) {
+      return {
+        phase: 'playlists',
+        fetchedCount: 0,
+        processedCount: 0,
+        upsertedCount: 0,
+        newVideosCount: 0,
+        aiClassifiedCount: 0,
+        pagesFetched: 0,
+        playlistsSyncedCount: 0,
+        totalPlaylists,
+        nextPlaylistOffset,
+        nextPageToken: null,
+        hasMore: false,
+        isFullySynced: false,
+        warning: null,
+      };
+    }
+
+    const videoMap = new Map<string, YouTubeFetchedVideo>();
+    const batchResults = await Promise.all(
+      slice.map((pl) =>
+        fetchPlaylistVideosAll(channelId, pl.playlist_id, pl.title).catch(
+          (err) => {
+            console.warn(
+              `[ChunkSync:Playlists] Bỏ qua playlist lỗi ${pl.playlist_id}:`,
+              err,
+            );
+            return [] as YouTubeFetchedVideo[];
+          },
+        ),
+      ),
+    );
+    for (const list of batchResults) {
+      for (const v of list) {
+        if (!videoMap.has(v.video_id)) {
+          videoMap.set(v.video_id, v);
+        }
+      }
+    }
+
+    const batchVideos = Array.from(videoMap.values());
+    const persisted = await persistAndClassifyFetchedVideos({
+      channelId,
+      genreTags,
+      fetchedVideos: batchVideos,
+      nextPageToken: null,
+      pagesFetched: slice.length,
+    });
+
+    return {
+      ...persisted,
+      phase: 'playlists',
+      processedCount: batchVideos.length,
+      upsertedCount: batchVideos.length,
+      playlistsSyncedCount: slice.length,
+      totalPlaylists,
+      nextPlaylistOffset,
+      hasMore,
+      isFullySynced: false,
+    };
+  }
+
+  // PHASE 2: Đồng bộ luồng uploads playlist theo cursor `pageToken` (KHÔNG dừng sớm khi gặp video trùng)
+  const clampedMaxPages = Math.min(5, Math.max(1, maxPages));
   let startToken: string | null = options.pageToken ?? null;
   if (!startToken && !resetCursor) {
     const { data: chRow } = await admin
@@ -1045,32 +1186,6 @@ export async function syncChannelVideosChunk(options: {
       !isChannelHistoryExhausted(chRow.sync_page_token)
     ) {
       startToken = chRow.sync_page_token.trim();
-    }
-  }
-
-  // Lượt đầu tiên của chunked sync -> kéo YouTube Playlists chính thức làm Source of Truth cho Phim Bộ
-  let playlistsSyncedCount = 0;
-  let playlistFetched = 0;
-  let playlistNew = 0;
-  let playlistWarning: string | null = null;
-
-  if (!startToken) {
-    try {
-      const plOutcome = await syncChannelPlaylistsAll({
-        channelId,
-        genreTags,
-        maxPlaylists: 200,
-        timeBudgetMs: 20_000,
-      });
-      playlistsSyncedCount = plOutcome.playlistsCount;
-      playlistFetched = plOutcome.fetchedCount;
-      playlistNew = plOutcome.newVideosCount;
-      playlistWarning = plOutcome.warning;
-    } catch (err) {
-      console.warn(
-        `[ChunkSync] Không thể kéo playlists cho kênh ${channelId}, tiếp tục đồng bộ uploads:`,
-        err,
-      );
     }
   }
 
@@ -1126,10 +1241,12 @@ export async function syncChannelVideosChunk(options: {
 
   return {
     ...persisted,
-    fetchedCount: persisted.fetchedCount + playlistFetched,
-    newVideosCount: persisted.newVideosCount + playlistNew,
-    playlistsSyncedCount,
-    warning: persisted.warning ?? playlistWarning,
+    phase: 'uploads',
+    processedCount: chunkVideos.length,
+    upsertedCount: chunkVideos.length,
+    playlistsSyncedCount: 0,
+    totalPlaylists: 0,
+    nextPlaylistOffset: 0,
     hasMore,
     isFullySynced,
   };

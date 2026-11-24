@@ -68,6 +68,15 @@ interface ChannelVaultDrawerProps {
   lastSyncedAt: string | null;
   isSyncing: boolean;
   isReclassifyingAll?: boolean;
+  isSyncingAllLibrary?: boolean;
+  fullLibrarySyncProgress?: {
+    currentIndex: number;
+    totalChannels: number;
+    channelTitle: string;
+    phaseLabel: string;
+    processedCount: number;
+    newCount: number;
+  } | null;
   busyChannelId?: string | null;
   channelSyncProgress?: {
     channelId: string;
@@ -76,6 +85,7 @@ interface ChannelVaultDrawerProps {
   } | null;
   quickAddingHandle?: string | null;
   onSyncFromYouTube: () => void;
+  onSyncAllActiveChannels?: () => void;
   onReclassifyAll: () => void;
   onToggleChannel: (channelId: string, nextSelected: boolean) => void;
   onToggleChannelGenreTag: (channelId: string, tag: PrimaryGenreTag) => void;
@@ -107,10 +117,13 @@ export function ChannelVaultDrawer({
   lastSyncedAt,
   isSyncing,
   isReclassifyingAll = false,
+  isSyncingAllLibrary = false,
+  fullLibrarySyncProgress = null,
   busyChannelId = null,
   channelSyncProgress = null,
   quickAddingHandle = null,
   onSyncFromYouTube,
+  onSyncAllActiveChannels,
   onReclassifyAll,
   onToggleChannel,
   onToggleChannelGenreTag,
@@ -209,75 +222,150 @@ export function ChannelVaultDrawer({
         }`}
       >
         {/* Header của Drawer */}
-        <div className="flex flex-col justify-between gap-3 border-b border-[var(--border-subtle)] px-5 py-4 sm:flex-row sm:items-center">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)]">
-              <FolderKanban className="size-5" />
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold text-[var(--text-primary)]">
-                Kho Kênh Đăng Ký (Channel Vault)
-              </h2>
-              <p className="text-xs text-[var(--text-secondary)]">
-                Chọn 1 hoặc nhiều thể loại cho từng kênh — chọn từ 2 tag trở lên
-                sẽ kích hoạt Gemini AI phân loại từng video
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {activeChannels.length > 0 && (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={onReclassifyAll}
-                disabled={isReclassifyingAll || isSyncing}
-                title="Quét lại toàn bộ video của các kênh đang bật bằng Gemini Vision"
-                className="h-10 rounded-xl border-[var(--ai-accent)]/45 bg-violet-500/10 px-3.5 text-xs font-medium text-[var(--ai-accent)] hover:bg-violet-500/20 cursor-pointer"
-              >
-                {isReclassifyingAll ? (
-                  <Loader2 className="mr-1.5 size-4 animate-spin" />
-                ) : (
-                  <Sparkles className="mr-1.5 size-4" />
-                )}
-                <span>
-                  {isReclassifyingAll
-                    ? 'Đang chuẩn hóa...'
-                    : 'Chạy lại chuẩn hóa phân loại'}
-                </span>
-              </Button>
-            )}
-
-            {cooldownSeconds > 0 ? (
-              <div className="inline-flex h-10 items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3.5 text-xs font-medium tabular-nums text-[var(--text-secondary)]">
-                <Clock className="size-4 text-amber-400" />
-                <span>Đồng bộ lại sau {formatCooldown(cooldownSeconds)}</span>
+        <div className="flex flex-col gap-3 border-b border-[var(--border-subtle)] px-5 py-4">
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+            <div className="flex items-center gap-3">
+              <div className="flex size-10 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)]">
+                <FolderKanban className="size-5" />
               </div>
-            ) : (
-              <Button
-                type="button"
-                onClick={onSyncFromYouTube}
-                disabled={isSyncing}
-                className="h-10 rounded-xl bg-[var(--accent-primary)] px-4 text-xs font-medium text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
-              >
-                <RefreshCw
-                  className={`mr-2 size-4 ${isSyncing ? 'animate-spin' : ''}`}
-                />
-                <span>
-                  {isSyncing ? 'Đang đồng bộ...' : 'Đồng bộ kênh từ YouTube'}
-                </span>
-              </Button>
-            )}
+              <div>
+                <h2 className="text-lg font-semibold text-[var(--text-primary)]">
+                  Kho Kênh Đăng Ký (Channel Vault)
+                </h2>
+                <p className="text-xs text-[var(--text-secondary)]">
+                  Chọn 1 hoặc nhiều thể loại cho từng kênh — chọn từ 2 tag trở
+                  lên sẽ kích hoạt Gemini AI phân loại từng video
+                </p>
+              </div>
+            </div>
 
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Đóng Kho Kênh"
-              className="flex size-10 items-center justify-center rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-            >
-              <X className="size-4" />
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {activeChannels.length > 0 && onSyncAllActiveChannels && (
+                <Button
+                  type="button"
+                  onClick={onSyncAllActiveChannels}
+                  disabled={
+                    isSyncingAllLibrary || isSyncing || isReclassifyingAll
+                  }
+                  title="Tự động kéo 100% YouTube Playlists, lịch sử video cũ, lượt xem và chấm độ hot cho toàn bộ các kênh đang kích hoạt"
+                  className="h-10 rounded-xl bg-[var(--accent-primary)] px-3.5 text-xs font-semibold text-[var(--accent-foreground)] shadow-sm hover:opacity-90 cursor-pointer"
+                >
+                  {isSyncingAllLibrary ? (
+                    <Loader2 className="mr-1.5 size-4 animate-spin" />
+                  ) : (
+                    <History className="mr-1.5 size-4" />
+                  )}
+                  <span>
+                    {isSyncingAllLibrary
+                      ? 'Đang đồng bộ toàn bộ...'
+                      : `Đồng bộ toàn bộ kho phim (${activeChannels.length})`}
+                  </span>
+                </Button>
+              )}
+
+              {activeChannels.length > 0 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={onReclassifyAll}
+                  disabled={
+                    isReclassifyingAll || isSyncing || isSyncingAllLibrary
+                  }
+                  title="Quét lại toàn bộ video của các kênh đang bật bằng Gemini Vision"
+                  className="h-10 rounded-xl border-[var(--ai-accent)]/45 bg-violet-500/10 px-3.5 text-xs font-medium text-[var(--ai-accent)] hover:bg-violet-500/20 cursor-pointer"
+                >
+                  {isReclassifyingAll ? (
+                    <Loader2 className="mr-1.5 size-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="mr-1.5 size-4" />
+                  )}
+                  <span>
+                    {isReclassifyingAll
+                      ? 'Đang chuẩn hóa...'
+                      : 'Chạy lại chuẩn hóa phân loại'}
+                  </span>
+                </Button>
+              )}
+
+              {cooldownSeconds > 0 ? (
+                <div className="inline-flex h-10 items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3.5 text-xs font-medium tabular-nums text-[var(--text-secondary)]">
+                  <Clock className="size-4 text-amber-400" />
+                  <span>Đồng bộ lại sau {formatCooldown(cooldownSeconds)}</span>
+                </div>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={onSyncFromYouTube}
+                  disabled={isSyncing || isSyncingAllLibrary}
+                  className="h-10 rounded-xl border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-4 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] cursor-pointer"
+                >
+                  <RefreshCw
+                    className={`mr-2 size-4 ${isSyncing ? 'animate-spin' : ''}`}
+                  />
+                  <span>
+                    {isSyncing ? 'Đang đồng bộ...' : 'Đồng bộ kênh từ YouTube'}
+                  </span>
+                </Button>
+              )}
+
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Đóng Kho Kênh"
+                className="flex size-10 items-center justify-center rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
           </div>
+
+          {/* Thanh tiến độ tổng trực quan khi chạy Đồng bộ toàn bộ kho phim */}
+          {fullLibrarySyncProgress && (
+            <div className="rounded-xl border border-[var(--accent-primary)]/35 bg-[var(--accent-soft)] px-3.5 py-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex min-w-0 items-center gap-2 font-medium text-[var(--text-primary)]">
+                  <Loader2 className="size-3.5 shrink-0 animate-spin text-[var(--accent-primary)]" />
+                  <span className="truncate">
+                    Đang đồng bộ kênh {fullLibrarySyncProgress.currentIndex}/
+                    {fullLibrarySyncProgress.totalChannels}:{' '}
+                    <strong>{fullLibrarySyncProgress.channelTitle}</strong> (
+                    {fullLibrarySyncProgress.phaseLabel}) — Đã xử lý{' '}
+                    {fullLibrarySyncProgress.processedCount} video
+                    {fullLibrarySyncProgress.newCount > 0
+                      ? ` (+${fullLibrarySyncProgress.newCount} tập mới)`
+                      : ''}
+                  </span>
+                </div>
+                <span className="shrink-0 font-semibold tabular-nums text-[var(--accent-primary)]">
+                  {Math.round(
+                    (fullLibrarySyncProgress.currentIndex /
+                      Math.max(1, fullLibrarySyncProgress.totalChannels)) *
+                      100,
+                  )}
+                  %
+                </span>
+              </div>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[var(--bg-canvas)]">
+                <div
+                  className="h-full rounded-full bg-[var(--accent-primary)] transition-all duration-300"
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      Math.max(
+                        4,
+                        Math.round(
+                          (fullLibrarySyncProgress.currentIndex /
+                            Math.max(1, fullLibrarySyncProgress.totalChannels)) *
+                            100,
+                        ),
+                      ),
+                    )}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Nội dung 2 cột */}

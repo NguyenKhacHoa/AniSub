@@ -25,6 +25,9 @@ export async function POST(request: Request) {
   let body: {
     channelId?: string;
     genreTags?: PrimaryGenreTag[];
+    mode?: 'playlists' | 'uploads';
+    playlistOffset?: number;
+    playlistBatchSize?: number;
     pageToken?: string | null;
     resetCursor?: boolean;
     maxPages?: number;
@@ -33,6 +36,9 @@ export async function POST(request: Request) {
     body = (await request.json()) as {
       channelId?: string;
       genreTags?: PrimaryGenreTag[];
+      mode?: 'playlists' | 'uploads';
+      playlistOffset?: number;
+      playlistBatchSize?: number;
       pageToken?: string | null;
       resetCursor?: boolean;
       maxPages?: number;
@@ -78,20 +84,28 @@ export async function POST(request: Request) {
     const result = await syncChannelVideosChunk({
       channelId,
       genreTags,
+      mode: body.mode === 'playlists' ? 'playlists' : 'uploads',
+      playlistOffset: body.playlistOffset ?? 0,
+      playlistBatchSize: body.playlistBatchSize ?? 6,
       pageToken: body.pageToken ?? null,
       resetCursor: body.resetCursor === true,
-      maxPages: body.maxPages ?? 4,
+      maxPages: body.maxPages ?? 3,
     });
 
     return NextResponse.json({
       ok: true,
       channelId,
+      phase: result.phase,
       hasMore: result.hasMore,
       nextPageToken: result.nextPageToken,
+      processedCount: result.processedCount,
+      upsertedCount: result.upsertedCount,
       fetchedCount: result.fetchedCount,
       newVideosCount: result.newVideosCount,
       pagesFetched: result.pagesFetched,
       playlistsSyncedCount: result.playlistsSyncedCount ?? 0,
+      totalPlaylists: result.totalPlaylists,
+      nextPlaylistOffset: result.nextPlaylistOffset,
       isFullySynced: result.isFullySynced,
       warning: result.warning,
     });

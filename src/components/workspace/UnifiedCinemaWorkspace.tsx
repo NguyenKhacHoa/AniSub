@@ -226,6 +226,15 @@ export function UnifiedCinemaWorkspace({
   const [recommendedOrderIds, setRecommendedOrderIds] = useState<string[]>([]);
   const [isVaultOpen, setIsVaultOpen] = useState(false);
   const [isWhitelistOpen, setIsWhitelistOpen] = useState(false);
+  const [isSyncingAllLibrary, setIsSyncingAllLibrary] = useState(false);
+  const [fullLibrarySyncProgress, setFullLibrarySyncProgress] = useState<{
+    currentIndex: number;
+    totalChannels: number;
+    channelTitle: string;
+    phaseLabel: string;
+    processedCount: number;
+    newCount: number;
+  } | null>(null);
 
   const currentTabKey =
     viewMode === 'explore'
@@ -1202,41 +1211,137 @@ export function UnifiedCinemaWorkspace({
     [],
   );
 
-  // Cursor-Based Chunked Channel Sync: gọi cuốn chiếu từng cụm ~200 video (< 4s/lượt, chống timeout Vercel 100%)
-  const handleLoadMoreChannelVideos = async (channelId: string) => {
-    const current = channels.find((c) => c.channel_id === channelId);
-    if (!current) return;
+  // Helper dùng chung: Đồng bộ trọn bộ 1 kênh theo 3 bước nhỏ gọn (< 3s/lượt, chống treo & chống timeout 100%):
+  // (1) Toàn bộ YouTube Playlists (6 playlist/lượt) -> (2) Toàn bộ uploads (3 trang/lượt tới Tập 1) -> (3) Backfill lượt xem & độ hot
+  const syncSingleChannelFull = useCallback(
+    async (
+      channel: ChannelWithSelection,
+      onProgress?: (info: {
+        phaseLabel: string;
+        processedCount: number;
+        newCount: number;
+      }) => void,
+    ): Promise<{
+      processedCount: number;
+      newCount: number;
+      playlistsCount: number;
+      backfilledCount: number;
+      warning: string | null;
+      error: string | null;
+    }> => {
+      let processedCount = 0;
+      let newCount = 0;
+      let playlistsCount = 0;
+      let lastWarning: string | null = null;
 
-    setBusyChannelId(channelId);
-    setChannelSyncProgress({ channelId, fetchedCount: 0, newCount: 0 });
+      // PHA 1: Kéo toàn bộ YouTube Playlists chính thức của kênh theo từng lô 6 playlist
+      let playlistOffset = 0;
+      let hasMorePlaylists = true;
+      let plSafety = 0;
 
-    let totalFetched = 0;
-    let totalNew = 0;
-    let nextPageToken: string | null = null;
-    let hasMore = true;
-    let isFirstChunk = true;
-    let lastWarning: string | null = null;
-    let safetyRounds = 0;
+      while (hasMorePlaylists && plSafety < 40) {
+        plSafety += 1;
+        onProgress?.({
+          phaseLabel:
+            plSafety === 1
+              ? 'Đang quét Danh sách phát YouTube'
+              : `Playlists (${playlistsCount})`,
+          processedCount,
+          newCount,
+        });
 
-    try {
-      while (hasMore && safetyRounds < 30) {
-        safetyRounds += 1;
         const res = await fetch('/api/channels/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            channelId,
-            genreTags: current.genre_tags,
-            pageToken: nextPageToken,
-            resetCursor: isFirstChunk,
-            maxPages: 4,
+            channelId: channel.channel_id,
+            genreTags: channel.genre_tags,
+            mode: 'playlists',
+            playlistOffset,
+            playlistBatchSize: 6,
           }),
         });
-        isFirstChunk = false;
+
+        const payload = (await res.json().catch(() => ({}))) as {
+          hasMore?: boolean;
+          processedCount?: number;
+          upsertedCount?: number;
+          fetchedCount?: number;
+          newVideosCount?: number;
+          playlistsSyncedCount?: number;
+          totalPlaylists?: number;
+          nextPlaylistOffset?: number;
+          warning?: string | null;
+          error?: string;
+        };
+
+        if (!res.ok) {
+          return {
+            processedCount,
+            newCount,
+            playlistsCount,
+            backfilledCount: 0,
+            warning: lastWarning,
+            error: payload.error || 'Lỗi đồng bộ Playlist kênh.',
+          };
+        }
+
+        processedCount += payload.processedCount ?? payload.fetchedCount ?? 0;
+        newCount += payload.newVideosCount ?? 0;
+        playlistsCount += payload.playlistsSyncedCount ?? 0;
+        if (payload.warning) lastWarning = payload.warning;
+
+        const totalPl = payload.totalPlaylists ?? playlistsCount;
+        onProgress?.({
+          phaseLabel:
+            totalPl > 0
+              ? `Playlists ${Math.min(playlistsCount, totalPl)}/${totalPl}`
+              : 'Playlists',
+          processedCount,
+          newCount,
+        });
+
+        hasMorePlaylists = Boolean(
+          payload.hasMore &&
+            typeof payload.nextPlaylistOffset === 'number' &&
+            payload.nextPlaylistOffset > playlistOffset,
+        );
+        playlistOffset = payload.nextPlaylistOffset ?? playlistOffset + 6;
+      }
+
+      // PHA 2: Kéo toàn bộ video lẻ qua uploads playlist (3 trang/lượt ~ 150 video, không dừng sớm khi gặp video trùng)
+      let nextPageToken: string | null = null;
+      let hasMoreUploads = true;
+      let isFirstUploadChunk = true;
+      let uploadSafety = 0;
+
+      while (hasMoreUploads && uploadSafety < 50) {
+        uploadSafety += 1;
+        onProgress?.({
+          phaseLabel: `Video kênh (lượt ${uploadSafety})`,
+          processedCount,
+          newCount,
+        });
+
+        const res = await fetch('/api/channels/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            channelId: channel.channel_id,
+            genreTags: channel.genre_tags,
+            mode: 'uploads',
+            pageToken: nextPageToken,
+            resetCursor: isFirstUploadChunk,
+            maxPages: 3,
+          }),
+        });
+        isFirstUploadChunk = false;
 
         const payload = (await res.json().catch(() => ({}))) as {
           hasMore?: boolean;
           nextPageToken?: string | null;
+          processedCount?: number;
+          upsertedCount?: number;
           fetchedCount?: number;
           newVideosCount?: number;
           warning?: string | null;
@@ -1244,33 +1349,76 @@ export function UnifiedCinemaWorkspace({
         };
 
         if (!res.ok) {
-          toast.error(
-            payload.error || 'Không thể đồng bộ cụm video cũ cho kênh này.',
-          );
-          return;
+          return {
+            processedCount,
+            newCount,
+            playlistsCount,
+            backfilledCount: 0,
+            warning: lastWarning,
+            error: payload.error || 'Lỗi đồng bộ lịch sử video kênh.',
+          };
         }
 
-        totalFetched += payload.fetchedCount ?? 0;
-        totalNew += payload.newVideosCount ?? 0;
+        processedCount += payload.processedCount ?? payload.fetchedCount ?? 0;
+        newCount += payload.newVideosCount ?? 0;
         if (payload.warning) lastWarning = payload.warning;
 
-        setChannelSyncProgress({
-          channelId,
-          fetchedCount: totalFetched,
-          newCount: totalNew,
+        onProgress?.({
+          phaseLabel: `Video kênh (lượt ${uploadSafety})`,
+          processedCount,
+          newCount,
         });
 
-        hasMore = Boolean(payload.hasMore && payload.nextPageToken);
+        hasMoreUploads = Boolean(payload.hasMore && payload.nextPageToken);
         nextPageToken = payload.nextPageToken ?? null;
       }
 
-      // Nạp bù lượt xem & chấm độ hot cho các video còn thiếu của kênh này
-      const backfillRes = await runStatsBackfillLoop({
-        channelId,
-        maxRounds: 8,
+      // PHA 3: Nạp bù view_count & chấm hot_badge nếu kênh còn video cũ chưa có thống kê
+      onProgress?.({
+        phaseLabel: 'Chấm lượt xem & độ hot',
+        processedCount,
+        newCount,
+      });
+      const bf = await runStatsBackfillLoop({
+        channelId: channel.channel_id,
+        maxRounds: 6,
       });
 
-      // Sau khi vét sạch tới Tập 1 + nạp bù thống kê, đồng bộ lại 1 lần duy nhất từ /api/workspace vào RAM
+      return {
+        processedCount,
+        newCount,
+        playlistsCount,
+        backfilledCount: bf.totalUpdated,
+        warning: lastWarning,
+        error: null,
+      };
+    },
+    [runStatsBackfillLoop],
+  );
+
+  // Đồng bộ toàn bộ lịch sử tập + Playlists + Thống kê cho 1 kênh cụ thể
+  const handleLoadMoreChannelVideos = async (channelId: string) => {
+    const current = channels.find((c) => c.channel_id === channelId);
+    if (!current || isSyncingAllLibrary) return;
+
+    setBusyChannelId(channelId);
+    setChannelSyncProgress({ channelId, fetchedCount: 0, newCount: 0 });
+
+    try {
+      const result = await syncSingleChannelFull(current, (info) => {
+        setChannelSyncProgress({
+          channelId,
+          fetchedCount: info.processedCount,
+          newCount: info.newCount,
+        });
+      });
+
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+
+      // Sau khi đồng bộ xong kênh, làm mới dữ liệu ngoài màn hình chính ngay lập tức
       const wsRes = await fetch('/api/workspace', { cache: 'no-store' });
       if (wsRes.ok) {
         const wsData = (await wsRes.json().catch(() => ({}))) as {
@@ -1281,17 +1429,11 @@ export function UnifiedCinemaWorkspace({
         if (Array.isArray(wsData.videos)) setAllVideos(wsData.videos);
       }
 
-      if (lastWarning) {
-        toast.warning(lastWarning);
-      } else if (totalFetched === 0 && backfillRes.totalUpdated === 0) {
-        toast.info(`Kênh "${current.title}" không còn video cũ hơn để kéo.`);
+      if (result.warning) {
+        toast.warning(result.warning);
       } else {
-        const extraStats =
-          backfillRes.totalUpdated > 0
-            ? `, nạp bù lượt xem cho ${backfillRes.totalUpdated} video`
-            : '';
         toast.success(
-          `Đã đồng bộ trọn bộ ${totalFetched} video (${totalNew} mới${extraStats}) cho kênh "${current.title}"!`,
+          `Đã đồng bộ ${result.processedCount} video (${result.playlistsCount} Playlist, +${result.newCount} mới) cho kênh "${current.title}"!`,
         );
       }
     } catch {
@@ -1301,6 +1443,88 @@ export function UnifiedCinemaWorkspace({
       setChannelSyncProgress(null);
     }
   };
+
+  // Nút tổng "Đồng bộ toàn bộ kho phim": tự động chạy tuần tự qua 100% các kênh đang kích hoạt
+  const handleSyncAllActiveChannels = useCallback(async () => {
+    const activeList = channels.filter((c) => c.is_selected);
+    if (activeList.length === 0 || isSyncingAllLibrary) return;
+
+    setIsSyncingAllLibrary(true);
+    let grandProcessed = 0;
+    let grandNew = 0;
+    let grandPlaylists = 0;
+    let failedChannels = 0;
+
+    try {
+      for (let i = 0; i < activeList.length; i += 1) {
+        const ch = activeList[i];
+        setBusyChannelId(ch.channel_id);
+        setFullLibrarySyncProgress({
+          currentIndex: i + 1,
+          totalChannels: activeList.length,
+          channelTitle: ch.title,
+          phaseLabel: 'Khởi tạo',
+          processedCount: grandProcessed,
+          newCount: grandNew,
+        });
+
+        const res = await syncSingleChannelFull(ch, (info) => {
+          setFullLibrarySyncProgress({
+            currentIndex: i + 1,
+            totalChannels: activeList.length,
+            channelTitle: ch.title,
+            phaseLabel: info.phaseLabel,
+            processedCount: grandProcessed + info.processedCount,
+            newCount: grandNew + info.newCount,
+          });
+        });
+
+        if (res.error) {
+          failedChannels += 1;
+        } else {
+          grandProcessed += res.processedCount;
+          grandNew += res.newCount;
+          grandPlaylists += res.playlistsCount;
+        }
+      }
+
+      // Chạy thêm 1 vòng backfill tổng thể cho các phim chiếu rạp / video còn sót
+      await runStatsBackfillLoop({ maxRounds: 6 });
+
+      // Tự động làm mới toàn bộ dữ liệu ngoài màn hình chính ngay lập tức
+      const wsRes = await fetch('/api/workspace', { cache: 'no-store' });
+      if (wsRes.ok) {
+        const wsData = (await wsRes.json().catch(() => ({}))) as {
+          channels?: ChannelWithSelection[];
+          videos?: CinemaVideoItem[];
+        };
+        if (Array.isArray(wsData.channels)) setChannels(wsData.channels);
+        if (Array.isArray(wsData.videos)) setAllVideos(wsData.videos);
+      }
+
+      if (failedChannels > 0) {
+        toast.warning(
+          `Hoàn tất đồng bộ ${activeList.length - failedChannels}/${activeList.length} kênh (${grandPlaylists} Playlist, ${grandProcessed} video, +${grandNew} mới).`,
+        );
+      } else {
+        toast.success(
+          `🎉 Đã đồng bộ trọn bộ ${activeList.length} kênh (${grandPlaylists} Playlist, ${grandProcessed} video, +${grandNew} tập mới)!`,
+        );
+      }
+    } catch {
+      toast.error('Lỗi kết nối trong quá trình đồng bộ toàn bộ kho phim.');
+    } finally {
+      setIsSyncingAllLibrary(false);
+      setFullLibrarySyncProgress(null);
+      setBusyChannelId(null);
+      setChannelSyncProgress(null);
+    }
+  }, [
+    channels,
+    isSyncingAllLibrary,
+    syncSingleChannelFull,
+    runStatsBackfillLoop,
+  ]);
 
   const handleChangeChannelDefaultCategory = useCallback(
     async (channelId: string, defaultCategory: ChannelDefaultCategory) => {
@@ -2376,10 +2600,13 @@ export function UnifiedCinemaWorkspace({
         lastSyncedAt={lastSyncedAt}
         isSyncing={isSyncing}
         isReclassifyingAll={isReclassifyingAll}
+        isSyncingAllLibrary={isSyncingAllLibrary}
+        fullLibrarySyncProgress={fullLibrarySyncProgress}
         busyChannelId={busyChannelId}
         channelSyncProgress={channelSyncProgress}
         quickAddingHandle={subscribingChannelId}
         onSyncFromYouTube={handleSyncFromYouTube}
+        onSyncAllActiveChannels={handleSyncAllActiveChannels}
         onReclassifyAll={handleReclassifyAll}
         onToggleChannel={handleToggleChannel}
         onToggleChannelGenreTag={handleToggleChannelGenreTag}
