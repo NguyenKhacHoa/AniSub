@@ -3,7 +3,11 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { verifyWhitelistedUser } from '@/lib/auth/whitelist';
 import {
   PRIMARY_GENRE_OPTIONS,
+  computeChannelHotnessBaselines,
+  computeVideoHotness,
+  normalizeHotBadge,
   type CinemaVideoItem,
+  type HotBadge,
   type PrimaryGenreTag,
 } from '@/types/workspace';
 
@@ -66,8 +70,27 @@ interface RawVideoRow {
   episode_number: number | null;
   ai_summary: string | null;
   is_manual_tag?: boolean;
+  is_theatrical_movie?: boolean | null;
+  theatrical_release_year?: number | null;
+  cinema_format?: CinemaVideoItem['cinema_format'];
+  cinema_genres?: string[] | null;
+  is_unavailable?: boolean | null;
+  youtube_playlist_id?: string | null;
+  playlist_position?: number | null;
+  view_count?: number | null;
+  like_count?: number | null;
+  comment_count?: number | null;
+  hot_badge?: HotBadge;
+  hot_score?: number | null;
   created_at: string;
 }
+
+const VIDEOS_SELECT_STATS_FULL =
+  'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, is_manual_tag, is_theatrical_movie, theatrical_release_year, cinema_format, cinema_genres, is_unavailable, youtube_playlist_id, playlist_position, view_count, like_count, comment_count, hot_badge, hot_score, created_at';
+const VIDEOS_SELECT_CINEMA =
+  'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, is_manual_tag, is_theatrical_movie, theatrical_release_year, cinema_format, cinema_genres, is_unavailable, created_at';
+const VIDEOS_SELECT_BASIC =
+  'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, created_at';
 
 /**
  * GET /api/videos — Trả về 100% toàn bộ video không phải Shorts khớp ngữ cảnh
@@ -185,13 +208,16 @@ export async function GET(request: Request) {
 
   const fetchedVideos: RawVideoRow[] = [];
   let from = 0;
-  let supportsManualColumn = true;
+  let selectTier: 'stats_full' | 'cinema' | 'basic' = 'stats_full';
 
   while (true) {
     const to = from + DB_FETCH_BATCH_SIZE - 1;
-    const columns = supportsManualColumn
-      ? 'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, is_manual_tag, created_at'
-      : 'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, created_at';
+    const columns =
+      selectTier === 'stats_full'
+        ? VIDEOS_SELECT_STATS_FULL
+        : selectTier === 'cinema'
+          ? VIDEOS_SELECT_CINEMA
+          : VIDEOS_SELECT_BASIC;
 
     let qBuilder = admin
       .from('videos')
@@ -231,8 +257,12 @@ export async function GET(request: Request) {
       .range(from, to);
 
     if (res.error) {
-      if (supportsManualColumn) {
-        supportsManualColumn = false;
+      if (selectTier === 'stats_full') {
+        selectTier = 'cinema';
+        continue;
+      }
+      if (selectTier === 'cinema') {
+        selectTier = 'basic';
         continue;
       }
       console.error('[GET /api/videos] Lỗi truy vấn videos:', res.error);
@@ -248,21 +278,52 @@ export async function GET(request: Request) {
     from += DB_FETCH_BATCH_SIZE;
   }
 
-  const mergedVideos: CinemaVideoItem[] = fetchedVideos.map((v) => {
-    const progress = progressMap.get(v.video_id);
-    const chTags = channelTagsMap.get(v.channel_id) ?? ['HH2D'];
-    return {
-      ...v,
-      detected_genre:
-        v.detected_genre === 'Phim AI' || v.detected_genre === 'HH2D'
-          ? v.detected_genre
-          : chTags[0],
-      channel_title: channelTitleMap.get(v.channel_id) ?? v.channel_id,
-      progress_seconds: progress?.progress_seconds ?? 0,
-      is_completed: progress?.is_completed ?? false,
-      last_watched_at: progress?.last_watched_at ?? null,
-    };
-  });
+  const nowMs = Date.now();
+  const hotBaselines = computeChannelHotnessBaselines(fetchedVideos, nowMs);
+
+  const mergedVideos: CinemaVideoItem[] = fetchedVideos
+    .filter((v) => v.is_unavailable !== true)
+    .map((v) => {
+      const progress = progressMap.get(v.video_id);
+      const chTags = channelTagsMap.get(v.channel_id) ?? ['HH2D'];
+      const storedBadge = normalizeHotBadge(v.hot_badge);
+      const storedScore =
+        typeof v.hot_score === 'number' && v.hot_score > 0 ? v.hot_score : 0;
+      const hasStoredHot = storedBadge !== null || storedScore > 0;
+      const fallbackHot = hasStoredHot
+        ? null
+        : computeVideoHotness(
+            {
+              published_at: v.published_at,
+              view_count: v.view_count,
+              like_count: v.like_count,
+              comment_count: v.comment_count,
+            },
+            hotBaselines.get(v.channel_id),
+            nowMs,
+          );
+
+      return {
+        ...v,
+        youtube_playlist_id: v.youtube_playlist_id ?? null,
+        playlist_position: v.playlist_position ?? null,
+        view_count: v.view_count ?? 0,
+        like_count: v.like_count ?? 0,
+        comment_count: v.comment_count ?? 0,
+        hot_badge: hasStoredHot
+          ? storedBadge
+          : (fallbackHot?.hot_badge ?? null),
+        hot_score: hasStoredHot ? storedScore : (fallbackHot?.hot_score ?? 0),
+        detected_genre:
+          v.detected_genre === 'Phim AI' || v.detected_genre === 'HH2D'
+            ? v.detected_genre
+            : chTags[0],
+        channel_title: channelTitleMap.get(v.channel_id) ?? v.channel_id,
+        progress_seconds: progress?.progress_seconds ?? 0,
+        is_completed: progress?.is_completed ?? false,
+        last_watched_at: progress?.last_watched_at ?? null,
+      };
+    });
 
   return NextResponse.json({
     videos: mergedVideos,

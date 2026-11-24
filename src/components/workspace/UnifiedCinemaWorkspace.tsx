@@ -18,10 +18,12 @@ import {
   type SeriesGroup,
 } from '@/lib/series-parser';
 import {
+  computeViewsPerHour,
   isTheatricalMovieVideo,
   mapDefaultCategoryToGenre,
   mapGenreToDefaultCategory,
   matchesTheatricalSafeCategory,
+  normalizeHotBadge,
   resolveCinemaFormat,
   type ChannelDefaultCategory,
   type ChannelWithSelection,
@@ -339,14 +341,26 @@ export function UnifiedCinemaWorkspace({
     });
 
     if (sortBy === 'hot') {
-      return [...matched].sort((a, b) => {
-        const aHot =
-          a.hot_badge === 'Phim Hot' ? 2 : a.hot_badge === 'Đáng xem' ? 1 : 0;
-        const bHot =
-          b.hot_badge === 'Phim Hot' ? 2 : b.hot_badge === 'Đáng xem' ? 1 : 0;
+      const hotOnly = matched.filter(
+        (v) => normalizeHotBadge(v.hot_badge) !== null,
+      );
+      const target = hotOnly.length > 0 ? [...hotOnly] : [...matched];
+      const latestTs = target.reduce((max, item) => {
+        const ts = new Date(item.published_at).getTime();
+        return Number.isFinite(ts) && ts > max ? ts : max;
+      }, 0);
+      const refNowMs = latestTs > 0 ? latestTs + 3_600_000 : 3_600_000;
+      return target.sort((a, b) => {
+        const aBadge = normalizeHotBadge(a.hot_badge);
+        const bBadge = normalizeHotBadge(b.hot_badge);
+        const aHot = aBadge === 'Phim Hot' ? 2 : aBadge === 'Đáng xem' ? 1 : 0;
+        const bHot = bBadge === 'Phim Hot' ? 2 : bBadge === 'Đáng xem' ? 1 : 0;
         if (aHot !== bHot) return bHot - aHot;
         const scoreDiff = (b.hot_score ?? 0) - (a.hot_score ?? 0);
         if (Math.abs(scoreDiff) > 0.5) return scoreDiff;
+        const aVel = computeViewsPerHour(a.view_count, a.published_at, refNowMs);
+        const bVel = computeViewsPerHour(b.view_count, b.published_at, refNowMs);
+        if (Math.abs(bVel - aVel) > 0.1) return bVel - aVel;
         const viewDiff = (b.view_count ?? 0) - (a.view_count ?? 0);
         if (viewDiff !== 0) return viewDiff;
         return (
@@ -1112,6 +1126,82 @@ export function UnifiedCinemaWorkspace({
     [authStatus],
   );
 
+  // Nạp bù thống kê lượt xem (`view_count`), `like_count` và chấm điểm `🔥 Phim Hot` / `⭐ Đáng xem` theo lô 250 video/lượt
+  const runStatsBackfillLoop = useCallback(
+    async (options?: { channelId?: string; maxRounds?: number }) => {
+      const maxRounds = options?.maxRounds ?? 12;
+      const toastId = 'anisub-stats-backfill';
+      let totalUpdated = 0;
+      let totalHot = 0;
+      let totalWorth = 0;
+      let migrationRequired = false;
+      const excludeIds: string[] = [];
+
+      for (let round = 1; round <= maxRounds; round += 1) {
+        const res = await fetch('/api/videos/backfill', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            channelId: options?.channelId,
+            batchSize: 250,
+            excludeIds: excludeIds.slice(-1500),
+          }),
+        });
+
+        const payload = (await res.json().catch(() => ({}))) as {
+          processedCount?: number;
+          updatedCount?: number;
+          remainingCount?: number;
+          hasMore?: boolean;
+          hotCount?: number;
+          worthWatchingCount?: number;
+          processedIds?: string[];
+          migrationRequired?: boolean;
+          error?: string;
+        };
+
+        if (!res.ok) {
+          if (payload.migrationRequired) {
+            migrationRequired = true;
+            toast.warning(
+              payload.error ||
+                'Vui lòng chạy câu lệnh ALTER TABLE bổ sung cột view_count/hot_badge trên Supabase SQL Editor.',
+              { id: toastId, duration: 7000 },
+            );
+          }
+          break;
+        }
+
+        const processed = payload.processedCount ?? 0;
+        if (processed === 0) break;
+
+        totalUpdated += payload.updatedCount ?? 0;
+        totalHot += payload.hotCount ?? 0;
+        totalWorth += payload.worthWatchingCount ?? 0;
+        if (Array.isArray(payload.processedIds)) {
+          excludeIds.push(...payload.processedIds);
+        }
+
+        const remaining = payload.remainingCount ?? 0;
+        if (payload.hasMore && remaining > 0) {
+          toast.loading(
+            `Đang nạp bù lượt xem & chấm độ hot: đã xử lý ${totalUpdated} video (còn ${remaining})...`,
+            { id: toastId },
+          );
+        } else {
+          break;
+        }
+      }
+
+      if (!migrationRequired) {
+        toast.dismiss(toastId);
+      }
+
+      return { totalUpdated, totalHot, totalWorth, migrationRequired };
+    },
+    [],
+  );
+
   // Cursor-Based Chunked Channel Sync: gọi cuốn chiếu từng cụm ~200 video (< 4s/lượt, chống timeout Vercel 100%)
   const handleLoadMoreChannelVideos = async (channelId: string) => {
     const current = channels.find((c) => c.channel_id === channelId);
@@ -1174,7 +1264,13 @@ export function UnifiedCinemaWorkspace({
         nextPageToken = payload.nextPageToken ?? null;
       }
 
-      // Sau khi vét sạch tới Tập 1, đồng bộ lại 1 lần duy nhất từ /api/workspace vào RAM
+      // Nạp bù lượt xem & chấm độ hot cho các video còn thiếu của kênh này
+      const backfillRes = await runStatsBackfillLoop({
+        channelId,
+        maxRounds: 8,
+      });
+
+      // Sau khi vét sạch tới Tập 1 + nạp bù thống kê, đồng bộ lại 1 lần duy nhất từ /api/workspace vào RAM
       const wsRes = await fetch('/api/workspace', { cache: 'no-store' });
       if (wsRes.ok) {
         const wsData = (await wsRes.json().catch(() => ({}))) as {
@@ -1187,11 +1283,15 @@ export function UnifiedCinemaWorkspace({
 
       if (lastWarning) {
         toast.warning(lastWarning);
-      } else if (totalFetched === 0) {
+      } else if (totalFetched === 0 && backfillRes.totalUpdated === 0) {
         toast.info(`Kênh "${current.title}" không còn video cũ hơn để kéo.`);
       } else {
+        const extraStats =
+          backfillRes.totalUpdated > 0
+            ? `, nạp bù lượt xem cho ${backfillRes.totalUpdated} video`
+            : '';
         toast.success(
-          `Đã đồng bộ trọn bộ ${totalFetched} video (${totalNew} mới) từ Tập 1 cho kênh "${current.title}"!`,
+          `Đã đồng bộ trọn bộ ${totalFetched} video (${totalNew} mới${extraStats}) cho kênh "${current.title}"!`,
         );
       }
     } catch {
@@ -1558,7 +1658,7 @@ export function UnifiedCinemaWorkspace({
     [],
   );
 
-  // Smart Delta Sync: Quét nhanh 10 video mới nhất của các kênh đang bật (background hoặc thủ công)
+  // Smart Delta Sync + Playlists + Backfill thống kê lượt xem/độ hot (background hoặc thủ công)
   const runDeltaSync = useCallback(
     async (force: boolean) => {
       if (
@@ -1570,6 +1670,14 @@ export function UnifiedCinemaWorkspace({
       }
 
       setIsDeltaSyncing(true);
+      const syncToastId = force ? 'anisub-delta-sync' : undefined;
+      if (force) {
+        toast.loading(
+          'Đang quét tập mới & đồng bộ Danh sách phát YouTube...',
+          { id: syncToastId },
+        );
+      }
+
       try {
         const res = await fetch('/api/channels/delta-sync', {
           method: 'POST',
@@ -1580,12 +1688,17 @@ export function UnifiedCinemaWorkspace({
         const payload = (await res.json().catch(() => ({}))) as {
           skipped?: boolean;
           newVideosCount?: number;
+          playlistsSyncedCount?: number;
           syncedChannelsCount?: number;
           videos?: CinemaVideoItem[];
           channels?: ChannelWithSelection[];
           warning?: string | null;
           error?: string;
         };
+
+        if (syncToastId) {
+          toast.dismiss(syncToastId);
+        }
 
         if (!res.ok) {
           if (force) {
@@ -1610,14 +1723,48 @@ export function UnifiedCinemaWorkspace({
           setAllVideos(payload.videos);
         }
 
-        if ((payload.newVideosCount ?? 0) > 0) {
-          toast.success(
-            `🔔 Đã cập nhật ${payload.newVideosCount} tập mới từ các kênh theo dõi!`,
-          );
+        // Khi user chủ động bấm "Cập nhật tập mới": chạy nạp bù thống kê view_count & hot_badge cho kho cũ
+        let backfillUpdated = 0;
+        let migrationRequired = false;
+        if (force) {
+          const bf = await runStatsBackfillLoop({ maxRounds: 12 });
+          backfillUpdated = bf.totalUpdated;
+          migrationRequired = bf.migrationRequired;
+
+          if (backfillUpdated > 0) {
+            const wsRes = await fetch('/api/workspace', { cache: 'no-store' });
+            if (wsRes.ok) {
+              const wsData = (await wsRes.json().catch(() => ({}))) as {
+                channels?: ChannelWithSelection[];
+                videos?: CinemaVideoItem[];
+              };
+              if (Array.isArray(wsData.channels)) setChannels(wsData.channels);
+              if (Array.isArray(wsData.videos)) setAllVideos(wsData.videos);
+            }
+          }
+        }
+
+        if (migrationRequired) {
+          return;
+        }
+
+        const newCount = payload.newVideosCount ?? 0;
+        const plCount = payload.playlistsSyncedCount ?? 0;
+        if (newCount > 0 || backfillUpdated > 0 || (force && plCount > 0)) {
+          const parts: string[] = [];
+          if (newCount > 0) parts.push(`${newCount} tập mới`);
+          if (plCount > 0) parts.push(`${plCount} Playlist YouTube`);
+          if (backfillUpdated > 0) {
+            parts.push(`lượt xem & độ hot cho ${backfillUpdated} video`);
+          }
+          toast.success(`🔔 Đã đồng bộ ${parts.join(', ')}!`);
         } else if (force) {
           toast.info('Kho phim đã ở trạng thái mới nhất!');
         }
       } catch {
+        if (syncToastId) {
+          toast.dismiss(syncToastId);
+        }
         if (force) {
           toast.error('Lỗi kết nối khi kiểm tra tập mới.');
         }
@@ -1625,7 +1772,7 @@ export function UnifiedCinemaWorkspace({
         setIsDeltaSyncing(false);
       }
     },
-    [authStatus, selectedChannelIds.size, isDeltaSyncing],
+    [authStatus, selectedChannelIds.size, isDeltaSyncing, runStatsBackfillLoop],
   );
 
   // Tự động dọn sạch các nhãn (Chiếu Rạp) bị gắn nhầm theo heuristic cũ trong DB

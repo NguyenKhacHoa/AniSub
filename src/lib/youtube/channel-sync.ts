@@ -801,8 +801,8 @@ export async function syncChannelPlaylistsAll(options: {
   const {
     channelId,
     genreTags,
-    maxPlaylists = 25,
-    timeBudgetMs = 15_000,
+    maxPlaylists = 200,
+    timeBudgetMs = 22_000,
   } = options;
 
   const startedAt = Date.now();
@@ -819,11 +819,11 @@ export async function syncChannelPlaylistsAll(options: {
 
   // Sắp xếp để nếu 1 video xuất hiện ở nhiều playlist thì ưu tiên giữ Playlist riêng (nhỏ/chuyên biệt hơn playlist tổng hợp khổng lồ)
   const sortedPlaylists = [...nonEmptyPlaylists]
-    .slice(0, maxPlaylists)
-    .sort((a, b) => a.item_count - b.item_count);
+    .sort((a, b) => a.item_count - b.item_count)
+    .slice(0, maxPlaylists);
 
   const videoMap = new Map<string, YouTubeFetchedVideo>();
-  const CONCURRENCY = 4;
+  const CONCURRENCY = 6;
 
   for (let i = 0; i < sortedPlaylists.length; i += CONCURRENCY) {
     if (Date.now() - startedAt >= timeBudgetMs) break;
@@ -948,8 +948,8 @@ export async function syncAllChannelVideos(options: {
     const plOutcome = await syncChannelPlaylistsAll({
       channelId,
       genreTags,
-      maxPlaylists: 18,
-      timeBudgetMs: 10_000,
+      maxPlaylists: 200,
+      timeBudgetMs: 18_000,
     });
     playlistFetched = plOutcome.fetchedCount;
     playlistNew = plOutcome.newVideosCount;
@@ -1059,8 +1059,8 @@ export async function syncChannelVideosChunk(options: {
       const plOutcome = await syncChannelPlaylistsAll({
         channelId,
         genreTags,
-        maxPlaylists: 25,
-        timeBudgetMs: 14_000,
+        maxPlaylists: 200,
+        timeBudgetMs: 20_000,
       });
       playlistsSyncedCount = plOutcome.playlistsCount;
       playlistFetched = plOutcome.fetchedCount;

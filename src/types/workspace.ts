@@ -433,18 +433,48 @@ export function getProgressPercent(
 }
 
 /**
- * Định dạng số lượt xem chuẩn tiếng Việt kiểu YouTube (`128N lượt xem`, `1.2Tr lượt xem`).
+ * Chuẩn hóa giá trị `hot_badge` từ DB/API (hỗ trợ cả `'Phim Hot'`/`'hot'` và `'Đáng xem'`/`'worth_watching'`).
+ */
+export function normalizeHotBadge(raw?: string | null): HotBadge {
+  if (!raw) return null;
+  const trimmed = raw.trim().toLowerCase();
+  if (trimmed === 'phim hot' || trimmed === 'hot') return 'Phim Hot';
+  if (trimmed === 'đáng xem' || trimmed === 'dang xem' || trimmed === 'worth_watching') {
+    return 'Đáng xem';
+  }
+  return null;
+}
+
+/**
+ * Tính tốc độ tăng view theo giờ (`viewsPerHour`) dùng cho xếp hạng nóng trực tiếp.
+ */
+export function computeViewsPerHour(
+  viewCount?: number | null,
+  publishedAt?: string | null,
+  nowMs: number = Date.now(),
+): number {
+  const views = Math.max(0, Number(viewCount ?? 0) || 0);
+  if (views <= 0) return 0;
+  const pubMs = publishedAt ? new Date(publishedAt).getTime() : NaN;
+  const hours = Number.isFinite(pubMs)
+    ? Math.max(1, (nowMs - pubMs) / 3_600_000)
+    : 720;
+  return views / hours;
+}
+
+/**
+ * Định dạng số lượt xem chuẩn tiếng Việt kiểu YouTube (`45,2N lượt xem`, `1,2Tr lượt xem`).
  */
 export function formatViewCountVi(viewCount?: number | null): string {
   const safe = Number(viewCount ?? 0);
   if (!Number.isFinite(safe) || safe <= 0) return '';
   if (safe >= 1_000_000) {
     const val = (safe / 1_000_000).toFixed(safe >= 10_000_000 ? 0 : 1);
-    return `${val.replace(/\.0$/, '')}Tr lượt xem`;
+    return `${val.replace(/\.0$/, '').replace('.', ',')}Tr lượt xem`;
   }
   if (safe >= 1_000) {
     const val = (safe / 1_000).toFixed(safe >= 10_000 ? 0 : 1);
-    return `${val.replace(/\.0$/, '')}N lượt xem`;
+    return `${val.replace(/\.0$/, '').replace('.', ',')}N lượt xem`;
   }
   return `${Math.floor(safe)} lượt xem`;
 }

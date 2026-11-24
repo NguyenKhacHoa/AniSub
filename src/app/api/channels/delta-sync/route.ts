@@ -1,12 +1,17 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server';
 import { verifyWhitelistedUser } from '@/lib/auth/whitelist';
-import { syncChannelVideosPage } from '@/lib/youtube/channel-sync';
+import {
+  syncChannelPlaylistsAll,
+  syncChannelVideosPage,
+} from '@/lib/youtube/channel-sync';
 import { loadWorkspaceDataForUser } from '@/lib/workspace/loader';
 import {
   PRIMARY_GENRE_OPTIONS,
   type PrimaryGenreTag,
 } from '@/types/workspace';
+
+export const maxDuration = 30;
 
 const DELTA_SYNC_COOLDOWN_MS = 60 * 60 * 1000; // 60 phút
 const DELTA_MAX_RESULTS = 10;
@@ -114,8 +119,10 @@ export async function POST(request: Request) {
   lastDeltaSyncByUser.set(auth.userId, nowMs);
 
   let totalNewVideos = 0;
+  let totalPlaylistsSynced = 0;
   let syncedChannelsCount = 0;
   let lastWarning: string | null = null;
+  const startedAt = Date.now();
 
   // Quét song song từng nhóm 3 kênh (maxResults = 10 -> 1 điểm quota/kênh)
   for (let i = 0; i < selectedChannels.length; i += CONCURRENCY_LIMIT) {
@@ -144,24 +151,57 @@ export async function POST(request: Request) {
     }
   }
 
+  // Khi user chủ động bấm "Cập nhật tập mới" (force = true): đồng bộ thêm YouTube Playlists chính thức
+  // để lấp đầy 100% các tập cũ bị thiếu trong bộ phim (trong giới hạn ngân sách thời gian an toàn)
+  if (force) {
+    const PLAYLIST_BUDGET_MS = 16_000;
+    for (let i = 0; i < selectedChannels.length; i += 2) {
+      const elapsed = Date.now() - startedAt;
+      if (elapsed >= PLAYLIST_BUDGET_MS) break;
+      const remainingMs = Math.max(2500, PLAYLIST_BUDGET_MS - elapsed);
+      const batch = selectedChannels.slice(i, i + 2);
+      const settledPl = await Promise.allSettled(
+        batch.map((ch) =>
+          syncChannelPlaylistsAll({
+            channelId: ch.channel_id,
+            genreTags: normalizeTags(ch.genre_tags, ch.genre_tag),
+            maxPlaylists: 150,
+            timeBudgetMs: remainingMs,
+          }),
+        ),
+      );
+      for (const item of settledPl) {
+        if (item.status === 'fulfilled') {
+          totalPlaylistsSynced += item.value.playlistsCount;
+          totalNewVideos += item.value.newVideosCount;
+          if (item.value.warning) {
+            lastWarning = item.value.warning;
+          }
+        }
+      }
+    }
+  }
+
   const syncedAt = new Date().toISOString();
 
-  if (totalNewVideos === 0) {
+  if (!force && totalNewVideos === 0) {
     return NextResponse.json({
       skipped: false,
       newVideosCount: 0,
+      playlistsSyncedCount: totalPlaylistsSynced,
       syncedChannelsCount,
       warning: lastWarning,
       syncedAt,
     });
   }
 
-  // Chỉ tải lại full catalog khi thực sự có tập mới được thêm vào DB
+  // Luôn tải lại full catalog khi user chủ động cập nhật (force) hoặc khi có tập mới
   const refreshed = await loadWorkspaceDataForUser(auth.userId);
 
   return NextResponse.json({
     skipped: false,
     newVideosCount: totalNewVideos,
+    playlistsSyncedCount: totalPlaylistsSynced,
     syncedChannelsCount,
     warning: lastWarning,
     syncedAt,

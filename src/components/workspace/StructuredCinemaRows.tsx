@@ -29,6 +29,7 @@ import {
   formatViewCountVi,
   getProgressPercent,
   isTheatricalMovieVideo,
+  normalizeHotBadge,
   resolveCinemaFormat,
   type CinemaVideoItem,
   type PrimaryGenreTag,
@@ -170,7 +171,7 @@ const MovieCard = React.memo(function MovieCard({
           </div>
         </div>
 
-        {(isTheatricalMovieVideo(video) || video.hot_badge) && (
+        {(isTheatricalMovieVideo(video) || normalizeHotBadge(video.hot_badge)) && (
           <div className="absolute left-2 top-2 flex flex-wrap items-center gap-1 pr-10">
             {isTheatricalMovieVideo(video) && (
               <span className="inline-flex items-center gap-1 rounded-md border border-amber-400/50 bg-black/85 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-amber-300 shadow-sm">
@@ -178,13 +179,13 @@ const MovieCard = React.memo(function MovieCard({
                 <span>CHIẾU RẠP</span>
               </span>
             )}
-            {video.hot_badge === 'Phim Hot' && (
+            {normalizeHotBadge(video.hot_badge) === 'Phim Hot' && (
               <span className="inline-flex items-center gap-1 rounded-md border border-orange-400/60 bg-orange-600/95 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-white shadow-sm">
                 <Flame className="size-3 shrink-0 fill-current" />
                 <span>Phim Hot</span>
               </span>
             )}
-            {video.hot_badge === 'Đáng xem' && (
+            {normalizeHotBadge(video.hot_badge) === 'Đáng xem' && (
               <span className="inline-flex items-center gap-1 rounded-md border border-amber-400/50 bg-black/85 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-amber-300 shadow-sm">
                 <Star className="size-3 shrink-0 fill-current text-amber-400" />
                 <span>Đáng xem</span>

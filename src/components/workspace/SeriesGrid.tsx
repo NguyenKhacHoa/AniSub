@@ -16,8 +16,10 @@ import { Button } from '@/components/ui/button';
 import { VideoThumbnail } from '@/components/workspace/VideoThumbnail';
 import {
   GENRE_DOT_STYLES,
+  computeViewsPerHour,
   formatRelativeTimeVi,
   formatViewCountVi,
+  normalizeHotBadge,
   type SortOption,
 } from '@/types/workspace';
 import { isTheatricalSeries, type SeriesGroup } from '@/lib/series-parser';
@@ -136,13 +138,13 @@ const SeriesCard = React.memo(function SeriesCard({
                 <span>CHIẾU RẠP</span>
               </span>
             )}
-            {series.hotBadge === 'Phim Hot' && (
+            {normalizeHotBadge(series.hotBadge) === 'Phim Hot' && (
               <span className="inline-flex items-center gap-1 rounded-md border border-orange-400/60 bg-orange-600/95 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-white shadow-sm">
                 <Flame className="size-3 shrink-0 fill-current" />
                 <span>Phim Hot</span>
               </span>
             )}
-            {series.hotBadge === 'Đáng xem' && (
+            {normalizeHotBadge(series.hotBadge) === 'Đáng xem' && (
               <span className="inline-flex items-center gap-1 rounded-md border border-amber-400/50 bg-black/85 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-amber-300 shadow-sm">
                 <Star className="size-3 shrink-0 fill-current text-amber-400" />
                 <span>Đáng xem</span>
@@ -307,61 +309,86 @@ export function SeriesGrid({
       }
     }
 
-    visible.sort((a, b) => {
-      const aFollow = seriesStatuses[a.seriesKey] === 'following';
-      const bFollow = seriesStatuses[b.seriesKey] === 'following';
-      if (aFollow !== bFollow) return aFollow ? -1 : 1;
-
-      if (sortBy === 'hot') {
-        const aHot =
-          a.hotBadge === 'Phim Hot' ? 2 : a.hotBadge === 'Đáng xem' ? 1 : 0;
-        const bHot =
-          b.hotBadge === 'Phim Hot' ? 2 : b.hotBadge === 'Đáng xem' ? 1 : 0;
+    let targetVisible = visible;
+    if (sortBy === 'hot') {
+      const hotOnly = visible.filter(
+        (s) => normalizeHotBadge(s.hotBadge) !== null,
+      );
+      targetVisible = hotOnly.length > 0 ? [...hotOnly] : [...visible];
+      const latestTs = targetVisible.reduce((max, item) => {
+        const ts = new Date(item.latestPublishedAt).getTime();
+        return Number.isFinite(ts) && ts > max ? ts : max;
+      }, 0);
+      const refNowMs = latestTs > 0 ? latestTs + 3_600_000 : 3_600_000;
+      targetVisible.sort((a, b) => {
+        const aBadge = normalizeHotBadge(a.hotBadge);
+        const bBadge = normalizeHotBadge(b.hotBadge);
+        const aHot = aBadge === 'Phim Hot' ? 2 : aBadge === 'Đáng xem' ? 1 : 0;
+        const bHot = bBadge === 'Phim Hot' ? 2 : bBadge === 'Đáng xem' ? 1 : 0;
         if (aHot !== bHot) return bHot - aHot;
         const scoreDiff = b.hotScore - a.hotScore;
         if (Math.abs(scoreDiff) > 0.5) return scoreDiff;
+        const aVel = computeViewsPerHour(
+          a.totalViews,
+          a.latestPublishedAt,
+          refNowMs,
+        );
+        const bVel = computeViewsPerHour(
+          b.totalViews,
+          b.latestPublishedAt,
+          refNowMs,
+        );
+        if (Math.abs(bVel - aVel) > 0.1) return bVel - aVel;
         if (b.totalViews !== a.totalViews) return b.totalViews - a.totalViews;
         return (
           new Date(b.latestPublishedAt).getTime() -
           new Date(a.latestPublishedAt).getTime()
         );
-      }
-      if (sortBy === 'most_viewed') {
+      });
+    } else if (sortBy === 'most_viewed') {
+      targetVisible = [...visible].sort((a, b) => {
         if (b.totalViews !== a.totalViews) return b.totalViews - a.totalViews;
         return (
           new Date(b.latestPublishedAt).getTime() -
           new Date(a.latestPublishedAt).getTime()
         );
-      }
-      if (sortBy === 'title_asc') {
-        return a.seriesTitle.localeCompare(b.seriesTitle, 'vi');
-      }
-      if (sortBy === 'longest') {
-        const aMax = Math.max(
-          ...a.episodes.map((ep) => ep.video.duration_seconds),
-          0,
-        );
-        const bMax = Math.max(
-          ...b.episodes.map((ep) => ep.video.duration_seconds),
-          0,
-        );
-        if (bMax !== aMax) return bMax - aMax;
-        return b.totalEpisodes - a.totalEpisodes;
-      }
+      });
+    } else {
+      targetVisible = [...visible].sort((a, b) => {
+        const aFollow = seriesStatuses[a.seriesKey] === 'following';
+        const bFollow = seriesStatuses[b.seriesKey] === 'following';
+        if (aFollow !== bFollow) return aFollow ? -1 : 1;
 
-      if (a.hasNewEpisode !== b.hasNewEpisode) return a.hasNewEpisode ? -1 : 1;
-      return (
-        new Date(b.latestPublishedAt).getTime() -
-        new Date(a.latestPublishedAt).getTime()
-      );
-    });
+        if (sortBy === 'title_asc') {
+          return a.seriesTitle.localeCompare(b.seriesTitle, 'vi');
+        }
+        if (sortBy === 'longest') {
+          const aMax = Math.max(
+            ...a.episodes.map((ep) => ep.video.duration_seconds),
+            0,
+          );
+          const bMax = Math.max(
+            ...b.episodes.map((ep) => ep.video.duration_seconds),
+            0,
+          );
+          if (bMax !== aMax) return bMax - aMax;
+          return b.totalEpisodes - a.totalEpisodes;
+        }
 
-    const fCount = visible.filter(
+        if (a.hasNewEpisode !== b.hasNewEpisode) return a.hasNewEpisode ? -1 : 1;
+        return (
+          new Date(b.latestPublishedAt).getTime() -
+          new Date(a.latestPublishedAt).getTime()
+        );
+      });
+    }
+
+    const fCount = targetVisible.filter(
       (s) => seriesStatuses[s.seriesKey] === 'following',
     ).length;
 
     return {
-      visibleSeries: visible,
+      visibleSeries: targetVisible,
       hiddenSeries: hidden,
       followingCount: fCount,
     };

@@ -63,6 +63,7 @@ interface YouTubePlaylistItemsResponse {
       videoId?: string;
     };
     snippet?: {
+      title?: string;
       position?: number;
       resourceId?: {
         videoId?: string;
@@ -446,7 +447,7 @@ export async function fetchVideoDetailsByIds(
  */
 export async function fetchChannelPlaylists(
   channelId: string,
-  maxPages = 5,
+  maxPages = 20,
 ): Promise<YouTubePlaylistSummary[]> {
   const apiKey = process.env.YOUTUBE_API_KEY?.trim();
   if (!apiKey) return [];
@@ -509,7 +510,7 @@ export async function fetchPlaylistVideosAll(
   channelId: string,
   playlistId: string,
   playlistTitle: string,
-  maxPages = 20,
+  maxPages = 50,
 ): Promise<YouTubeFetchedVideo[]> {
   const apiKey = process.env.YOUTUBE_API_KEY?.trim();
   if (!apiKey) return [];
@@ -539,6 +540,10 @@ export async function fetchPlaylistVideosAll(
     }
 
     for (const item of data.items ?? []) {
+      const rawTitle = item.snippet?.title?.trim();
+      if (rawTitle === 'Deleted video' || rawTitle === 'Private video') {
+        continue;
+      }
       const vid =
         item.contentDetails?.videoId || item.snippet?.resourceId?.videoId;
       if (!vid || positionByVideoId.has(vid)) continue;

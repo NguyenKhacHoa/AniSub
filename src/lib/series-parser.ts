@@ -1,6 +1,7 @@
 import {
   PRIMARY_GENRE_OPTIONS,
   isTheatricalMovieVideo,
+  normalizeHotBadge,
   type CinemaVideoItem,
   type HotBadge,
   type PrimaryGenreTag,
@@ -652,9 +653,10 @@ export function groupVideosIntoSeries(
       totalViews += Math.max(0, Number(ep.video.view_count ?? 0) || 0);
       const epScore = Number(ep.video.hot_score ?? 0) || 0;
       if (epScore > hotScore) hotScore = epScore;
-      if (ep.video.hot_badge === 'Phim Hot') {
+      const epBadge = normalizeHotBadge(ep.video.hot_badge);
+      if (epBadge === 'Phim Hot') {
         hotBadge = 'Phim Hot';
-      } else if (ep.video.hot_badge === 'Đáng xem' && hotBadge !== 'Phim Hot') {
+      } else if (epBadge === 'Đáng xem' && hotBadge !== 'Phim Hot') {
         hotBadge = 'Đáng xem';
       }
     }

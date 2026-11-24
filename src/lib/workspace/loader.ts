@@ -3,6 +3,7 @@ import {
   PRIMARY_GENRE_OPTIONS,
   computeChannelHotnessBaselines,
   computeVideoHotness,
+  normalizeHotBadge,
   type ChannelWithSelection,
   type CinemaVideoItem,
   type PrimaryGenreTag,
@@ -453,7 +454,10 @@ export async function loadWorkspaceDataForUser(
     .map((v) => {
       const progress = progressMap.get(v.video_id);
       const channel = channelMap.get(v.channel_id);
-      const hasStoredHot = typeof v.hot_score === 'number';
+      const storedBadge = normalizeHotBadge(v.hot_badge);
+      const storedScore =
+        typeof v.hot_score === 'number' && v.hot_score > 0 ? v.hot_score : 0;
+      const hasStoredHot = storedBadge !== null || storedScore > 0;
       const fallbackHot = hasStoredHot
         ? null
         : computeVideoHotness(
@@ -477,10 +481,10 @@ export async function loadWorkspaceDataForUser(
         like_count: v.like_count ?? 0,
         comment_count: v.comment_count ?? 0,
         hot_badge: hasStoredHot
-          ? ((v.hot_badge ?? null) as HotBadge)
+          ? storedBadge
           : (fallbackHot?.hot_badge ?? null),
         hot_score: hasStoredHot
-          ? v.hot_score!
+          ? storedScore
           : (fallbackHot?.hot_score ?? 0),
         detected_genre:
           v.detected_genre === 'Phim AI'
