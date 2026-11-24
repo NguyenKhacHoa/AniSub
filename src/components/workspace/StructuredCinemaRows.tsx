@@ -15,6 +15,8 @@ import {
   Loader2,
   Compass,
   Bookmark,
+  Flame,
+  Star,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { VideoThumbnail } from '@/components/workspace/VideoThumbnail';
@@ -23,6 +25,8 @@ import {
   GENRE_DOT_STYLES,
   PRIMARY_GENRE_OPTIONS,
   formatDuration,
+  formatRelativeTimeVi,
+  formatViewCountVi,
   getProgressPercent,
   isTheatricalMovieVideo,
   resolveCinemaFormat,
@@ -166,11 +170,27 @@ const MovieCard = React.memo(function MovieCard({
           </div>
         </div>
 
-        {isTheatricalMovieVideo(video) && (
-          <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-md border border-amber-400/50 bg-black/85 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-amber-300 shadow-sm">
-            <Clapperboard className="size-3 shrink-0 text-amber-400" />
-            <span>CHIẾU RẠP</span>
-          </span>
+        {(isTheatricalMovieVideo(video) || video.hot_badge) && (
+          <div className="absolute left-2 top-2 flex flex-wrap items-center gap-1 pr-10">
+            {isTheatricalMovieVideo(video) && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-amber-400/50 bg-black/85 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-amber-300 shadow-sm">
+                <Clapperboard className="size-3 shrink-0 text-amber-400" />
+                <span>CHIẾU RẠP</span>
+              </span>
+            )}
+            {video.hot_badge === 'Phim Hot' && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-orange-400/60 bg-orange-600/95 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-white shadow-sm">
+                <Flame className="size-3 shrink-0 fill-current" />
+                <span>Phim Hot</span>
+              </span>
+            )}
+            {video.hot_badge === 'Đáng xem' && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-amber-400/50 bg-black/85 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-amber-300 shadow-sm">
+                <Star className="size-3 shrink-0 fill-current text-amber-400" />
+                <span>Đáng xem</span>
+              </span>
+            )}
+          </div>
         )}
 
         {onToggleWatchLater && (
@@ -271,10 +291,25 @@ const MovieCard = React.memo(function MovieCard({
           </h3>
         </div>
 
-        <div className="mt-2.5 flex items-center justify-between gap-2">
-          <p className="min-w-0 flex-1 truncate text-xs text-[var(--text-secondary)]">
-            {video.channel_title || video.channel_id}
-          </p>
+        <div className="mt-2.5 flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs text-[var(--text-secondary)]">
+              {video.channel_title || video.channel_id}
+            </p>
+            {(() => {
+              const meta = [
+                formatViewCountVi(video.view_count),
+                formatRelativeTimeVi(video.published_at),
+              ]
+                .filter(Boolean)
+                .join(' • ');
+              return meta ? (
+                <p className="mt-0.5 truncate text-[11px] font-medium tabular-nums text-[var(--text-secondary)]">
+                  {meta}
+                </p>
+              ) : null;
+            })()}
+          </div>
 
           {(viewMode === 'explore' || viewMode === 'theatrical') &&
             (isChannelSubscribed ? (

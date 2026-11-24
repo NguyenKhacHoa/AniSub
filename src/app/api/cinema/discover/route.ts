@@ -11,6 +11,7 @@ import {
   THEATRICAL_MAX_DURATION_SECONDS,
   THEATRICAL_MIN_DURATION_SECONDS,
   VERIFIED_THEATRICAL_TAG,
+  computeVideoHotness,
   isTheatricalMovieVideo,
   resolveCinemaFormat,
   type CinemaVideoItem,
@@ -49,6 +50,9 @@ interface CandidateMovieItem {
   thumbnailUrl: string | null;
   publishedAt: string;
   durationSeconds: number;
+  viewCount: number;
+  likeCount: number;
+  commentCount: number;
   isExistingBackfill?: boolean;
 }
 
@@ -354,16 +358,39 @@ async function fetchVerifiedTheatricalMoviesFromDb(
     theatrical_release_year?: number | null;
     cinema_format?: CinemaFormat | null;
     cinema_genres?: string[] | null;
+    view_count?: number | null;
+    like_count?: number | null;
+    comment_count?: number | null;
+    hot_badge?: CinemaVideoItem['hot_badge'];
+    hot_score?: number | null;
     created_at: string;
   };
 
   const rows: DbMovieRow[] = [];
   let from = 0;
-  let tier: 'full' | 'theatrical' | 'basic' = 'full';
+  let tier: 'stats_full' | 'full' | 'theatrical' | 'basic' = 'stats_full';
 
   while (true) {
     const to = from + DB_BATCH_SIZE - 1;
-    if (tier === 'full') {
+    if (tier === 'stats_full') {
+      const res = await admin
+        .from('videos')
+        .select(
+          'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, is_manual_tag, is_theatrical_movie, theatrical_release_year, cinema_format, cinema_genres, view_count, like_count, comment_count, hot_badge, hot_score, created_at',
+        )
+        .or('is_theatrical_movie.eq.true,series_name.ilike.%[CHIẾU RẠP]%')
+        .order('published_at', { ascending: false })
+        .range(from, to);
+
+      if (res.error) {
+        tier = 'full';
+        continue;
+      }
+      const batch = (res.data ?? []) as unknown as DbMovieRow[];
+      rows.push(...batch);
+      if (batch.length < DB_BATCH_SIZE) break;
+      from += DB_BATCH_SIZE;
+    } else if (tier === 'full') {
       const res = await admin
         .from('videos')
         .select(
@@ -433,23 +460,47 @@ async function fetchVerifiedTheatricalMoviesFromDb(
     }
   }
 
-  return validRows.map((v) => ({
-    ...v,
-    detected_genre: v.detected_genre ?? 'HH2D',
-    cinema_format:
-      v.cinema_format ??
-      resolveCinemaFormat({
-        title: v.title,
-        description: v.description,
-        series_name: v.series_name,
-        channel_title: channelTitleById.get(v.channel_id),
-      }),
-    cinema_genres: Array.isArray(v.cinema_genres) ? v.cinema_genres : null,
-    channel_title: channelTitleById.get(v.channel_id) ?? v.channel_id,
-    progress_seconds: 0,
-    is_completed: false,
-    last_watched_at: null,
-  }));
+  return validRows.map((v) => {
+    const viewCount = typeof v.view_count === 'number' ? v.view_count : 0;
+    const likeCount = typeof v.like_count === 'number' ? v.like_count : 0;
+    const commentCount =
+      typeof v.comment_count === 'number' ? v.comment_count : 0;
+    const fallbackHot =
+      v.hot_badge === undefined && viewCount > 0
+        ? computeVideoHotness({
+            published_at: v.published_at,
+            view_count: viewCount,
+            like_count: likeCount,
+            comment_count: commentCount,
+          })
+        : null;
+
+    return {
+      ...v,
+      view_count: viewCount,
+      like_count: likeCount,
+      comment_count: commentCount,
+      hot_badge: v.hot_badge ?? fallbackHot?.hot_badge ?? null,
+      hot_score:
+        typeof v.hot_score === 'number'
+          ? v.hot_score
+          : (fallbackHot?.hot_score ?? 0),
+      detected_genre: v.detected_genre ?? 'HH2D',
+      cinema_format:
+        v.cinema_format ??
+        resolveCinemaFormat({
+          title: v.title,
+          description: v.description,
+          series_name: v.series_name,
+          channel_title: channelTitleById.get(v.channel_id),
+        }),
+      cinema_genres: Array.isArray(v.cinema_genres) ? v.cinema_genres : null,
+      channel_title: channelTitleById.get(v.channel_id) ?? v.channel_id,
+      progress_seconds: 0,
+      is_completed: false,
+      last_watched_at: null,
+    };
+  });
 }
 
 async function runCinemaDiscovery(options: {
@@ -623,6 +674,11 @@ async function runCinemaDiscovery(options: {
             contentDetails?: {
               duration?: string;
             };
+            statistics?: {
+              viewCount?: string;
+              likeCount?: string;
+              commentCount?: string;
+            };
           }>;
         };
 
@@ -634,6 +690,10 @@ async function runCinemaDiscovery(options: {
           const durationSeconds = parseIso8601Duration(
             item.contentDetails?.duration,
           );
+          const viewCount = Number(item.statistics?.viewCount ?? 0);
+          const likeCount = Number(item.statistics?.likeCount ?? 0);
+          const commentCount = Number(item.statistics?.commentCount ?? 0);
+
           const candidate: CandidateMovieItem = {
             videoId,
             channelId: snip.channelId,
@@ -641,13 +701,15 @@ async function runCinemaDiscovery(options: {
             title: snip.title,
             description: snip.description || '',
             thumbnailUrl:
-              snip.thumbnails?.maxres?.url ||
               snip.thumbnails?.standard?.url ||
               snip.thumbnails?.high?.url ||
               snip.thumbnails?.medium?.url ||
               `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
             publishedAt: snip.publishedAt || nowIso,
             durationSeconds,
+            viewCount: Number.isFinite(viewCount) ? viewCount : 0,
+            likeCount: Number.isFinite(likeCount) ? likeCount : 0,
+            commentCount: Number.isFinite(commentCount) ? commentCount : 0,
           };
 
           // Áp dụng Lớp 1: Lọc thời lượng 65-165 phút + từ khóa rác + Chặn Kinh Dị Lớp 1
@@ -683,6 +745,9 @@ async function runCinemaDiscovery(options: {
         thumbnailUrl: oldMovie.thumbnail_url,
         publishedAt: oldMovie.published_at,
         durationSeconds: oldMovie.duration_seconds,
+        viewCount: oldMovie.view_count ?? 0,
+        likeCount: oldMovie.like_count ?? 0,
+        commentCount: oldMovie.comment_count ?? 0,
         isExistingBackfill: true,
       });
     }
@@ -699,7 +764,7 @@ async function runCinemaDiscovery(options: {
     (c) => !c.isExistingBackfill,
   ).length;
 
-  // 6. Upsert kênh (`is_subscribed = false`) và phim kèm `cinema_format`, `cinema_genres` vào Supabase
+  // 6. Upsert kênh (`is_subscribed = false`) và phim kèm `cinema_format`, `cinema_genres`, `view_count`, `hot_badge` vào Supabase
   if (approvedCandidates.length > 0) {
     const uniqueChannelsWithFlag = new Map<
       string,
@@ -744,6 +809,17 @@ async function runCinemaDiscovery(options: {
     const videoRowsFull = approvedCandidates.map((m) => {
       const meta = verifiedMap.get(m.videoId)!;
       const canonicalSeries = `${meta.canonicalTitle} (${meta.releaseYear}) ${VERIFIED_THEATRICAL_TAG}`;
+      const hot = computeVideoHotness(
+        {
+          published_at: m.publishedAt,
+          view_count: m.viewCount,
+          like_count: m.likeCount,
+          comment_count: m.commentCount,
+        },
+        undefined,
+        nowMs,
+      );
+
       return {
         video_id: m.videoId,
         channel_id: m.channelId,
@@ -761,6 +837,11 @@ async function runCinemaDiscovery(options: {
         theatrical_release_year: meta.releaseYear,
         cinema_format: meta.cinemaFormat,
         cinema_genres: meta.cinemaGenres,
+        view_count: m.viewCount,
+        like_count: m.likeCount,
+        comment_count: m.commentCount,
+        hot_badge: hot.hot_badge,
+        hot_score: hot.hot_score,
       };
     });
 
@@ -769,28 +850,42 @@ async function runCinemaDiscovery(options: {
       .upsert(videoRowsFull as never, { onConflict: 'video_id' });
 
     if (upsertFullErr) {
-      // Fallback tầng 1: Nếu DB chưa chạy ALTER TABLE thêm `cinema_format` / `cinema_genres`
-      const rowsWithoutCinemaMeta = videoRowsFull.map((row) => {
+      // Fallback tầng 1: Nếu DB chưa chạy ALTER TABLE thêm `view_count` / `hot_badge` / `cinema_format` / `cinema_genres`
+      const rowsWithoutStats = videoRowsFull.map((row) => {
         const copy = { ...row } as Record<string, unknown>;
-        delete copy.cinema_format;
-        delete copy.cinema_genres;
+        delete copy.view_count;
+        delete copy.like_count;
+        delete copy.comment_count;
+        delete copy.hot_badge;
+        delete copy.hot_score;
         return copy;
       });
-      const { error: upsertTheatricalErr } = await admin
+      const { error: upsertCinemaMetaErr } = await admin
         .from('videos')
-        .upsert(rowsWithoutCinemaMeta as never, { onConflict: 'video_id' });
+        .upsert(rowsWithoutStats as never, { onConflict: 'video_id' });
 
-      if (upsertTheatricalErr) {
-        // Fallback tầng 2: Nếu DB chưa chạy ALTER TABLE thêm `is_theatrical_movie`
-        const rowsBasic = rowsWithoutCinemaMeta.map((row) => {
+      if (upsertCinemaMetaErr) {
+        const rowsWithoutCinemaMeta = rowsWithoutStats.map((row) => {
           const copy = { ...row };
-          delete copy.is_theatrical_movie;
-          delete copy.theatrical_release_year;
+          delete copy.cinema_format;
+          delete copy.cinema_genres;
           return copy;
         });
-        await admin
+        const { error: upsertTheatricalErr } = await admin
           .from('videos')
-          .upsert(rowsBasic as never, { onConflict: 'video_id' });
+          .upsert(rowsWithoutCinemaMeta as never, { onConflict: 'video_id' });
+
+        if (upsertTheatricalErr) {
+          const rowsBasic = rowsWithoutCinemaMeta.map((row) => {
+            const copy = { ...row };
+            delete copy.is_theatrical_movie;
+            delete copy.theatrical_release_year;
+            return copy;
+          });
+          await admin
+            .from('videos')
+            .upsert(rowsBasic as never, { onConflict: 'video_id' });
+        }
       }
     }
   }

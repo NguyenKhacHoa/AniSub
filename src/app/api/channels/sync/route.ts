@@ -91,6 +91,7 @@ export async function POST(request: Request) {
       fetchedCount: result.fetchedCount,
       newVideosCount: result.newVideosCount,
       pagesFetched: result.pagesFetched,
+      playlistsSyncedCount: result.playlistsSyncedCount ?? 0,
       isFullySynced: result.isFullySynced,
       warning: result.warning,
     });

@@ -1,6 +1,8 @@
 import { createAdminClient } from '@/lib/supabase/server';
 import {
+  fetchChannelPlaylists,
   fetchChannelVideosPage,
+  fetchPlaylistVideosAll,
   type YouTubeFetchedVideo,
 } from '@/lib/youtube/api';
 import {
@@ -9,9 +11,11 @@ import {
   type MultimodalClassificationResult,
 } from '@/lib/ai/classifier';
 import { extractSeriesInfo, parseEpisodeInfo } from '@/lib/series-parser';
-import type { Database } from '@/types/database';
+import type { Database, HotBadge } from '@/types/database';
 import {
   VERIFIED_THEATRICAL_TAG,
+  computeChannelHotnessBaselines,
+  computeVideoHotness,
   isPotentialTheatricalCandidate,
   mapDefaultCategoryToGenre,
   type PrimaryGenreTag,
@@ -160,26 +164,69 @@ export interface SyncChannelVideosPageResult {
   newVideosCount: number;
   aiClassifiedCount: number;
   pagesFetched?: number;
+  playlistsSyncedCount?: number;
   nextPageToken: string | null;
   warning: string | null;
 }
 
-async function fetchExistingVideoIdsChunked(
+interface ExistingVideoMetaRow {
+  video_id: string;
+  detected_genre: string | null;
+  is_manual_tag?: boolean;
+  series_name: string | null;
+  video_type: Database['public']['Tables']['videos']['Row']['video_type'];
+  is_theatrical_movie?: boolean | null;
+}
+
+async function fetchExistingVideosMetaChunked(
   admin: ReturnType<typeof createAdminClient>,
   videoIds: string[],
-): Promise<Set<string>> {
-  const existing = new Set<string>();
+): Promise<Map<string, ExistingVideoMetaRow>> {
+  const existingMap = new Map<string, ExistingVideoMetaRow>();
+  let supportsExtended = true;
+
   for (let i = 0; i < videoIds.length; i += DB_CHUNK_SIZE) {
     const chunk = videoIds.slice(i, i + DB_CHUNK_SIZE);
-    const { data } = await admin
+    if (supportsExtended) {
+      const res = await admin
+        .from('videos')
+        .select(
+          'video_id, detected_genre, is_manual_tag, series_name, video_type, is_theatrical_movie',
+        )
+        .in('video_id', chunk);
+
+      if (!res.error) {
+        for (const row of (res.data ?? []) as unknown as ExistingVideoMetaRow[]) {
+          existingMap.set(row.video_id, row);
+        }
+        continue;
+      }
+      supportsExtended = false;
+    }
+
+    const fallback = await admin
       .from('videos')
-      .select('video_id')
+      .select('video_id, detected_genre, series_name, video_type')
       .in('video_id', chunk);
-    for (const row of data ?? []) {
-      existing.add(row.video_id);
+
+    for (const row of (fallback.data ?? []) as unknown as ExistingVideoMetaRow[]) {
+      existingMap.set(row.video_id, row);
     }
   }
-  return existing;
+
+  return existingMap;
+}
+
+function stripExtendedSyncColumns(item: VideoInsertRow): Record<string, unknown> {
+  const copy = { ...item } as Record<string, unknown>;
+  delete copy.youtube_playlist_id;
+  delete copy.playlist_position;
+  delete copy.view_count;
+  delete copy.like_count;
+  delete copy.comment_count;
+  delete copy.hot_badge;
+  delete copy.hot_score;
+  return copy;
 }
 
 async function upsertVideosChunked(
@@ -190,30 +237,109 @@ async function upsertVideosChunked(
     const chunk = rows.slice(i, i + DB_CHUNK_SIZE);
     const { error } = await admin
       .from('videos')
-      .upsert(chunk, { onConflict: 'video_id' });
+      .upsert(chunk as never, { onConflict: 'video_id' });
 
-    if (error) {
-      // Fallback nếu DB chưa có cột is_manual_tag
-      const fallbackChunk: Database['public']['Tables']['videos']['Insert'][] =
-        chunk.map((item) => {
-          const rest = { ...item };
-          delete rest.is_manual_tag;
-          return rest;
-        });
-      const { error: fallbackErr } = await admin
-        .from('videos')
-        .upsert(fallbackChunk, { onConflict: 'video_id' });
-      if (fallbackErr) {
-        console.error('[SyncChannelVideos] Lỗi upsert chunk:', fallbackErr);
-      }
+    if (!error) continue;
+
+    // Fallback tầng 1: Nếu DB chưa chạy ALTER TABLE thêm cột playlist/view/hot
+    const fallbackNoStats = chunk.map(stripExtendedSyncColumns);
+    const { error: err1 } = await admin
+      .from('videos')
+      .upsert(fallbackNoStats as never, { onConflict: 'video_id' });
+
+    if (!err1) continue;
+
+    // Fallback tầng 2: Nếu DB chưa có cả cột is_manual_tag
+    const fallbackBasic = fallbackNoStats.map((item) => {
+      const rest = { ...item };
+      delete rest.is_manual_tag;
+      return rest;
+    });
+    const { error: err2 } = await admin
+      .from('videos')
+      .upsert(fallbackBasic as never, { onConflict: 'video_id' });
+
+    if (err2) {
+      console.error('[SyncChannelVideos] Lỗi upsert chunk:', err2);
     }
   }
 }
 
 /**
+ * Tính chỉ số độ hot (`hot_badge`, `hot_score`) cho các video vừa kéo về,
+ * đối chiếu với mặt bằng view thực tế của kênh trong DB + batch hiện tại.
+ */
+async function computeHotnessForFetchedBatch(
+  admin: ReturnType<typeof createAdminClient>,
+  channelId: string,
+  fetchedVideos: YouTubeFetchedVideo[],
+): Promise<Map<string, { hot_badge: HotBadge; hot_score: number }>> {
+  const hotnessMap = new Map<
+    string,
+    { hot_badge: HotBadge; hot_score: number }
+  >();
+  if (fetchedVideos.length === 0) return hotnessMap;
+
+  // Lấy thêm mẫu tối đa 200 video của kênh từ DB để trung bình kênh (avgViews & top15Velocity) chính xác hơn
+  const samplePool: Array<{
+    channel_id: string;
+    published_at: string;
+    view_count?: number | null;
+  }> = fetchedVideos.map((v) => ({
+    channel_id: v.channel_id,
+    published_at: v.published_at,
+    view_count: v.view_count,
+  }));
+
+  const dbSampleRes = await admin
+    .from('videos')
+    .select('channel_id, published_at, view_count')
+    .eq('channel_id', channelId)
+    .order('published_at', { ascending: false })
+    .limit(200);
+
+  if (!dbSampleRes.error && Array.isArray(dbSampleRes.data)) {
+    for (const row of dbSampleRes.data) {
+      if (typeof row.view_count === 'number' && row.view_count > 0) {
+        samplePool.push({
+          channel_id: row.channel_id,
+          published_at: row.published_at,
+          view_count: row.view_count,
+        });
+      }
+    }
+  }
+
+  const nowMs = Date.now();
+  const baselines = computeChannelHotnessBaselines(samplePool, nowMs);
+
+  for (const v of fetchedVideos) {
+    const baseline = baselines.get(v.channel_id);
+    const computed = computeVideoHotness(
+      {
+        published_at: v.published_at,
+        view_count: v.view_count,
+        like_count: v.like_count,
+        comment_count: v.comment_count,
+      },
+      baseline,
+      nowMs,
+    );
+    hotnessMap.set(v.video_id, {
+      hot_badge: computed.hot_badge,
+      hot_score: computed.hot_score,
+    });
+  }
+
+  return hotnessMap;
+}
+
+/**
  * Lưu và phân loại Series-Aware cho danh sách video vừa kéo từ YouTube:
- * - Kênh 1 tag -> gán thẳng 100% (0 API call).
- * - Kênh >= 2 tag -> kế thừa tag theo Series từ DB trước, chỉ gửi 1 video đại diện / 1 Series mới qua Gemini Vision.
+ * - Luôn cập nhật `view_count`, `like_count`, `comment_count`, `hot_badge`, `hot_score` (cả video cũ lẫn video mới)
+ *   và `youtube_playlist_id` / `playlist_position` / `series_name` nếu video thuộc Playlist chính thức của kênh.
+ * - Tầng 1: Kênh khóa `default_category` hoặc 1 tag -> gán thẳng 100% (0 API call AI).
+ * - Tầng 2: Kế thừa theo Series trong DB + quy tắc cứng + Gemini Vision (1 đại diện / 1 Series).
  */
 async function persistAndClassifyFetchedVideos(options: {
   channelId: string;
@@ -239,128 +365,66 @@ async function persistAndClassifyFetchedVideos(options: {
 
   const admin = createAdminClient();
   const fetchedIds = fetchedVideos.map((v) => v.video_id);
-  const existingIds = await fetchExistingVideoIdsChunked(admin, fetchedIds);
+  const [existingMap, hotnessMap] = await Promise.all([
+    fetchExistingVideosMetaChunked(admin, fetchedIds),
+    computeHotnessForFetchedBatch(admin, channelId, fetchedVideos),
+  ]);
+
   const brandNewVideos: YouTubeFetchedVideo[] = fetchedVideos.filter(
-    (v) => !existingIds.has(v.video_id),
+    (v) => !existingMap.has(v.video_id),
+  );
+  const existingVideos: YouTubeFetchedVideo[] = fetchedVideos.filter((v) =>
+    existingMap.has(v.video_id),
   );
 
-  // Kênh chỉ bật 1 tag -> gán thẳng 100% thể loại; riêng với HH2D có ứng viên Bản Điện Ảnh thì xác minh qua Google Search Grounding
-  if (genreTags.length === 1) {
-    if (brandNewVideos.length > 0) {
-      const { data: chRow } = await admin
-        .from('channels')
-        .select('title')
-        .eq('channel_id', channelId)
-        .maybeSingle();
-      const chTitle = chRow?.title ?? undefined;
+  // Luôn cập nhật thống kê lượt xem, độ hot & thông tin Playlist chính thức cho video đã có trong DB
+  if (existingVideos.length > 0) {
+    const refreshRows: VideoInsertRow[] = existingVideos.map((v) => {
+      const old = existingMap.get(v.video_id)!;
+      const hot = hotnessMap.get(v.video_id);
+      const isFromPlaylist = Boolean(v.youtube_playlist_id);
+      const safeGenre: PrimaryGenreTag =
+        old.detected_genre === 'Phim AI'
+          ? 'Phim AI'
+          : old.detected_genre === 'HH2D'
+            ? 'HH2D'
+            : primaryGenre;
 
-      const verifiedMovieIds = new Set<string>();
-      if (primaryGenre === 'HH2D' && process.env.GEMINI_API_KEY?.trim()) {
-        for (const v of brandNewVideos) {
-          if (v.is_short || v.video_type === 'trailer') continue;
-          const parsedEp = parseEpisodeInfo(v.title, null).episodeStart;
-          if (
-            isPotentialTheatricalCandidate({
-              title: v.title,
-              channel_title: chTitle,
-              detected_genre: primaryGenre,
-              episode_number: parsedEp,
-              video_type: v.video_type,
-              is_short: v.is_short,
-            })
-          ) {
-            const check = await verifyTheatricalReleaseWithGoogleSearch(
-              {
-                video_id: v.video_id,
-                channel_id: v.channel_id,
-                channel_title: chTitle,
-                title: v.title,
-                description: v.description,
-                thumbnail_url: v.thumbnail_url,
-                duration_seconds: v.duration_seconds,
-              },
-              primaryGenre,
-            );
-            if (check.isTheatricalMovie) {
-              verifiedMovieIds.add(v.video_id);
+      return {
+        video_id: v.video_id,
+        channel_id: v.channel_id,
+        title: v.title,
+        thumbnail_url: v.thumbnail_url,
+        published_at: v.published_at,
+        duration_seconds: v.duration_seconds,
+        is_short: v.is_short,
+        video_type:
+          isFromPlaylist && !v.is_short && v.video_type !== 'trailer'
+            ? 'episode'
+            : old.video_type,
+        detected_genre: safeGenre,
+        series_name:
+          isFromPlaylist && v.playlist_title && !old.is_theatrical_movie
+            ? v.playlist_title
+            : old.series_name,
+        view_count: v.view_count,
+        like_count: v.like_count,
+        comment_count: v.comment_count,
+        hot_badge: hot?.hot_badge ?? null,
+        hot_score: hot?.hot_score ?? 0,
+        ...(isFromPlaylist
+          ? {
+              youtube_playlist_id: v.youtube_playlist_id,
+              playlist_position: v.playlist_position ?? null,
             }
-          }
-        }
-      }
+          : {}),
+      };
+    });
 
-      const insertPayload = brandNewVideos.map((v) => {
-        const isVerifiedTheatrical = verifiedMovieIds.has(v.video_id);
-        const seriesInfo = isVerifiedTheatrical
-          ? extractSeriesInfo({
-              videoId: v.video_id,
-              channelId: v.channel_id,
-              title: v.title,
-              channelTitle: chTitle,
-            })
-          : null;
-        return {
-          video_id: v.video_id,
-          channel_id: v.channel_id,
-          title: v.title,
-          description: v.description,
-          thumbnail_url: v.thumbnail_url,
-          published_at: v.published_at,
-          duration_seconds: v.duration_seconds,
-          is_short: v.is_short,
-          video_type: v.video_type,
-          detected_genre: primaryGenre,
-          ...(isVerifiedTheatrical && seriesInfo
-            ? {
-                series_name: `${seriesInfo.seriesTitle} ${VERIFIED_THEATRICAL_TAG}`,
-              }
-            : {}),
-        };
-      });
-      await upsertVideosChunked(admin, insertPayload);
-    }
-
-    const { error: updateErr } = await admin
-      .from('videos')
-      .update({ detected_genre: primaryGenre })
-      .eq('channel_id', channelId)
-      .eq('is_manual_tag', false);
-
-    if (updateErr) {
-      await admin
-        .from('videos')
-        .update({ detected_genre: primaryGenre })
-        .eq('channel_id', channelId);
-    }
-
-    return {
-      fetchedCount: fetchedVideos.length,
-      newVideosCount: brandNewVideos.length,
-      aiClassifiedCount: 0,
-      pagesFetched,
-      nextPageToken,
-      warning: null,
-    };
+    await upsertVideosChunked(admin, refreshRows);
   }
 
-  // Kênh bật >= 2 tag -> chỉ xử lý các video MỚI chưa có trong DB
-  if (brandNewVideos.length === 0) {
-    return {
-      fetchedCount: fetchedVideos.length,
-      newVideosCount: 0,
-      aiClassifiedCount: 0,
-      pagesFetched,
-      nextPageToken,
-      warning: null,
-    };
-  }
-
-  let warning: string | null = null;
-  let aiClassifiedCount = 0;
-
-  const nonShortNew = brandNewVideos.filter((v) => !v.is_short);
-  const classificationMap = new Map<string, ClassificationRecord>();
-  const inheritedManualIds = new Set<string>();
-
+  // Kiểm tra khóa kênh (Channel Master Lock) từ bảng `channels`
   const { data: channelRowWithCat } = await admin
     .from('channels')
     .select('title, default_category')
@@ -381,23 +445,106 @@ async function persistAndClassifyFetchedVideos(options: {
     channelTitle = fallbackCh?.title ?? undefined;
   }
 
-  // Tầng 1 (Channel Master Lock): Nếu kênh đã khóa `default_category` khác AUTO -> 100% video mới nhận đúng phân loại của kênh, không cho AI đoán lệch tập
-  if (channelLockedGenre) {
-    const lockedPayload = brandNewVideos.map((v) => ({
-      video_id: v.video_id,
-      channel_id: v.channel_id,
-      title: v.title,
-      description: v.description,
-      thumbnail_url: v.thumbnail_url,
-      published_at: v.published_at,
-      duration_seconds: v.duration_seconds,
-      is_short: v.is_short,
-      video_type: v.video_type,
-      detected_genre: channelLockedGenre,
-      series_name: null,
-      episode_number: parseEpisodeInfo(v.title, null).episodeStart,
-    }));
-    await upsertVideosChunked(admin, lockedPayload);
+  // Nếu kênh chỉ bật 1 tag hoặc đã khóa `default_category` khác AUTO -> gán thẳng 100% (0 API call phân loại)
+  if (channelLockedGenre || genreTags.length === 1) {
+    const fixedGenre = channelLockedGenre ?? primaryGenre;
+
+    if (brandNewVideos.length > 0) {
+      const verifiedMovieIds = new Set<string>();
+      if (fixedGenre === 'HH2D' && process.env.GEMINI_API_KEY?.trim()) {
+        for (const v of brandNewVideos) {
+          if (v.is_short || v.video_type === 'trailer' || v.youtube_playlist_id) {
+            continue;
+          }
+          const parsedEp = parseEpisodeInfo(v.title, null).episodeStart;
+          if (
+            isPotentialTheatricalCandidate({
+              title: v.title,
+              channel_title: channelTitle,
+              detected_genre: fixedGenre,
+              episode_number: parsedEp,
+              video_type: v.video_type,
+              is_short: v.is_short,
+            })
+          ) {
+            const check = await verifyTheatricalReleaseWithGoogleSearch(
+              {
+                video_id: v.video_id,
+                channel_id: v.channel_id,
+                channel_title: channelTitle,
+                title: v.title,
+                description: v.description,
+                thumbnail_url: v.thumbnail_url,
+                duration_seconds: v.duration_seconds,
+              },
+              fixedGenre,
+            );
+            if (check.isTheatricalMovie) {
+              verifiedMovieIds.add(v.video_id);
+            }
+          }
+        }
+      }
+
+      const insertPayload: VideoInsertRow[] = brandNewVideos.map((v) => {
+        const hot = hotnessMap.get(v.video_id);
+        const isVerifiedTheatrical = verifiedMovieIds.has(v.video_id);
+        const seriesInfo = isVerifiedTheatrical
+          ? extractSeriesInfo({
+              videoId: v.video_id,
+              channelId: v.channel_id,
+              title: v.title,
+              channelTitle,
+            })
+          : null;
+
+        const resolvedSeriesName = isVerifiedTheatrical && seriesInfo
+          ? `${seriesInfo.seriesTitle} ${VERIFIED_THEATRICAL_TAG}`
+          : (v.playlist_title ?? null);
+
+        return {
+          video_id: v.video_id,
+          channel_id: v.channel_id,
+          title: v.title,
+          description: v.description,
+          thumbnail_url: v.thumbnail_url,
+          published_at: v.published_at,
+          duration_seconds: v.duration_seconds,
+          is_short: v.is_short,
+          video_type:
+            v.youtube_playlist_id && !v.is_short && v.video_type !== 'trailer'
+              ? 'episode'
+              : v.video_type,
+          detected_genre: fixedGenre,
+          series_name: resolvedSeriesName,
+          episode_number: parseEpisodeInfo(v.title, null).episodeStart,
+          youtube_playlist_id: v.youtube_playlist_id ?? null,
+          playlist_position: v.playlist_position ?? null,
+          view_count: v.view_count,
+          like_count: v.like_count,
+          comment_count: v.comment_count,
+          hot_badge: hot?.hot_badge ?? null,
+          hot_score: hot?.hot_score ?? 0,
+        };
+      });
+      await upsertVideosChunked(admin, insertPayload);
+    }
+
+    if (genreTags.length === 1 && !channelLockedGenre) {
+      const { error: updateErr } = await admin
+        .from('videos')
+        .update({ detected_genre: fixedGenre })
+        .eq('channel_id', channelId)
+        .eq('is_manual_tag', false);
+
+      if (updateErr) {
+        await admin
+          .from('videos')
+          .update({ detected_genre: fixedGenre })
+          .eq('channel_id', channelId);
+      }
+    }
+
     return {
       fetchedCount: fetchedVideos.length,
       newVideosCount: brandNewVideos.length,
@@ -407,6 +554,25 @@ async function persistAndClassifyFetchedVideos(options: {
       warning: null,
     };
   }
+
+  // Kênh bật >= 2 tag -> chỉ phân loại các video MỚI chưa có trong DB
+  if (brandNewVideos.length === 0) {
+    return {
+      fetchedCount: fetchedVideos.length,
+      newVideosCount: 0,
+      aiClassifiedCount: 0,
+      pagesFetched,
+      nextPageToken,
+      warning: null,
+    };
+  }
+
+  let warning: string | null = null;
+  let aiClassifiedCount = 0;
+
+  const nonShortNew = brandNewVideos.filter((v) => !v.is_short);
+  const classificationMap = new Map<string, ClassificationRecord>();
+  const inheritedManualIds = new Set<string>();
 
   // Bước 1: Kế thừa tag theo Series từ các video đã có của cùng kênh (ưu tiên is_manual_tag = true)
   const existingSeriesGenreMap = new Map<
@@ -492,6 +658,7 @@ async function persistAndClassifyFetchedVideos(options: {
       channelId,
       title: v.title,
       channelTitle,
+      seriesName: v.playlist_title ?? null,
     });
     const inherited = !info.isStandalone
       ? existingSeriesGenreMap.get(info.seriesKey)
@@ -500,7 +667,7 @@ async function persistAndClassifyFetchedVideos(options: {
     if (inherited) {
       classificationMap.set(v.video_id, {
         detectedGenre: inherited.genre,
-        seriesName: inherited.seriesName || info.seriesTitle,
+        seriesName: v.playlist_title || inherited.seriesName || info.seriesTitle,
         episodeNumber: parseEpisodeInfo(v.title, null).episodeStart,
       });
       if (inherited.isManual) {
@@ -531,6 +698,7 @@ async function persistAndClassifyFetchedVideos(options: {
           tags: v.tags,
           thumbnail_url: v.thumbnail_url,
           vision_thumbnail_url: v.vision_thumbnail_url,
+          series_name: v.playlist_title ?? null,
           duration_seconds: v.duration_seconds,
         })),
         genreTags,
@@ -565,10 +733,16 @@ async function persistAndClassifyFetchedVideos(options: {
     }
   }
 
-  const insertPayload = brandNewVideos.map((v) => {
+  const insertPayload: VideoInsertRow[] = brandNewVideos.map((v) => {
     const cls = classificationMap.get(v.video_id);
+    const hot = hotnessMap.get(v.video_id);
     const resolvedVideoType =
-      cls?.isMovie && v.video_type !== 'trailer' ? 'full_movie' : v.video_type;
+      v.youtube_playlist_id && !v.is_short && v.video_type !== 'trailer'
+        ? 'episode'
+        : cls?.isMovie && v.video_type !== 'trailer'
+          ? 'full_movie'
+          : v.video_type;
+
     return {
       video_id: v.video_id,
       channel_id: v.channel_id,
@@ -580,8 +754,16 @@ async function persistAndClassifyFetchedVideos(options: {
       is_short: v.is_short,
       video_type: resolvedVideoType,
       detected_genre: cls?.detectedGenre ?? primaryGenre,
-      series_name: cls?.seriesName ?? null,
-      episode_number: cls?.episodeNumber ?? null,
+      series_name: v.playlist_title ?? cls?.seriesName ?? null,
+      episode_number:
+        cls?.episodeNumber ?? parseEpisodeInfo(v.title, null).episodeStart,
+      youtube_playlist_id: v.youtube_playlist_id ?? null,
+      playlist_position: v.playlist_position ?? null,
+      view_count: v.view_count,
+      like_count: v.like_count,
+      comment_count: v.comment_count,
+      hot_badge: hot?.hot_badge ?? null,
+      hot_score: hot?.hot_score ?? 0,
       ...(inheritedManualIds.has(v.video_id) ? { is_manual_tag: true } : {}),
     };
   });
@@ -595,6 +777,96 @@ async function persistAndClassifyFetchedVideos(options: {
     pagesFetched,
     nextPageToken,
     warning,
+  };
+}
+
+/**
+ * Đồng bộ trực tiếp toàn bộ Danh sách phát (YouTube Playlists) chính thức của kênh:
+ * - Gọi `playlists.list` lấy toàn bộ Playlist của kênh.
+ * - Với mỗi Playlist, kéo 100% video bên trong (`playlistItems.list` + `videos.list?part=snippet,contentDetails,statistics`).
+ * - Gắn chuẩn `youtube_playlist_id`, `playlist_position` và tên bộ phim gốc `playlist.snippet.title`
+ *   làm Source of Truth cho tab Phim Bộ.
+ */
+export async function syncChannelPlaylistsAll(options: {
+  channelId: string;
+  genreTags: PrimaryGenreTag[];
+  maxPlaylists?: number;
+  timeBudgetMs?: number;
+}): Promise<{
+  playlistsCount: number;
+  fetchedCount: number;
+  newVideosCount: number;
+  warning: string | null;
+}> {
+  const {
+    channelId,
+    genreTags,
+    maxPlaylists = 25,
+    timeBudgetMs = 15_000,
+  } = options;
+
+  const startedAt = Date.now();
+  const playlists = await fetchChannelPlaylists(channelId);
+  const nonEmptyPlaylists = playlists.filter((p) => p.item_count > 0);
+  if (nonEmptyPlaylists.length === 0) {
+    return {
+      playlistsCount: 0,
+      fetchedCount: 0,
+      newVideosCount: 0,
+      warning: null,
+    };
+  }
+
+  // Sắp xếp để nếu 1 video xuất hiện ở nhiều playlist thì ưu tiên giữ Playlist riêng (nhỏ/chuyên biệt hơn playlist tổng hợp khổng lồ)
+  const sortedPlaylists = [...nonEmptyPlaylists]
+    .slice(0, maxPlaylists)
+    .sort((a, b) => a.item_count - b.item_count);
+
+  const videoMap = new Map<string, YouTubeFetchedVideo>();
+  const CONCURRENCY = 4;
+
+  for (let i = 0; i < sortedPlaylists.length; i += CONCURRENCY) {
+    if (Date.now() - startedAt >= timeBudgetMs) break;
+    const batch = sortedPlaylists.slice(i, i + CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map((pl) =>
+        fetchPlaylistVideosAll(channelId, pl.playlist_id, pl.title).catch(
+          () => [] as YouTubeFetchedVideo[],
+        ),
+      ),
+    );
+    for (const videos of batchResults) {
+      for (const v of videos) {
+        if (!videoMap.has(v.video_id)) {
+          videoMap.set(v.video_id, v);
+        }
+      }
+    }
+  }
+
+  const allPlaylistVideos = Array.from(videoMap.values());
+  if (allPlaylistVideos.length === 0) {
+    return {
+      playlistsCount: sortedPlaylists.length,
+      fetchedCount: 0,
+      newVideosCount: 0,
+      warning: null,
+    };
+  }
+
+  const persisted = await persistAndClassifyFetchedVideos({
+    channelId,
+    genreTags,
+    fetchedVideos: allPlaylistVideos,
+    nextPageToken: null,
+    pagesFetched: sortedPlaylists.length,
+  });
+
+  return {
+    playlistsCount: sortedPlaylists.length,
+    fetchedCount: persisted.fetchedCount,
+    newVideosCount: persisted.newVideosCount,
+    warning: persisted.warning,
   };
 }
 
@@ -642,9 +914,8 @@ export async function syncChannelVideosPage(options: {
 }
 
 /**
- * Full Channel Fetch: Duyệt sạch 100% các trang `nextPageToken` của YouTube `playlistItems.list`
- * (50 video / 1 điểm quota) từ Tập mới nhất đến Tập 1 trong 1 lần chạy duy nhất,
- * sau đó gom nhóm theo Series (1 đại diện / 1 bộ phim) để phân loại bằng Gemini Vision.
+ * Full Channel Fetch: Kéo Playlist chính thức của kênh + duyệt các trang `uploads` playlist
+ * (50 video / 1 điểm quota) từ Tập mới nhất đến Tập 1.
  */
 export async function syncAllChannelVideos(options: {
   channelId: string;
@@ -670,6 +941,23 @@ export async function syncAllChannelVideos(options: {
     };
   }
 
+  // 1. Kéo YouTube Playlists chính thức làm Source of Truth (an toàn trong time budget)
+  let playlistFetched = 0;
+  let playlistNew = 0;
+  try {
+    const plOutcome = await syncChannelPlaylistsAll({
+      channelId,
+      genreTags,
+      maxPlaylists: 18,
+      timeBudgetMs: 10_000,
+    });
+    playlistFetched = plOutcome.fetchedCount;
+    playlistNew = plOutcome.newVideosCount;
+  } catch (err) {
+    console.warn(`[SyncAllChannelVideos] Lỗi nhẹ khi kéo playlists kênh ${channelId}:`, err);
+  }
+
+  // 2. Tiếp tục duyệt toàn bộ trang `uploads` playlist để không sót bất kỳ video lẻ hay thống kê nào
   const seenVideoIds = new Set<string>();
   const allFetchedVideos: YouTubeFetchedVideo[] = [];
   const seenTokens = new Set<string>();
@@ -700,17 +988,19 @@ export async function syncAllChannelVideos(options: {
 
   await saveChannelNextPageToken(channelId, currentToken);
 
-  console.log(
-    `[SyncAllChannelVideos] Kênh ${channelId}: đã duyệt ${pagesFetched} trang YouTube -> thu thập trọn vẹn ${allFetchedVideos.length} video.`,
-  );
-
-  return persistAndClassifyFetchedVideos({
+  const persisted = await persistAndClassifyFetchedVideos({
     channelId,
     genreTags,
     fetchedVideos: allFetchedVideos,
     nextPageToken: currentToken,
     pagesFetched,
   });
+
+  return {
+    ...persisted,
+    fetchedCount: Math.max(persisted.fetchedCount, playlistFetched),
+    newVideosCount: persisted.newVideosCount + playlistNew,
+  };
 }
 
 export interface ChunkedChannelSyncResult extends SyncChannelVideosPageResult {
@@ -720,9 +1010,10 @@ export interface ChunkedChannelSyncResult extends SyncChannelVideosPageResult {
 
 /**
  * Cursor-Based Chunked Channel Sync (chống Vercel Timeout 100%):
- * - Mỗi lượt gọi chỉ kéo tối đa 3–4 trang `playlistItems.list` (~150–200 video, chạy gọn < 4 giây).
- * - Lưu ngay video vào Supabase và cập nhật `sync_page_token` + `is_fully_synced` trên bảng `channels`.
- * - Trả về `{ hasMore, nextPageToken, fetchedCount, newVideosCount, isFullySynced }` để client gọi nối tiếp cho tới Tập 1.
+ * - Ở lượt đầu (`resetCursor === true` hoặc chưa có `pageToken`), tự động đồng bộ toàn bộ
+ *   YouTube Playlists chính thức của kênh để đảm bảo 100% bộ phim trong Playlist không bao giờ thiếu tập.
+ * - Mỗi lượt gọi chỉ kéo tối đa 3–4 trang `uploads` (~150–200 video, chạy gọn < 4 giây), lưu ngay vào Supabase,
+ *   cập nhật `sync_page_token` + `is_fully_synced` và trả về `{ hasMore, nextPageToken, fetchedCount, newVideosCount }`.
  */
 export async function syncChannelVideosChunk(options: {
   channelId: string;
@@ -754,6 +1045,32 @@ export async function syncChannelVideosChunk(options: {
       !isChannelHistoryExhausted(chRow.sync_page_token)
     ) {
       startToken = chRow.sync_page_token.trim();
+    }
+  }
+
+  // Lượt đầu tiên của chunked sync -> kéo YouTube Playlists chính thức làm Source of Truth cho Phim Bộ
+  let playlistsSyncedCount = 0;
+  let playlistFetched = 0;
+  let playlistNew = 0;
+  let playlistWarning: string | null = null;
+
+  if (!startToken) {
+    try {
+      const plOutcome = await syncChannelPlaylistsAll({
+        channelId,
+        genreTags,
+        maxPlaylists: 25,
+        timeBudgetMs: 14_000,
+      });
+      playlistsSyncedCount = plOutcome.playlistsCount;
+      playlistFetched = plOutcome.fetchedCount;
+      playlistNew = plOutcome.newVideosCount;
+      playlistWarning = plOutcome.warning;
+    } catch (err) {
+      console.warn(
+        `[ChunkSync] Không thể kéo playlists cho kênh ${channelId}, tiếp tục đồng bộ uploads:`,
+        err,
+      );
     }
   }
 
@@ -809,6 +1126,10 @@ export async function syncChannelVideosChunk(options: {
 
   return {
     ...persisted,
+    fetchedCount: persisted.fetchedCount + playlistFetched,
+    newVideosCount: persisted.newVideosCount + playlistNew,
+    playlistsSyncedCount,
+    warning: persisted.warning ?? playlistWarning,
     hasMore,
     isFullySynced,
   };

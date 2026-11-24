@@ -2,6 +2,7 @@ import {
   PRIMARY_GENRE_OPTIONS,
   isTheatricalMovieVideo,
   type CinemaVideoItem,
+  type HotBadge,
   type PrimaryGenreTag,
 } from '@/types/workspace';
 
@@ -28,12 +29,16 @@ export interface SeriesEpisodeItem {
 
 export interface SeriesGroup {
   seriesKey: string;
+  youtubePlaylistId: string | null;
   seriesTitle: string;
   channelId: string;
   channelTitle: string;
   detectedGenre: PrimaryGenreTag;
   coverThumbnailUrl: string | null;
   totalEpisodes: number;
+  totalViews: number;
+  hotBadge: HotBadge;
+  hotScore: number;
   latestEpisode: SeriesEpisodeItem;
   latestPublishedAt: string;
   episodes: SeriesEpisodeItem[];
@@ -110,13 +115,20 @@ export function hasEpisodeMarkerInTitle(title: string): boolean {
 
 /**
  * Điều kiện lọc video vào tab Tập mới (Series Playlist):
- * - Loại bỏ Shorts, Trailer và Phim Full / Trọn bộ / Tổng hợp / Marathon nhiều giờ
- * - Loại bỏ video gộp quá nhiều tập trong 1 clip (vd: Tập 1-50, Tập 1-20)
- * - Chấp nhận video có dấu hiệu phân tập trong tiêu đề hoặc video_type === 'episode'
+ * - Loại bỏ Shorts, Trailer và Phim Chiếu Rạp xác thực
+ * - Nếu video nằm trong Danh sách phát chính thức (`youtube_playlist_id`), tin tưởng Source of Truth
+ *   từ YouTube Playlist (giữ đủ 100% số tập kể cả tập > 40 phút hoặc tiêu đề đặc biệt)
+ * - Video ngoài playlist: loại bỏ Phim Full / Trọn bộ / Marathon và kiểm tra dấu hiệu phân tập
  */
 export function isSeriesEpisodeCandidate(video: CinemaVideoItem): boolean {
   if (video.is_short) return false;
   if (video.video_type === 'trailer') return false;
+  if (video.is_theatrical_movie === true) return false;
+
+  if (video.youtube_playlist_id && video.youtube_playlist_id.trim().length > 0) {
+    return true;
+  }
+
   if (video.video_type === 'full_movie') return false;
   if (isFullMovieTitle(video.title)) return false;
 
@@ -403,34 +415,30 @@ function resolvePrimaryGenre(genre: string | null): PrimaryGenreTag {
 
 /**
  * Gom danh sách video thành các Bộ phim (SeriesGroup[]),
- * ưu tiên bộ có tập mới nhất lên đầu.
+ * Ưu tiên hàng đầu: gom theo `youtube_playlist_id` (Source of Truth chính thức từ YouTube Playlists).
+ * Fallback: các video lẻ ngoài playlist mới gom theo tên series chuẩn hóa Unicode NFC.
  */
 export function groupVideosIntoSeries(
   videos: CinemaVideoItem[],
   nowMs: number = Date.now(),
 ): SeriesGroup[] {
-  const buckets = new Map<
-    string,
-    {
-      channelId: string;
-      channelTitle: string;
-      titles: string[];
-      items: SeriesEpisodeItem[];
-    }
-  >();
+  const candidates = videos.filter((v) => isSeriesEpisodeCandidate(v));
 
-  for (const video of videos) {
-    if (!isSeriesEpisodeCandidate(video)) continue;
+  interface Bucket {
+    channelId: string;
+    channelTitle: string;
+    youtubePlaylistId: string | null;
+    playlistTitles: string[];
+    titles: string[];
+    items: SeriesEpisodeItem[];
+    videoIds: Set<string>;
+  }
 
+  const buckets = new Map<string, Bucket>();
+  const playlistKeyByChannelSlug = new Map<string, string>();
+
+  const buildEpisodeItem = (video: CinemaVideoItem): SeriesEpisodeItem => {
     const parsed = parseEpisodeInfo(video.title, video.episode_number);
-    const { seriesTitle, seriesKey } = extractSeriesInfo({
-      videoId: video.video_id,
-      channelId: video.channel_id,
-      title: video.title,
-      channelTitle: video.channel_title,
-      seriesName: video.series_name,
-    });
-
     const publishedMs = new Date(video.published_at).getTime();
     const isNew =
       Number.isFinite(publishedMs) && nowMs - publishedMs <= FORTY_EIGHT_HOURS_MS;
@@ -440,37 +448,180 @@ export function groupVideosIntoSeries(
     const isWatched = video.is_completed || progressRatio >= 0.9;
     const isInProgress = !isWatched && video.progress_seconds > 15;
 
-    const epItem: SeriesEpisodeItem = {
+    const episodeLabel =
+      !parsed.hasExplicitMarker &&
+      video.youtube_playlist_id &&
+      typeof video.playlist_position === 'number'
+        ? `Video #${video.playlist_position + 1}`
+        : parsed.episodeLabel;
+
+    return {
       video,
-      episodeLabel: parsed.episodeLabel,
+      episodeLabel,
       episodeSortNumber: parsed.episodeSortNumber,
       seasonNumber: parsed.seasonNumber,
       isNew,
       isWatched,
       isInProgress,
     };
+  };
 
-    const existing = buckets.get(seriesKey);
-    if (existing) {
-      existing.items.push(epItem);
-      existing.titles.push(seriesTitle);
-    } else {
-      buckets.set(seriesKey, {
+  // Pass 1: Nhóm tất cả video có `youtube_playlist_id` trước (Source of Truth chính thức)
+  for (const video of candidates) {
+    const playlistId = video.youtube_playlist_id?.trim();
+    if (!playlistId) continue;
+
+    const seriesKey = `${video.channel_id}::pl::${playlistId}`;
+    const info = extractSeriesInfo({
+      videoId: video.video_id,
+      channelId: video.channel_id,
+      title: video.title,
+      channelTitle: video.channel_title,
+      seriesName: video.series_name,
+    });
+
+    const cleanPlaylistTitle =
+      video.series_name && !video.series_name.includes('[CHIẾU RẠP]')
+        ? extractSeriesTitle(video.series_name, video.channel_title, null)
+        : '';
+
+    const epItem = buildEpisodeItem(video);
+
+    let bucket = buckets.get(seriesKey);
+    if (!bucket) {
+      bucket = {
         channelId: video.channel_id,
         channelTitle: video.channel_title || video.channel_id,
-        titles: [seriesTitle],
-        items: [epItem],
-      });
+        youtubePlaylistId: playlistId,
+        playlistTitles: [],
+        titles: [],
+        items: [],
+        videoIds: new Set<string>(),
+      };
+      buckets.set(seriesKey, bucket);
+    }
+
+    if (!bucket.videoIds.has(video.video_id)) {
+      bucket.videoIds.add(video.video_id);
+      bucket.items.push(epItem);
+    }
+    bucket.titles.push(info.seriesTitle);
+    if (cleanPlaylistTitle.length >= 2) {
+      bucket.playlistTitles.push(cleanPlaylistTitle);
+      const plSlug = normalizeSeriesSlug(cleanPlaylistTitle);
+      if (plSlug.length >= 2) {
+        const slugKey = `${video.channel_id}::${plSlug}`;
+        if (!playlistKeyByChannelSlug.has(slugKey)) {
+          playlistKeyByChannelSlug.set(slugKey, seriesKey);
+        }
+      }
+    }
+    if (!info.isStandalone) {
+      if (!playlistKeyByChannelSlug.has(info.seriesKey)) {
+        playlistKeyByChannelSlug.set(info.seriesKey, seriesKey);
+      }
     }
   }
+
+  // Pass 2: Các video lẻ chưa gắn `youtube_playlist_id` — khớp về Playlist cùng kênh nếu trùng slug,
+  // nếu không sẽ gom theo tên series chuẩn hóa Unicode NFC như trước
+  for (const video of candidates) {
+    if (video.youtube_playlist_id?.trim()) continue;
+
+    const info = extractSeriesInfo({
+      videoId: video.video_id,
+      channelId: video.channel_id,
+      title: video.title,
+      channelTitle: video.channel_title,
+      seriesName: video.series_name,
+    });
+
+    const matchedPlaylistSeriesKey = !info.isStandalone
+      ? playlistKeyByChannelSlug.get(info.seriesKey)
+      : undefined;
+    const targetSeriesKey = matchedPlaylistSeriesKey ?? info.seriesKey;
+
+    const epItem = buildEpisodeItem(video);
+
+    let bucket = buckets.get(targetSeriesKey);
+    if (!bucket) {
+      bucket = {
+        channelId: video.channel_id,
+        channelTitle: video.channel_title || video.channel_id,
+        youtubePlaylistId: null,
+        playlistTitles: [],
+        titles: [],
+        items: [],
+        videoIds: new Set<string>(),
+      };
+      buckets.set(targetSeriesKey, bucket);
+    }
+
+    if (!bucket.videoIds.has(video.video_id)) {
+      bucket.videoIds.add(video.video_id);
+      bucket.items.push(epItem);
+    }
+    bucket.titles.push(info.seriesTitle);
+  }
+
+  const pickBestTitle = (candidatesTitles: string[]): string | null => {
+    const valid = candidatesTitles
+      .map((t) => t.trim())
+      .filter((t) => t.length >= 2);
+    if (valid.length === 0) return null;
+
+    const freq = new Map<string, number>();
+    for (const t of valid) {
+      freq.set(t, (freq.get(t) ?? 0) + 1);
+    }
+    return [...freq.entries()].sort((a, b) => {
+      if (b[1] !== a[1]) return b[1] - a[1];
+      return a[0].length - b[0].length;
+    })[0][0];
+  };
 
   const groups: SeriesGroup[] = [];
 
   for (const [seriesKey, bucket] of buckets.entries()) {
-    // Sắp xếp danh sách tập giảm dần (Mới nhất trước): theo số tập -> ngày đăng
+    // Phát hiện chiều sắp xếp thực tế của Playlist YouTube (0=Tập 1..N-1=Tập cuối hay đảo ngược)
+    let playlistPosIncreasesWithEp = true;
+    if (bucket.youtubePlaylistId) {
+      const numberedWithPos = bucket.items
+        .filter(
+          (ep) =>
+            ep.episodeSortNumber > 0 &&
+            typeof ep.video.playlist_position === 'number',
+        )
+        .sort(
+          (a, b) =>
+            (a.video.playlist_position ?? 0) - (b.video.playlist_position ?? 0),
+        );
+      if (numberedWithPos.length >= 2) {
+        playlistPosIncreasesWithEp =
+          numberedWithPos[numberedWithPos.length - 1].episodeSortNumber >=
+          numberedWithPos[0].episodeSortNumber;
+      }
+    }
+
+    const computeSortWeight = (ep: SeriesEpisodeItem): number => {
+      if (ep.episodeSortNumber > 0) return ep.episodeSortNumber;
+      if (
+        bucket.youtubePlaylistId &&
+        typeof ep.video.playlist_position === 'number'
+      ) {
+        return playlistPosIncreasesWithEp
+          ? ep.video.playlist_position + 1
+          : 1_000_000 - ep.video.playlist_position;
+      }
+      return 0;
+    };
+
+    // Sắp xếp danh sách tập giảm dần (Mới nhất trước): trọng số tập -> vị trí playlist -> ngày đăng
     const sortedDesc = [...bucket.items].sort((a, b) => {
-      if (a.episodeSortNumber !== b.episodeSortNumber) {
-        return b.episodeSortNumber - a.episodeSortNumber;
+      const aWeight = computeSortWeight(a);
+      const bWeight = computeSortWeight(b);
+      if (aWeight !== bWeight) {
+        return bWeight - aWeight;
       }
       return (
         new Date(b.video.published_at).getTime() -
@@ -487,11 +638,26 @@ export function groupVideosIntoSeries(
         new Date(a.video.published_at).getTime(),
     )[0];
 
-    // Chọn tên bộ phim sạch nhất (ngắn gọn nhất nhưng >= 2 ký tự)
+    // Ưu tiên tên Playlist chính thức từ YouTube nếu có, sau đó mới lấy tên ngắn chuẩn hóa
     const displayTitle =
-      bucket.titles
-        .filter((t) => t.trim().length >= 2)
-        .sort((a, b) => a.length - b.length)[0] ?? latestEpisode.video.title;
+      pickBestTitle(bucket.playlistTitles) ??
+      pickBestTitle(bucket.titles) ??
+      latestEpisode.video.title;
+
+    // Tổng hợp lượt xem và nhãn độ hot toàn bộ phim
+    let totalViews = 0;
+    let hotBadge: HotBadge = null;
+    let hotScore = 0;
+    for (const ep of bucket.items) {
+      totalViews += Math.max(0, Number(ep.video.view_count ?? 0) || 0);
+      const epScore = Number(ep.video.hot_score ?? 0) || 0;
+      if (epScore > hotScore) hotScore = epScore;
+      if (ep.video.hot_badge === 'Phim Hot') {
+        hotBadge = 'Phim Hot';
+      } else if (ep.video.hot_badge === 'Đáng xem' && hotBadge !== 'Phim Hot') {
+        hotBadge = 'Đáng xem';
+      }
+    }
 
     // Tìm tập gần nhất mà user đã xem / đang xem dở (theo số tập cao nhất)
     const watchedOrInProgress = sortedDesc.filter(
@@ -532,12 +698,16 @@ export function groupVideosIntoSeries(
 
     groups.push({
       seriesKey,
+      youtubePlaylistId: bucket.youtubePlaylistId,
       seriesTitle: displayTitle,
       channelId: bucket.channelId,
       channelTitle: bucket.channelTitle,
       detectedGenre: resolvePrimaryGenre(latestEpisode.video.detected_genre),
       coverThumbnailUrl: latestEpisode.video.thumbnail_url,
       totalEpisodes: sortedDesc.length,
+      totalViews,
+      hotBadge,
+      hotScore,
       latestEpisode,
       latestPublishedAt: latestByDate.video.published_at,
       episodes: sortedDesc,

@@ -131,6 +131,13 @@ CREATE TABLE public.videos (
   theatrical_release_year INTEGER, -- Năm công chiếu tại rạp
   cinema_format TEXT, -- 'Anime / Hoạt hình' | 'Phim Người Đóng'
   cinema_genres TEXT[], -- Mảng thể loại an toàn chuẩn xác: {'Hành động','Phiêu lưu','Giả tưởng','Viễn tưởng','Tình cảm','Hài hước','Tâm lý','Võ thuật'}
+  youtube_playlist_id TEXT, -- ID Danh sách phát chính thức trên YouTube (Source of Truth cho Series Playlist)
+  playlist_position INTEGER, -- Thứ tự tập gốc trong Playlist YouTube (0, 1, 2...)
+  view_count BIGINT DEFAULT 0, -- Lượt xem thực tế từ YouTube Data API (part=statistics)
+  like_count BIGINT DEFAULT 0, -- Lượt thích thực tế từ YouTube Data API
+  comment_count BIGINT DEFAULT 0, -- Số lượng bình luận từ YouTube Data API
+  hot_badge TEXT, -- Nhãn độ hot tự động: 'Phim Hot' | 'Đáng xem' | NULL
+  hot_score NUMERIC DEFAULT 0, -- Điểm độ hot tính theo vận tốc lượt xem, baseline kênh, tương tác & điểm AI
   is_unavailable BOOLEAN DEFAULT FALSE, -- TRUE khi video gốc bị xóa/ẩn trên YouTube (thumbnail trả về 120x90)
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -142,6 +149,13 @@ CREATE TABLE public.videos (
 -- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS theatrical_release_year INTEGER;
 -- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS cinema_format TEXT;
 -- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS cinema_genres TEXT[];
+-- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS youtube_playlist_id TEXT;
+-- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS playlist_position INTEGER;
+-- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS view_count BIGINT DEFAULT 0;
+-- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS like_count BIGINT DEFAULT 0;
+-- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS comment_count BIGINT DEFAULT 0;
+-- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS hot_badge TEXT;
+-- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS hot_score NUMERIC DEFAULT 0;
 -- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS is_unavailable BOOLEAN DEFAULT FALSE;
 
 CREATE INDEX idx_videos_channel_published ON public.videos(channel_id, published_at DESC);
@@ -236,6 +250,9 @@ CREATE INDEX IF NOT EXISTS idx_videos_duration_seconds ON public.videos(duration
 CREATE INDEX IF NOT EXISTS idx_videos_theatrical_published ON public.videos(is_theatrical_movie, published_at DESC) WHERE is_theatrical_movie = TRUE;
 CREATE INDEX IF NOT EXISTS idx_videos_cinema_format ON public.videos(cinema_format) WHERE is_theatrical_movie = TRUE;
 CREATE INDEX IF NOT EXISTS idx_videos_cinema_genres ON public.videos USING GIN (cinema_genres) WHERE is_theatrical_movie = TRUE;
+CREATE INDEX IF NOT EXISTS idx_videos_playlist ON public.videos(channel_id, youtube_playlist_id, playlist_position);
+CREATE INDEX IF NOT EXISTS idx_videos_view_count ON public.videos(view_count DESC);
+CREATE INDEX IF NOT EXISTS idx_videos_hot_score ON public.videos(hot_badge, hot_score DESC);
 
 -- 11. Bảng Danh sách Lưu Xem Sau (Watch Later / Bookmarks)
 CREATE TABLE public.user_watch_later (

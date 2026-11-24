@@ -14,7 +14,12 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { VideoThumbnail } from '@/components/workspace/VideoThumbnail';
-import { GENRE_DOT_STYLES, type SortOption } from '@/types/workspace';
+import {
+  GENRE_DOT_STYLES,
+  formatRelativeTimeVi,
+  formatViewCountVi,
+  type SortOption,
+} from '@/types/workspace';
 import { isTheatricalSeries, type SeriesGroup } from '@/lib/series-parser';
 import type { UserSeriesStatus } from '@/types/database';
 
@@ -117,8 +122,8 @@ const SeriesCard = React.memo(function SeriesCard({
             </div>
           </div>
 
-          {/* Badge góc trái: ⭐ Theo dõi / 🎬 CHIẾU RẠP / 🔥 TẬP MỚI / Đã xem (nền đặc bg-black/85 không blur nặng GPU) */}
-          <div className="absolute left-2 top-2 flex flex-wrap items-center gap-1">
+          {/* Badge góc trái: ⭐ Theo dõi / 🎬 CHIẾU RẠP / 🔥 Phim Hot / ⭐ Đáng xem / TẬP MỚI (nền đặc không blur nặng GPU) */}
+          <div className="absolute left-2 top-2 flex flex-wrap items-center gap-1 pr-2">
             {isFollowing && (
               <span className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-1.5 py-0.5 text-[11px] font-bold text-black shadow-sm">
                 <Star className="size-3 fill-current" />
@@ -129,6 +134,18 @@ const SeriesCard = React.memo(function SeriesCard({
               <span className="inline-flex items-center gap-1 rounded-md border border-amber-400/50 bg-black/85 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-amber-300 shadow-sm">
                 <Clapperboard className="size-3 shrink-0 text-amber-400" />
                 <span>CHIẾU RẠP</span>
+              </span>
+            )}
+            {series.hotBadge === 'Phim Hot' && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-orange-400/60 bg-orange-600/95 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-white shadow-sm">
+                <Flame className="size-3 shrink-0 fill-current" />
+                <span>Phim Hot</span>
+              </span>
+            )}
+            {series.hotBadge === 'Đáng xem' && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-amber-400/50 bg-black/85 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-amber-300 shadow-sm">
+                <Star className="size-3 shrink-0 fill-current text-amber-400" />
+                <span>Đáng xem</span>
               </span>
             )}
             {series.hasNewEpisode ? (
@@ -175,10 +192,25 @@ const SeriesCard = React.memo(function SeriesCard({
           </div>
 
           <div className="flex flex-col gap-2 border-t border-[var(--border-subtle)] pt-2">
-            <div className="flex items-center justify-between gap-2">
-              <p className="min-w-0 flex-1 truncate text-xs text-[var(--text-secondary)]">
-                {series.channelTitle}
-              </p>
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs text-[var(--text-secondary)]">
+                  {series.channelTitle}
+                </p>
+                {(() => {
+                  const meta = [
+                    formatViewCountVi(series.totalViews),
+                    formatRelativeTimeVi(series.latestPublishedAt),
+                  ]
+                    .filter(Boolean)
+                    .join(' • ');
+                  return meta ? (
+                    <p className="mt-0.5 truncate text-[11px] font-medium tabular-nums text-[var(--text-secondary)]">
+                      {meta}
+                    </p>
+                  ) : null;
+                })()}
+              </div>
               {series.lastWatchedEpisode && series.hasNewEpisode && (
                 <span className="shrink-0 text-[11px] text-[var(--text-secondary)]">
                   Đã xem {series.lastWatchedEpisode.episodeLabel}
@@ -280,6 +312,27 @@ export function SeriesGrid({
       const bFollow = seriesStatuses[b.seriesKey] === 'following';
       if (aFollow !== bFollow) return aFollow ? -1 : 1;
 
+      if (sortBy === 'hot') {
+        const aHot =
+          a.hotBadge === 'Phim Hot' ? 2 : a.hotBadge === 'Đáng xem' ? 1 : 0;
+        const bHot =
+          b.hotBadge === 'Phim Hot' ? 2 : b.hotBadge === 'Đáng xem' ? 1 : 0;
+        if (aHot !== bHot) return bHot - aHot;
+        const scoreDiff = b.hotScore - a.hotScore;
+        if (Math.abs(scoreDiff) > 0.5) return scoreDiff;
+        if (b.totalViews !== a.totalViews) return b.totalViews - a.totalViews;
+        return (
+          new Date(b.latestPublishedAt).getTime() -
+          new Date(a.latestPublishedAt).getTime()
+        );
+      }
+      if (sortBy === 'most_viewed') {
+        if (b.totalViews !== a.totalViews) return b.totalViews - a.totalViews;
+        return (
+          new Date(b.latestPublishedAt).getTime() -
+          new Date(a.latestPublishedAt).getTime()
+        );
+      }
       if (sortBy === 'title_asc') {
         return a.seriesTitle.localeCompare(b.seriesTitle, 'vi');
       }

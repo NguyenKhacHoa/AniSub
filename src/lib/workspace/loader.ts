@@ -1,11 +1,13 @@
 import { createAdminClient } from '@/lib/supabase/server';
 import {
   PRIMARY_GENRE_OPTIONS,
+  computeChannelHotnessBaselines,
+  computeVideoHotness,
   type ChannelWithSelection,
   type CinemaVideoItem,
   type PrimaryGenreTag,
 } from '@/types/workspace';
-import type { GenreTag, UserSeriesStatus } from '@/types/database';
+import type { GenreTag, HotBadge, UserSeriesStatus } from '@/types/database';
 
 const DB_FETCH_BATCH_SIZE = 1000;
 
@@ -60,13 +62,20 @@ interface RawVideoRow {
   cinema_format?: CinemaVideoItem['cinema_format'];
   cinema_genres?: string[] | null;
   is_unavailable?: boolean | null;
+  youtube_playlist_id?: string | null;
+  playlist_position?: number | null;
+  view_count?: number | null;
+  like_count?: number | null;
+  comment_count?: number | null;
+  hot_badge?: HotBadge;
+  hot_score?: number | null;
   created_at: string;
 }
 
 // Chỉ SELECT các cột nhẹ cần thiết cho lưới thẻ phim ngoài màn hình chính
 // (loại bỏ cột nặng như description, ai_summary, insight_data; chỉ tải chi tiết khi mở TheaterStage)
 const VIDEO_SELECT_FULL =
-  'video_id, channel_id, title, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, is_manual_tag, is_theatrical_movie, theatrical_release_year, cinema_format, cinema_genres, is_unavailable, created_at';
+  'video_id, channel_id, title, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, is_manual_tag, is_theatrical_movie, theatrical_release_year, cinema_format, cinema_genres, is_unavailable, youtube_playlist_id, playlist_position, view_count, like_count, comment_count, hot_badge, hot_score, created_at';
 const VIDEO_SELECT_THEATRICAL =
   'video_id, channel_id, title, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, is_manual_tag, is_theatrical_movie, theatrical_release_year, created_at';
 const VIDEO_SELECT_BASIC =
@@ -436,27 +445,55 @@ export async function loadWorkspaceDataForUser(
     mergedChannels.map((c) => [c.channel_id, c.genre_tags[0] ?? 'HH2D']),
   );
 
+  const nowMs = Date.now();
+  const hotBaselines = computeChannelHotnessBaselines(fetchedVideos, nowMs);
+
   const mergedVideos: CinemaVideoItem[] = fetchedVideos
     .filter((v) => v.is_unavailable !== true)
     .map((v) => {
-    const progress = progressMap.get(v.video_id);
-    const channel = channelMap.get(v.channel_id);
-    return {
-      ...v,
-      description: v.description ?? null,
-      ai_summary: v.ai_summary ?? null,
-      detected_genre:
-        v.detected_genre === 'Phim AI'
-          ? 'Phim AI'
-          : v.detected_genre === 'HH2D' || String(v.detected_genre) === '2D'
-            ? 'HH2D'
-            : (genreByChannel.get(v.channel_id) ?? 'HH2D'),
-      channel_title: channel?.title ?? v.channel_id,
-      progress_seconds: progress?.progress_seconds ?? 0,
-      is_completed: progress?.is_completed ?? false,
-      last_watched_at: progress?.last_watched_at ?? null,
-    };
-  });
+      const progress = progressMap.get(v.video_id);
+      const channel = channelMap.get(v.channel_id);
+      const hasStoredHot = typeof v.hot_score === 'number';
+      const fallbackHot = hasStoredHot
+        ? null
+        : computeVideoHotness(
+            {
+              published_at: v.published_at,
+              view_count: v.view_count,
+              like_count: v.like_count,
+              comment_count: v.comment_count,
+            },
+            hotBaselines.get(v.channel_id),
+            nowMs,
+          );
+
+      return {
+        ...v,
+        description: v.description ?? null,
+        ai_summary: v.ai_summary ?? null,
+        youtube_playlist_id: v.youtube_playlist_id ?? null,
+        playlist_position: v.playlist_position ?? null,
+        view_count: v.view_count ?? 0,
+        like_count: v.like_count ?? 0,
+        comment_count: v.comment_count ?? 0,
+        hot_badge: hasStoredHot
+          ? ((v.hot_badge ?? null) as HotBadge)
+          : (fallbackHot?.hot_badge ?? null),
+        hot_score: hasStoredHot
+          ? v.hot_score!
+          : (fallbackHot?.hot_score ?? 0),
+        detected_genre:
+          v.detected_genre === 'Phim AI'
+            ? 'Phim AI'
+            : v.detected_genre === 'HH2D' || String(v.detected_genre) === '2D'
+              ? 'HH2D'
+              : (genreByChannel.get(v.channel_id) ?? 'HH2D'),
+        channel_title: channel?.title ?? v.channel_id,
+        progress_seconds: progress?.progress_seconds ?? 0,
+        is_completed: progress?.is_completed ?? false,
+        last_watched_at: progress?.last_watched_at ?? null,
+      };
+    });
 
   return {
     channels: mergedChannels,

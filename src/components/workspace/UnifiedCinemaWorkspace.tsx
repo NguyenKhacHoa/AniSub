@@ -338,6 +338,31 @@ export function UnifiedCinemaWorkspace({
       return true;
     });
 
+    if (sortBy === 'hot') {
+      return [...matched].sort((a, b) => {
+        const aHot =
+          a.hot_badge === 'Phim Hot' ? 2 : a.hot_badge === 'Đáng xem' ? 1 : 0;
+        const bHot =
+          b.hot_badge === 'Phim Hot' ? 2 : b.hot_badge === 'Đáng xem' ? 1 : 0;
+        if (aHot !== bHot) return bHot - aHot;
+        const scoreDiff = (b.hot_score ?? 0) - (a.hot_score ?? 0);
+        if (Math.abs(scoreDiff) > 0.5) return scoreDiff;
+        const viewDiff = (b.view_count ?? 0) - (a.view_count ?? 0);
+        if (viewDiff !== 0) return viewDiff;
+        return (
+          new Date(b.published_at).getTime() - new Date(a.published_at).getTime()
+        );
+      });
+    }
+    if (sortBy === 'most_viewed') {
+      return [...matched].sort((a, b) => {
+        const viewDiff = (b.view_count ?? 0) - (a.view_count ?? 0);
+        if (viewDiff !== 0) return viewDiff;
+        return (
+          new Date(b.published_at).getTime() - new Date(a.published_at).getTime()
+        );
+      });
+    }
     if (sortBy === 'longest') {
       return [...matched].sort(
         (a, b) => b.duration_seconds - a.duration_seconds,

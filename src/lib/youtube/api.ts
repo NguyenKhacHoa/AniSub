@@ -19,6 +19,19 @@ export interface YouTubeFetchedVideo {
   duration_seconds: number;
   is_short: boolean;
   video_type: VideoType;
+  youtube_playlist_id?: string | null;
+  playlist_position?: number | null;
+  playlist_title?: string | null;
+  view_count: number;
+  like_count: number;
+  comment_count: number;
+}
+
+export interface YouTubePlaylistSummary {
+  playlist_id: string;
+  channel_id: string;
+  title: string;
+  item_count: number;
 }
 
 interface YouTubeSubscriptionsResponse {
@@ -50,9 +63,29 @@ interface YouTubePlaylistItemsResponse {
       videoId?: string;
     };
     snippet?: {
+      position?: number;
       resourceId?: {
         videoId?: string;
       };
+    };
+  }>;
+  error?: {
+    code?: number;
+    message?: string;
+    errors?: Array<{ reason?: string; message?: string }>;
+  };
+}
+
+interface YouTubePlaylistsResponse {
+  nextPageToken?: string;
+  items?: Array<{
+    id?: string;
+    snippet?: {
+      channelId?: string;
+      title?: string;
+    };
+    contentDetails?: {
+      itemCount?: number;
     };
   }>;
   error?: {
@@ -81,6 +114,11 @@ interface YouTubeVideosResponse {
     };
     contentDetails?: {
       duration?: string;
+    };
+    statistics?: {
+      viewCount?: string;
+      likeCount?: string;
+      commentCount?: string;
     };
   }>;
   error?: {
@@ -296,70 +334,239 @@ export async function fetchChannelVideosPage(
     return { videos: [], nextPageToken };
   }
 
-  const videosUrl = new URL('https://www.googleapis.com/youtube/v3/videos');
-  videosUrl.searchParams.set('part', 'snippet,contentDetails');
-  videosUrl.searchParams.set('id', videoIds.slice(0, 50).join(','));
-  videosUrl.searchParams.set('key', apiKey);
+  const results = await fetchVideoDetailsByIds(
+    videoIds.slice(0, 50),
+    channelId,
+    apiKey,
+  );
 
-  const videosRes = await fetch(videosUrl.toString(), {
-    cache: 'no-store',
-  });
-  const videosData = (await videosRes
-    .json()
-    .catch(() => ({}))) as YouTubeVideosResponse;
+  return { videos: results, nextPageToken };
+}
 
-  if (!videosRes.ok) {
-    const reason = videosData.error?.errors?.[0]?.reason ?? 'api_error';
-    const msg =
-      videosData.error?.message ||
-      `Lỗi lấy chi tiết video (HTTP ${videosRes.status})`;
-    throw new YouTubeApiError(msg, videosRes.status, reason);
-  }
+/**
+ * Helper dùng chung: Gọi `videos.list` (`part=snippet,contentDetails,statistics`) cho danh sách video ID
+ * để lấy chính xác `published_at`, `duration_seconds`, `thumbnail_url` và `view_count`/`like_count`/`comment_count`.
+ */
+export async function fetchVideoDetailsByIds(
+  videoIds: string[],
+  fallbackChannelId: string,
+  apiKeyInput?: string,
+): Promise<YouTubeFetchedVideo[]> {
+  const apiKey = apiKeyInput ?? process.env.YOUTUBE_API_KEY?.trim();
+  if (!apiKey || videoIds.length === 0) return [];
 
   const results: YouTubeFetchedVideo[] = [];
 
-  for (const item of videosData.items ?? []) {
-    const title = item.snippet?.title?.trim();
-    if (!item.id || !title) continue;
+  for (let i = 0; i < videoIds.length; i += 50) {
+    const batchIds = videoIds.slice(i, i + 50);
+    const videosUrl = new URL('https://www.googleapis.com/youtube/v3/videos');
+    videosUrl.searchParams.set('part', 'snippet,contentDetails,statistics');
+    videosUrl.searchParams.set('id', batchIds.join(','));
+    videosUrl.searchParams.set('key', apiKey);
 
-    const description = item.snippet?.description?.trim() ?? '';
-    const durationSeconds = parseIso8601Duration(item.contentDetails?.duration);
-    const { is_short, video_type } = classifyVideoHeuristic(
-      title,
-      description,
-      durationSeconds,
-    );
-
-    // Ưu tiên lưu trực tiếp URL thumbnail thật chất lượng cao nhất từ YouTube API (standard -> high -> medium)
-    const thumbnailUrl =
-      item.snippet?.thumbnails?.standard?.url ||
-      item.snippet?.thumbnails?.high?.url ||
-      item.snippet?.thumbnails?.medium?.url ||
-      item.snippet?.thumbnails?.default?.url ||
-      `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`;
-
-    const visionThumbnailUrl =
-      item.snippet?.thumbnails?.high?.url ||
-      item.snippet?.thumbnails?.medium?.url ||
-      item.snippet?.thumbnails?.default?.url ||
-      `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`;
-
-    results.push({
-      video_id: item.id,
-      channel_id: item.snippet?.channelId || channelId,
-      title,
-      description: description ? description.slice(0, 2000) : null,
-      tags: Array.isArray(item.snippet?.tags) ? item.snippet.tags : [],
-      thumbnail_url: thumbnailUrl,
-      vision_thumbnail_url: visionThumbnailUrl,
-      published_at: item.snippet?.publishedAt || new Date().toISOString(),
-      duration_seconds: durationSeconds,
-      is_short,
-      video_type,
+    const videosRes = await fetch(videosUrl.toString(), {
+      cache: 'no-store',
     });
+    const videosData = (await videosRes
+      .json()
+      .catch(() => ({}))) as YouTubeVideosResponse;
+
+    if (!videosRes.ok) {
+      const reason = videosData.error?.errors?.[0]?.reason ?? 'api_error';
+      const msg =
+        videosData.error?.message ||
+        `Lỗi lấy chi tiết video (HTTP ${videosRes.status})`;
+      throw new YouTubeApiError(msg, videosRes.status, reason);
+    }
+
+    for (const item of videosData.items ?? []) {
+      const title = item.snippet?.title?.trim();
+      if (
+        !item.id ||
+        !title ||
+        title === 'Deleted video' ||
+        title === 'Private video'
+      ) {
+        continue;
+      }
+
+      const description = item.snippet?.description?.trim() ?? '';
+      const durationSeconds = parseIso8601Duration(
+        item.contentDetails?.duration,
+      );
+      const { is_short, video_type } = classifyVideoHeuristic(
+        title,
+        description,
+        durationSeconds,
+      );
+
+      // Ưu tiên lưu trực tiếp URL thumbnail thật chất lượng cao nhất từ YouTube API (standard -> high -> medium)
+      const thumbnailUrl =
+        item.snippet?.thumbnails?.standard?.url ||
+        item.snippet?.thumbnails?.high?.url ||
+        item.snippet?.thumbnails?.medium?.url ||
+        item.snippet?.thumbnails?.default?.url ||
+        `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`;
+
+      const visionThumbnailUrl =
+        item.snippet?.thumbnails?.high?.url ||
+        item.snippet?.thumbnails?.medium?.url ||
+        item.snippet?.thumbnails?.default?.url ||
+        `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`;
+
+      const viewCount = Number(item.statistics?.viewCount ?? 0);
+      const likeCount = Number(item.statistics?.likeCount ?? 0);
+      const commentCount = Number(item.statistics?.commentCount ?? 0);
+
+      results.push({
+        video_id: item.id,
+        channel_id: item.snippet?.channelId || fallbackChannelId,
+        title,
+        description: description ? description.slice(0, 2000) : null,
+        tags: Array.isArray(item.snippet?.tags) ? item.snippet.tags : [],
+        thumbnail_url: thumbnailUrl,
+        vision_thumbnail_url: visionThumbnailUrl,
+        published_at: item.snippet?.publishedAt || new Date().toISOString(),
+        duration_seconds: durationSeconds,
+        is_short,
+        video_type,
+        view_count: Number.isFinite(viewCount) ? viewCount : 0,
+        like_count: Number.isFinite(likeCount) ? likeCount : 0,
+        comment_count: Number.isFinite(commentCount) ? commentCount : 0,
+      });
+    }
   }
 
-  return { videos: results, nextPageToken };
+  return results;
+}
+
+/**
+ * Lấy toàn bộ Danh sách phát (Playlists) chính thức của một kênh qua `playlists.list`
+ * (Source of Truth cho tên bộ phim và danh sách tập đầy đủ).
+ */
+export async function fetchChannelPlaylists(
+  channelId: string,
+  maxPages = 5,
+): Promise<YouTubePlaylistSummary[]> {
+  const apiKey = process.env.YOUTUBE_API_KEY?.trim();
+  if (!apiKey) return [];
+
+  const playlists: YouTubePlaylistSummary[] = [];
+  const seen = new Set<string>();
+  let pageToken: string | undefined;
+  let pageCount = 0;
+
+  while (pageCount < maxPages) {
+    const url = new URL('https://www.googleapis.com/youtube/v3/playlists');
+    url.searchParams.set('part', 'snippet,contentDetails');
+    url.searchParams.set('channelId', channelId);
+    url.searchParams.set('maxResults', '50');
+    if (pageToken) {
+      url.searchParams.set('pageToken', pageToken);
+    }
+    url.searchParams.set('key', apiKey);
+
+    const res = await fetch(url.toString(), { cache: 'no-store' });
+    const data = (await res
+      .json()
+      .catch(() => ({}))) as YouTubePlaylistsResponse;
+
+    if (!res.ok) {
+      console.warn(
+        `[YouTube API] playlists.list thất bại cho kênh ${channelId} (HTTP ${res.status}):`,
+        data.error?.message,
+      );
+      break;
+    }
+
+    for (const item of data.items ?? []) {
+      const pid = item.id?.trim();
+      const title = item.snippet?.title?.trim();
+      if (!pid || !title || seen.has(pid)) continue;
+      seen.add(pid);
+
+      playlists.push({
+        playlist_id: pid,
+        channel_id: item.snippet?.channelId || channelId,
+        title,
+        item_count: Number(item.contentDetails?.itemCount ?? 0) || 0,
+      });
+    }
+
+    if (!data.nextPageToken) break;
+    pageToken = data.nextPageToken;
+    pageCount += 1;
+  }
+
+  return playlists;
+}
+
+/**
+ * Kéo 100% video nằm trong một Playlist cụ thể (`playlistItems.list` + `videos.list`),
+ * gắn chuẩn `youtube_playlist_id`, `playlist_position`, `playlist_title` và `statistics` (`view_count`, `like_count`, `comment_count`).
+ */
+export async function fetchPlaylistVideosAll(
+  channelId: string,
+  playlistId: string,
+  playlistTitle: string,
+  maxPages = 20,
+): Promise<YouTubeFetchedVideo[]> {
+  const apiKey = process.env.YOUTUBE_API_KEY?.trim();
+  if (!apiKey) return [];
+
+  const positionByVideoId = new Map<string, number>();
+  const orderedIds: string[] = [];
+  let pageToken: string | undefined;
+  let pageCount = 0;
+
+  while (pageCount < maxPages) {
+    const url = new URL('https://www.googleapis.com/youtube/v3/playlistItems');
+    url.searchParams.set('part', 'snippet,contentDetails');
+    url.searchParams.set('playlistId', playlistId);
+    url.searchParams.set('maxResults', '50');
+    if (pageToken) {
+      url.searchParams.set('pageToken', pageToken);
+    }
+    url.searchParams.set('key', apiKey);
+
+    const res = await fetch(url.toString(), { cache: 'no-store' });
+    const data = (await res
+      .json()
+      .catch(() => ({}))) as YouTubePlaylistItemsResponse;
+
+    if (!res.ok) {
+      break;
+    }
+
+    for (const item of data.items ?? []) {
+      const vid =
+        item.contentDetails?.videoId || item.snippet?.resourceId?.videoId;
+      if (!vid || positionByVideoId.has(vid)) continue;
+      const pos =
+        typeof item.snippet?.position === 'number'
+          ? item.snippet.position
+          : orderedIds.length;
+      positionByVideoId.set(vid, pos);
+      orderedIds.push(vid);
+    }
+
+    if (!data.nextPageToken) break;
+    pageToken = data.nextPageToken;
+    pageCount += 1;
+  }
+
+  if (orderedIds.length === 0) return [];
+
+  const details = await fetchVideoDetailsByIds(orderedIds, channelId, apiKey);
+  return details.map((v) => ({
+    ...v,
+    // Video nằm trong Playlist bộ phim luôn ưu tiên video_type = 'episode' (trừ Short hoặc Trailer)
+    video_type:
+      v.is_short || v.video_type === 'trailer' ? v.video_type : 'episode',
+    youtube_playlist_id: playlistId,
+    playlist_position: positionByVideoId.get(v.video_id) ?? null,
+    playlist_title: playlistTitle,
+  }));
 }
 
 /**

@@ -3,13 +3,14 @@ import type {
   ChannelRow,
   CinemaFormat,
   GenreTag,
+  HotBadge,
   ProfileRow,
   UserChannelRow,
   VideoRow,
   WatchProgressRow,
 } from '@/types/database';
 
-export type { ChannelDefaultCategory };
+export type { ChannelDefaultCategory, HotBadge };
 
 export const CHANNEL_DEFAULT_CATEGORIES: ChannelDefaultCategory[] = [
   'AUTO',
@@ -47,7 +48,12 @@ export type WorkspaceViewMode =
 export type VideoTypeFilter = 'all' | 'episode' | 'full_movie';
 export type GenreFilter = 'all' | GenreTag;
 export type PrimaryGenreTag = GenreTag;
-export type SortOption = 'newest' | 'longest' | 'title_asc';
+export type SortOption =
+  | 'newest'
+  | 'hot'
+  | 'most_viewed'
+  | 'longest'
+  | 'title_asc';
 export type CinemaFormatFilter = 'all' | CinemaFormat;
 export type TheatricalCategoryFilter =
   | 'all'
@@ -424,4 +430,179 @@ export function getProgressPercent(
 ): number {
   if (!durationSeconds || progressSeconds <= 0) return 0;
   return Math.min(100, Math.round((progressSeconds / durationSeconds) * 100));
+}
+
+/**
+ * Định dạng số lượt xem chuẩn tiếng Việt kiểu YouTube (`128N lượt xem`, `1.2Tr lượt xem`).
+ */
+export function formatViewCountVi(viewCount?: number | null): string {
+  const safe = Number(viewCount ?? 0);
+  if (!Number.isFinite(safe) || safe <= 0) return '';
+  if (safe >= 1_000_000) {
+    const val = (safe / 1_000_000).toFixed(safe >= 10_000_000 ? 0 : 1);
+    return `${val.replace(/\.0$/, '')}Tr lượt xem`;
+  }
+  if (safe >= 1_000) {
+    const val = (safe / 1_000).toFixed(safe >= 10_000 ? 0 : 1);
+    return `${val.replace(/\.0$/, '')}N lượt xem`;
+  }
+  return `${Math.floor(safe)} lượt xem`;
+}
+
+/**
+ * Định dạng thời gian đăng tương đối chuẩn tiếng Việt (`2 giờ trước`, `3 ngày trước`, `2 tháng trước`).
+ */
+export function formatRelativeTimeVi(
+  publishedAt?: string | null,
+  nowMs: number = Date.now(),
+): string {
+  if (!publishedAt) return '';
+  const ts = new Date(publishedAt).getTime();
+  if (!Number.isFinite(ts) || ts <= 0) return '';
+
+  const diffSeconds = Math.max(0, Math.floor((nowMs - ts) / 1000));
+  if (diffSeconds < 60) return 'Vừa đăng';
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  if (diffMinutes < 60) return `${diffMinutes} phút trước`;
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours} giờ trước`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 30) return `${diffDays} ngày trước`;
+  const diffMonths = Math.floor(diffDays / 30);
+  if (diffMonths < 12) return `${diffMonths} tháng trước`;
+  const diffYears = Math.floor(diffDays / 365);
+  return `${Math.max(1, diffYears)} năm trước`;
+}
+
+export interface ChannelHotnessBaseline {
+  avgViews: number;
+  top15Velocity: number;
+}
+
+/**
+ * Tính mặt bằng lượt xem trung bình (`avgViews`) và ngưỡng top 15% tốc độ tăng trưởng (`top15Velocity`)
+ * cho từng kênh YouTube dựa trên danh sách video thật của chính kênh đó.
+ */
+export function computeChannelHotnessBaselines(
+  videos: Array<{
+    channel_id: string;
+    published_at: string;
+    view_count?: number | null;
+  }>,
+  nowMs: number = Date.now(),
+): Map<string, ChannelHotnessBaseline> {
+  const grouped = new Map<
+    string,
+    { views: number[]; velocities: number[] }
+  >();
+
+  for (const v of videos) {
+    const vc = Number(v.view_count ?? 0);
+    if (!Number.isFinite(vc) || vc <= 0) continue;
+
+    const pubMs = new Date(v.published_at).getTime();
+    const hours = Number.isFinite(pubMs)
+      ? Math.max(1, (nowMs - pubMs) / 3_600_000)
+      : 720;
+    const velocity = vc / hours;
+
+    const entry = grouped.get(v.channel_id);
+    if (entry) {
+      entry.views.push(vc);
+      entry.velocities.push(velocity);
+    } else {
+      grouped.set(v.channel_id, { views: [vc], velocities: [velocity] });
+    }
+  }
+
+  const result = new Map<string, ChannelHotnessBaseline>();
+  for (const [channelId, stats] of grouped.entries()) {
+    const sumViews = stats.views.reduce((acc, n) => acc + n, 0);
+    const avgViews = stats.views.length > 0 ? sumViews / stats.views.length : 0;
+
+    const sortedVel = [...stats.velocities].sort((a, b) => b - a);
+    const topIdx = Math.max(0, Math.floor(sortedVel.length * 0.15) - 1);
+    const top15Velocity = sortedVel[topIdx] ?? 0;
+
+    result.set(channelId, { avgViews, top15Velocity });
+  }
+
+  return result;
+}
+
+/**
+ * Hệ thống phân tích độ hot & gắn nhãn tự động (`🔥 Phim Hot` / `⭐ Đáng xem`):
+ * - `🔥 Phim Hot`: Video mới đăng (trong vòng 14 ngày) có tốc độ tăng view (`viewsPerHour`)
+ *   thuộc top 15% của kênh hoặc vượt trung bình kênh >= 1.4x trong thời gian ngắn.
+ * - `⭐ Đáng xem`: Phim có tổng lượt xem cao bền vững (>= max(1.5x avg kênh, 5000)),
+ *   hoặc tỷ lệ tương tác (`like + 2*comment / view`) >= 3.5% trên nền view >= 1500,
+ *   hoặc được AI Cinema Insight chấm điểm >= 80/100.
+ */
+export function computeVideoHotness(
+  video: {
+    published_at: string;
+    view_count?: number | null;
+    like_count?: number | null;
+    comment_count?: number | null;
+    ai_overall_score?: number | null;
+  },
+  baseline?: ChannelHotnessBaseline,
+  nowMs: number = Date.now(),
+): { hot_badge: HotBadge; hot_score: number; views_per_hour: number } {
+  const viewCount = Math.max(0, Number(video.view_count ?? 0) || 0);
+  const likeCount = Math.max(0, Number(video.like_count ?? 0) || 0);
+  const commentCount = Math.max(0, Number(video.comment_count ?? 0) || 0);
+  const aiScore = Number(video.ai_overall_score ?? 0) || 0;
+
+  const pubMs = new Date(video.published_at).getTime();
+  const hoursSincePublished = Number.isFinite(pubMs)
+    ? Math.max(1, (nowMs - pubMs) / 3_600_000)
+    : 720;
+
+  const viewsPerHour = viewCount / hoursSincePublished;
+  const engagementRate =
+    viewCount > 0 ? (likeCount + commentCount * 2) / viewCount : 0;
+
+  const avgViews = baseline?.avgViews ?? 0;
+  const top15Velocity = baseline?.top15Velocity ?? 0;
+
+  const isRecent14Days = hoursSincePublished <= 14 * 24;
+  const isRecent7Days = hoursSincePublished <= 7 * 24;
+
+  const isHotVelocity =
+    isRecent14Days &&
+    viewCount >= 300 &&
+    (viewsPerHour >= Math.max(top15Velocity, 15) ||
+      (isRecent7Days && avgViews > 0 && viewCount >= avgViews * 1.4));
+
+  const isWorthWatching =
+    !isHotVelocity &&
+    (aiScore >= 80 ||
+      viewCount >= Math.max(avgViews * 1.5, 5000) ||
+      (viewCount >= 1500 && engagementRate >= 0.035));
+
+  const hot_badge: HotBadge = isHotVelocity
+    ? 'Phim Hot'
+    : isWorthWatching
+      ? 'Đáng xem'
+      : null;
+
+  const velocityScore = Math.log10(viewsPerHour + 1) * 45;
+  const volumeScore = Math.log10(viewCount + 1) * 20;
+  const relativeBoost = avgViews > 0 ? Math.min(80, (viewCount / avgViews) * 20) : 0;
+  const engagementBoost = Math.min(40, engagementRate * 500);
+  const aiBoost = aiScore >= 80 ? 35 : 0;
+  const badgeBonus =
+    hot_badge === 'Phim Hot' ? 1000 : hot_badge === 'Đáng xem' ? 400 : 0;
+
+  const hot_score = Math.round(
+    badgeBonus +
+      velocityScore +
+      volumeScore +
+      relativeBoost +
+      engagementBoost +
+      aiBoost,
+  );
+
+  return { hot_badge, hot_score, views_per_hour: viewsPerHour };
 }

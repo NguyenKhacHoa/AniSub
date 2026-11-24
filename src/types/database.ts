@@ -14,6 +14,8 @@ export type ChannelDefaultCategory = 'AUTO' | 'HH2D' | 'PHIM_AI';
 
 export type CinemaFormat = 'Anime / Hoạt hình' | 'Phim Người Đóng';
 
+export type HotBadge = 'Phim Hot' | 'Đáng xem' | null;
+
 export type VideoType = 'episode' | 'full_movie' | 'trailer';
 
 export type AccessRequestStatus = 'pending' | 'approved' | 'rejected';
@@ -118,6 +120,13 @@ export type VideoRow = {
   cinema_format?: CinemaFormat | null;
   cinema_genres?: string[] | null;
   is_unavailable?: boolean | null;
+  youtube_playlist_id?: string | null;
+  playlist_position?: number | null;
+  view_count?: number | null;
+  like_count?: number | null;
+  comment_count?: number | null;
+  hot_badge?: HotBadge;
+  hot_score?: number | null;
   created_at: string;
 };
 
@@ -258,6 +267,14 @@ export type Database = {
           theatrical_release_year?: number | null;
           cinema_format?: CinemaFormat | null;
           cinema_genres?: string[] | null;
+          is_unavailable?: boolean | null;
+          youtube_playlist_id?: string | null;
+          playlist_position?: number | null;
+          view_count?: number | null;
+          like_count?: number | null;
+          comment_count?: number | null;
+          hot_badge?: HotBadge;
+          hot_score?: number | null;
           created_at?: string;
         };
         Update: {
@@ -280,6 +297,14 @@ export type Database = {
           theatrical_release_year?: number | null;
           cinema_format?: CinemaFormat | null;
           cinema_genres?: string[] | null;
+          is_unavailable?: boolean | null;
+          youtube_playlist_id?: string | null;
+          playlist_position?: number | null;
+          view_count?: number | null;
+          like_count?: number | null;
+          comment_count?: number | null;
+          hot_badge?: HotBadge;
+          hot_score?: number | null;
           created_at?: string;
         };
         Relationships: [

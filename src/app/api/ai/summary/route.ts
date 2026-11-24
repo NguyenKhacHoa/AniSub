@@ -175,19 +175,32 @@ export async function POST(request: Request) {
     memoryInsightCache.set(videoId, insight);
 
     // Lưu vào Supabase nếu video tồn tại trong DB và đã có cột insight_data
+    // Nếu AI chấm >= 80/100 và video chưa có hot_badge 'Phim Hot', tự động nâng lên 'Đáng xem'
     if (dbVideo && hasInsightColumn) {
+      const updatePayload: Record<string, unknown> = {
+        insight_data: insight as unknown as Json,
+      };
+      if (insight.overallScore >= 80) {
+        const { data: currentHot } = await admin
+          .from('videos')
+          .select('hot_badge')
+          .eq('video_id', videoId)
+          .maybeSingle();
+        if (currentHot && currentHot.hot_badge !== 'Phim Hot') {
+          updatePayload.hot_badge = 'Đáng xem';
+        }
+      }
+
       const { error: saveErr } = await admin
         .from('videos')
-        .update({
-          insight_data: insight as unknown as Json,
-        })
+        .update(updatePayload as never)
         .eq('video_id', videoId);
 
       if (saveErr) {
-        console.warn(
-          '[AI Insight] Không thể lưu insight_data vào Supabase (đã cache memory):',
-          saveErr.message,
-        );
+        await admin
+          .from('videos')
+          .update({ insight_data: insight as unknown as Json })
+          .eq('video_id', videoId);
       }
     }
 

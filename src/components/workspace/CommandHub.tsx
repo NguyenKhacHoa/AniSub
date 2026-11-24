@@ -87,6 +87,8 @@ const THEATRICAL_CATEGORY_PILLS: Array<{
 
 const SORT_OPTIONS: Array<{ value: SortOption; label: string }> = [
   { value: 'newest', label: 'Mới nhất' },
+  { value: 'hot', label: '🔥 Phim Hot' },
+  { value: 'most_viewed', label: 'Xem nhiều nhất' },
   { value: 'longest', label: 'Dài nhất' },
   { value: 'title_asc', label: 'Tên A-Z' },
 ];
