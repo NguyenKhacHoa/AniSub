@@ -92,6 +92,13 @@ export async function POST(request: Request) {
       maxPages: body.maxPages ?? 3,
     });
 
+    if (result.isFullySynced) {
+      await admin
+        .from('profiles')
+        .update({ last_synced_at: new Date().toISOString() })
+        .eq('id', auth.userId);
+    }
+
     return NextResponse.json({
       ok: true,
       channelId,

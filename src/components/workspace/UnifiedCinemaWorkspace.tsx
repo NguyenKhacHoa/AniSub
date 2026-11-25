@@ -1567,6 +1567,7 @@ export function UnifiedCinemaWorkspace({
         if (Array.isArray(wsData.channels)) setChannels(wsData.channels);
         if (Array.isArray(wsData.videos)) setAllVideos(wsData.videos);
       }
+      setLastSyncedAt(new Date().toISOString());
 
       if (failedChannels > 0) {
         toast.warning(
@@ -2011,6 +2012,9 @@ export function UnifiedCinemaWorkspace({
         }
         if (Array.isArray(payload.videos) && payload.videos.length > 0) {
           setAllVideos(payload.videos);
+        }
+        if (force || (payload.newVideosCount ?? 0) > 0) {
+          setLastSyncedAt(new Date().toISOString());
         }
 
         // Khi user chủ động bấm "Cập nhật tập mới": chạy nạp bù thống kê view_count & hot_badge cho kho cũ

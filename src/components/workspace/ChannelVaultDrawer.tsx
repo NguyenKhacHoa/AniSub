@@ -108,8 +108,6 @@ const DEFAULT_CATEGORY_LABELS: Record<ChannelDefaultCategory, string> = {
   PHIM_AI: 'Khóa Phim AI',
 };
 
-const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
-
 export function ChannelVaultDrawer({
   open,
   onClose,
@@ -160,14 +158,32 @@ export function ChannelVaultDrawer({
     return () => window.removeEventListener('keydown', handleEsc);
   }, [open, onClose]);
 
-  const nextCycleSeconds = useMemo(() => {
-    if (!lastSyncedAt) return 0;
-    const syncedMs = new Date(lastSyncedAt).getTime();
-    if (!Number.isFinite(syncedMs) || syncedMs <= 0) return 0;
-    const elapsed = nowMs - syncedMs;
-    const remaining = THREE_HOURS_MS - elapsed;
-    return remaining > 0 ? Math.ceil(remaining / 1000) : 0;
-  }, [lastSyncedAt, nowMs]);
+  // Tính chính xác mốc chạy kế tiếp của lịch GitHub Actions `0 */3 * * *` (00, 03, 06, 09, 12, 15, 18, 21h UTC)
+  const nextCronInfo = useMemo(() => {
+    const nowDate = new Date(nowMs);
+    const nextUtcHour = Math.floor(nowDate.getUTCHours() / 3) * 3 + 3;
+    const nextDate = new Date(
+      Date.UTC(
+        nowDate.getUTCFullYear(),
+        nowDate.getUTCMonth(),
+        nowDate.getUTCDate(),
+        nextUtcHour,
+        0,
+        0,
+        0,
+      ),
+    );
+    const remainingSec = Math.max(
+      0,
+      Math.ceil((nextDate.getTime() - nowMs) / 1000),
+    );
+    const hh = nextDate.getHours().toString().padStart(2, '0');
+    const mm = nextDate.getMinutes().toString().padStart(2, '0');
+    return {
+      timeLabel: `${hh}:${mm}`,
+      remainingSec,
+    };
+  }, [nowMs]);
 
   const lastSyncedTimeLabel = useMemo(() => {
     if (!lastSyncedAt) return null;
@@ -296,19 +312,18 @@ export function ChannelVaultDrawer({
                 </Button>
               )}
 
-              <div className="inline-flex h-10 items-center gap-2 rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-3 text-xs font-medium tabular-nums text-emerald-700 dark:text-emerald-300">
+              <div className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-3 text-xs font-medium tabular-nums text-emerald-700 dark:text-emerald-300">
                 <Clock className="size-3.5 shrink-0 text-emerald-500" />
-                <span>Tự động đồng bộ mỗi 3 giờ</span>
+                <span>Tự động mỗi 3 giờ</span>
                 {lastSyncedTimeLabel && (
                   <span className="text-[var(--text-secondary)]">
-                    • Cập nhật lúc {lastSyncedTimeLabel}
+                    • Gần nhất: {lastSyncedTimeLabel}
                   </span>
                 )}
-                {nextCycleSeconds > 0 && (
-                  <span className="text-[var(--text-secondary)]">
-                    • Còn {formatCooldown(nextCycleSeconds)}
-                  </span>
-                )}
+                <span className="text-[var(--text-secondary)]">
+                  • Kế tiếp: {nextCronInfo.timeLabel} (còn{' '}
+                  {formatCooldown(nextCronInfo.remainingSec)})
+                </span>
               </div>
 
               <Button

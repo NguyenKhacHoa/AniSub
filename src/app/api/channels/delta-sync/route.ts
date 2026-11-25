@@ -184,6 +184,13 @@ export async function POST(request: Request) {
 
   const syncedAt = new Date().toISOString();
 
+  if (force || totalNewVideos > 0) {
+    await admin
+      .from('profiles')
+      .update({ last_synced_at: syncedAt })
+      .eq('id', auth.userId);
+  }
+
   if (!force && totalNewVideos === 0) {
     return NextResponse.json({
       skipped: false,
