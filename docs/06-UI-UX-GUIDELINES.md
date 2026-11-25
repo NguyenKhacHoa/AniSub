@@ -51,7 +51,7 @@ Toàn bộ trải nghiệm rạp chiếu phim được hợp nhất trên **1 m�
 - Chia 2 cột:
   - *Cột trái:*
     - Mục **"Gợi ý kênh Anime Bản Quyền Miễn Phí (Nhiều Movie Chiếu Rạp)"** với ô nhập `@handle` / URL kênh bất kỳ và nút **"Thêm nhanh"** 1 chạm cho 3 kênh chính hãng (**Muse Việt Nam** `@MuseVietNam`, **Ani-One Vietnam** `@AniOneVietnam`, **POPS Anime** `@POPSAnime`) để tự động phân giải Channel ID thật và đồng bộ video từ YouTube Data API v3.
-    - Danh sách kênh đồng bộ từ YouTube, nút tổng nổi bật **"Đồng bộ toàn bộ kho phim"** ngay trên header Drawer (tự động chạy tuần tự qua 100% kênh đang bật: kéo đủ YouTube Playlists → kéo hết `uploads` → nạp bù lượt xem & chấm độ hot kèm thanh tiến độ trực quan và tự làm mới dữ liệu), nút **"Đồng bộ kênh từ YouTube"** kèm bộ đếm cooldown 6 tiếng (`last_synced_at`) ở production và nút **"Chạy lại chuẩn hóa phân loại"**.
+    - Danh sách kênh đồng bộ từ YouTube, nút tổng nổi bật **"Đồng bộ toàn bộ kho phim"** ngay trên header Drawer, nhãn trạng thái **`Tự động đồng bộ mỗi 3 giờ`** kèm mốc **`Cập nhật lúc HH:mm`** và đồng hồ đếm ngược chu kỳ 3 tiếng tiếp theo, nút bấm tay **"Đồng bộ kênh từ YouTube"** luôn sẵn sàng để ép đồng bộ ngay lập tức và nút **"Chạy lại chuẩn hóa phân loại"**.
   - *Cột phải:* Danh sách kênh đang kích hoạt trên AniSub kèm cụm **2 nút Pill Multi-Tag** (`Phim AI`, `HH2D`, bắt buộc giữ tối thiểu 1 nhãn), nút **"Đồng bộ đủ video"** và nút **"Quét AI lại"** riêng cho từng kênh đa nhãn.
 
 ### 1.5. Hệ Thống Phản Hồi Tải Toàn Cục & Cài Đặt Ứng Dụng PWA (Standalone App)

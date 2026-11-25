@@ -19,3 +19,13 @@
 3. Thêm email của bạn vào bảng `allowed_emails`:
    ```sql
    INSERT INTO public.allowed_emails (email, note) VALUES ('email_cua_ban@gmail.com', 'Admin');
+   ```
+
+## 3. Cấu hình Tự động đồng bộ 24/7 mỗi 3 tiếng (GitHub Actions Cron + `/api/cron/auto-sync`)
+Vì gói Vercel Hobby chỉ hỗ trợ Vercel Cron 1 lần/ngày, AniSub sử dụng **GitHub Actions** (`.github/workflows/auto-sync.yml`) chạy lịch `0 */3 * * *` (8 lần/ngày) gọi thẳng tới `/api/cron/auto-sync`:
+1. Trên **Vercel → Project Settings → Environment Variables**, thêm biến:
+   - `CRON_SECRET`: chuỗi bí mật ngẫu nhiên (ví dụ 32 ký tự hex).
+2. Trên **GitHub Repository → Settings → Secrets and variables → Actions → New repository secret**, thêm 2 biến:
+   - `APP_URL`: URL production của dự án (ví dụ `https://anisub.vercel.app`).
+   - `CRON_SECRET`: giá trị khớp 100% với `CRON_SECRET` trên Vercel.
+3. Mở tab **Actions → AniSub 3-Hour Automated Sync → Run workflow** để chạy thử ngay bất cứ lúc nào.

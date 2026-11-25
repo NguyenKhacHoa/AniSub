@@ -80,7 +80,7 @@ AniSub là rạp chiếu phim riêng tư dành cho chủ sở hữu và nhóm b�
   - **Khóa tốc độ phát (`1x` – `2x`):** Chọn tốc độ ưa thích một lần, AniSub tự lưu và giữ nguyên tốc độ đó cho mọi tập kế tiếp khi **Auto-Next**.
   - **Floating Mini-Player:** Khi đang xem mà cuộn xuống tìm phim khác, khung video tự thu nhỏ nổi góc dưới bên phải và phát liên tục không bị gián đoạn.
   - **Điều khiển Media hệ thống:** Hỗ trợ phím Play/Pause/Next/Prev trên bàn phím và màn hình khóa điện thoại qua Web Media Session API.
-- **Cập nhật tập mới tự động:** Mỗi khi mở web sau $\ge 60$ phút, AniSub âm thầm quét tập mới từ các kênh bạn bật và báo nhẹ bằng Toast. Bạn cũng có thể bấm nút **"Cập nhật tập mới"** trên thanh Command Hub bất cứ lúc nào.
+- **Tự động đồng bộ 24/7 mỗi 3 tiếng (3-Hour Automated Sync Pipeline):** GitHub Actions (`.github/workflows/auto-sync.yml`, lịch `0 */3 * * *`) tự động gọi `/api/cron/auto-sync` (xác thực `CRON_SECRET`, chạy bằng Supabase Service Role không phụ thuộc trình duyệt) để kéo tập mới, đồng bộ YouTube Playlists, cập nhật lượt xem/`🔥 Phim Hot` và quét Phim Chiếu Rạp mỗi 3 tiếng/lần. Trên giao diện cũng hiển thị đồng hồ đếm ngược 3 giờ kèm nút **"Cập nhật tập mới"** / **"Đồng bộ toàn bộ kho phim"** để ép đồng bộ ngay bất cứ lúc nào.
 
 ## 5. Khám Phá YouTube — Săn kênh mới đúng gu cá nhân
 

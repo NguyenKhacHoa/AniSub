@@ -41,9 +41,9 @@ import {
 import type { UserSeriesStatus } from '@/types/database';
 
 const DELTA_SYNC_STORAGE_KEY = 'anisub_last_delta_sync_at';
-const DELTA_SYNC_INTERVAL_MS = 60 * 60 * 1000; // 60 phút
+const DELTA_SYNC_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3 giờ
 const CINEMA_DISCOVER_STORAGE_KEY = 'anisub_last_cinema_discover_at';
-const CINEMA_DISCOVER_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12 giờ
+const CINEMA_DISCOVER_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3 giờ
 
 export interface InitialWorkspaceUser {
   id: string;
@@ -971,6 +971,8 @@ export function UnifiedCinemaWorkspace({
     try {
       const res = await fetch('/api/youtube/sync-channels', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
       });
 
       const payload = (await res.json().catch(() => ({}))) as {

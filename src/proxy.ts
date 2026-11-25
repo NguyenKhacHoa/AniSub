@@ -25,9 +25,10 @@ function isPublicOrBypassPath(pathname: string): boolean {
 export async function proxy(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl;
 
-  // Tuyệt đối không chạy getUser() hay can thiệp cookie trên luồng PKCE /auth/callback và các tài nguyên PWA công khai
+  // Tuyệt đối không chạy getUser() hay can thiệp cookie trên luồng PKCE /auth/callback, /api/cron và các tài nguyên PWA công khai
   if (
     pathname.startsWith('/auth/callback') ||
+    pathname.startsWith('/api/cron') ||
     pathname === '/manifest.webmanifest' ||
     pathname === '/sw.js' ||
     pathname.startsWith('/icons/') ||

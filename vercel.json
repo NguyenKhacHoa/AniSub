@@ -1,8 +1,1 @@
-{
-  "crons": [
-    {
-      "path": "/api/cinema/discover",
-      "schedule": "0 2 * * *"
-    }
-  ]
-}
+{}

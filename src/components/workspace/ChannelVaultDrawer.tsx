@@ -108,7 +108,7 @@ const DEFAULT_CATEGORY_LABELS: Record<ChannelDefaultCategory, string> = {
   PHIM_AI: 'Khóa Phim AI',
 };
 
-const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
 
 export function ChannelVaultDrawer({
   open,
@@ -160,14 +160,23 @@ export function ChannelVaultDrawer({
     return () => window.removeEventListener('keydown', handleEsc);
   }, [open, onClose]);
 
-  const isDev = process.env.NODE_ENV === 'development';
-
-  const cooldownSeconds = useMemo(() => {
-    if (isDev || !lastSyncedAt) return 0;
-    const elapsed = nowMs - new Date(lastSyncedAt).getTime();
-    const remaining = SIX_HOURS_MS - elapsed;
+  const nextCycleSeconds = useMemo(() => {
+    if (!lastSyncedAt) return 0;
+    const syncedMs = new Date(lastSyncedAt).getTime();
+    if (!Number.isFinite(syncedMs) || syncedMs <= 0) return 0;
+    const elapsed = nowMs - syncedMs;
+    const remaining = THREE_HOURS_MS - elapsed;
     return remaining > 0 ? Math.ceil(remaining / 1000) : 0;
-  }, [isDev, lastSyncedAt, nowMs]);
+  }, [lastSyncedAt, nowMs]);
+
+  const lastSyncedTimeLabel = useMemo(() => {
+    if (!lastSyncedAt) return null;
+    const dt = new Date(lastSyncedAt);
+    if (Number.isNaN(dt.getTime())) return null;
+    const hh = dt.getHours().toString().padStart(2, '0');
+    const mm = dt.getMinutes().toString().padStart(2, '0');
+    return `${hh}:${mm}`;
+  }, [lastSyncedAt]);
 
   const formatCooldown = (totalSec: number) => {
     const h = Math.floor(totalSec / 3600)
@@ -287,27 +296,35 @@ export function ChannelVaultDrawer({
                 </Button>
               )}
 
-              {cooldownSeconds > 0 ? (
-                <div className="inline-flex h-10 items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3.5 text-xs font-medium tabular-nums text-[var(--text-secondary)]">
-                  <Clock className="size-4 text-amber-400" />
-                  <span>Đồng bộ lại sau {formatCooldown(cooldownSeconds)}</span>
-                </div>
-              ) : (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={onSyncFromYouTube}
-                  disabled={isSyncing || isSyncingAllLibrary}
-                  className="h-10 rounded-xl border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-4 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] cursor-pointer"
-                >
-                  <RefreshCw
-                    className={`mr-2 size-4 ${isSyncing ? 'animate-spin' : ''}`}
-                  />
-                  <span>
-                    {isSyncing ? 'Đang đồng bộ...' : 'Đồng bộ kênh từ YouTube'}
+              <div className="inline-flex h-10 items-center gap-2 rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-3 text-xs font-medium tabular-nums text-emerald-700 dark:text-emerald-300">
+                <Clock className="size-3.5 shrink-0 text-emerald-500" />
+                <span>Tự động đồng bộ mỗi 3 giờ</span>
+                {lastSyncedTimeLabel && (
+                  <span className="text-[var(--text-secondary)]">
+                    • Cập nhật lúc {lastSyncedTimeLabel}
                   </span>
-                </Button>
-              )}
+                )}
+                {nextCycleSeconds > 0 && (
+                  <span className="text-[var(--text-secondary)]">
+                    • Còn {formatCooldown(nextCycleSeconds)}
+                  </span>
+                )}
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onSyncFromYouTube}
+                disabled={isSyncing || isSyncingAllLibrary}
+                className="h-10 rounded-xl border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-4 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] cursor-pointer"
+              >
+                <RefreshCw
+                  className={`mr-2 size-4 ${isSyncing ? 'animate-spin' : ''}`}
+                />
+                <span>
+                  {isSyncing ? 'Đang đồng bộ...' : 'Đồng bộ kênh từ YouTube'}
+                </span>
+              </Button>
 
               <button
                 type="button"

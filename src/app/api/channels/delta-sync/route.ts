@@ -13,7 +13,7 @@ import {
 
 export const maxDuration = 30;
 
-const DELTA_SYNC_COOLDOWN_MS = 60 * 60 * 1000; // 60 phút
+const DELTA_SYNC_COOLDOWN_MS = 3 * 60 * 60 * 1000; // 3 giờ
 const DELTA_MAX_RESULTS = 10;
 const CONCURRENCY_LIMIT = 3;
 

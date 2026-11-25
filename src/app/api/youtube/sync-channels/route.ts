@@ -8,19 +8,27 @@ import {
 } from '@/lib/youtube/api';
 import { loadWorkspaceDataForUser } from '@/lib/workspace/loader';
 
-const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
 
-export async function POST() {
+export async function POST(request: Request) {
   const auth = await verifyWhitelistedUser();
   if (!auth.allowed || !auth.userId || !auth.email) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
+  let force = false;
+  try {
+    const body = (await request.json()) as { force?: boolean };
+    force = body?.force === true;
+  } catch {
+    force = false;
+  }
+
   const supabase = await createClient();
   const admin = createAdminClient();
 
-  // Kiểm tra giới hạn cooldown 6 tiếng ở môi trường production
-  if (process.env.NODE_ENV !== 'development') {
+  // Kiểm tra giới hạn cooldown 3 tiếng ở môi trường production (cho phép bỏ qua nếu user ép đồng bộ tay)
+  if (!force && process.env.NODE_ENV !== 'development') {
     const { data: profile } = await admin
       .from('profiles')
       .select('last_synced_at')
@@ -29,12 +37,12 @@ export async function POST() {
 
     if (profile?.last_synced_at) {
       const elapsed = Date.now() - new Date(profile.last_synced_at).getTime();
-      if (elapsed < SIX_HOURS_MS) {
-        const remainingMinutes = Math.ceil((SIX_HOURS_MS - elapsed) / 60000);
+      if (elapsed < THREE_HOURS_MS) {
+        const remainingMinutes = Math.ceil((THREE_HOURS_MS - elapsed) / 60000);
         return NextResponse.json(
           {
             code: 'COOLDOWN_ACTIVE',
-            error: `Bạn vừa đồng bộ gần đây. Vui lòng thử lại sau khoảng ${remainingMinutes} phút để tiết kiệm YouTube Quota.`,
+            error: `Hệ thống tự động đồng bộ mỗi 3 giờ. Vui lòng thử lại sau khoảng ${remainingMinutes} phút để tiết kiệm YouTube Quota.`,
           },
           { status: 429 },
         );

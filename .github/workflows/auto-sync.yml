@@ -1,0 +1,35 @@
+name: AniSub 3-Hour Automated Sync
+
+on:
+  schedule:
+    # Tự động chạy mỗi 3 tiếng một lần (00:00, 03:00, 06:00, 09:00, 12:00, 15:00, 18:00, 21:00 UTC)
+    - cron: '0 */3 * * *'
+  # Cho phép bấm chạy thủ công ngay trên tab Actions của GitHub để kiểm tra
+  workflow_dispatch:
+
+jobs:
+  auto-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger AniSub /api/cron/auto-sync
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$APP_URL" ]; then
+            echo "ERROR: Thiếu GitHub Secret APP_URL (ví dụ: https://anisub.vercel.app)"
+            exit 1
+          fi
+          if [ -z "$CRON_SECRET" ]; then
+            echo "ERROR: Thiếu GitHub Secret CRON_SECRET khớp với biến trên Vercel"
+            exit 1
+          fi
+
+          TARGET_URL="${APP_URL%/}/api/cron/auto-sync"
+          echo "Calling $TARGET_URL ..."
+          RESPONSE=$(curl -sS -f --retry 3 --retry-delay 5 --retry-all-errors --max-time 60 \
+            -X GET "$TARGET_URL" \
+            -H "Authorization: Bearer $CRON_SECRET")
+          echo "Auto-sync response:"
+          echo "$RESPONSE"
