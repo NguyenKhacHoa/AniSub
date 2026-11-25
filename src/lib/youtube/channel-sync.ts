@@ -226,6 +226,8 @@ function stripExtendedSyncColumns(item: VideoInsertRow): Record<string, unknown>
   delete copy.comment_count;
   delete copy.hot_badge;
   delete copy.hot_score;
+  delete copy.is_upcoming;
+  delete copy.scheduled_start_at;
   return copy;
 }
 
@@ -465,6 +467,8 @@ async function persistAndClassifyFetchedVideos(options: {
         comment_count: v.comment_count,
         hot_badge: hot?.hot_badge ?? null,
         hot_score: hot?.hot_score ?? 0,
+        is_upcoming: v.is_upcoming === true,
+        scheduled_start_at: v.scheduled_start_at ?? null,
         ...(isFromPlaylist
           ? {
               youtube_playlist_id: v.youtube_playlist_id,
@@ -578,6 +582,8 @@ async function persistAndClassifyFetchedVideos(options: {
           comment_count: v.comment_count,
           hot_badge: hot?.hot_badge ?? null,
           hot_score: hot?.hot_score ?? 0,
+          is_upcoming: v.is_upcoming === true,
+          scheduled_start_at: v.scheduled_start_at ?? null,
         };
       });
       await upsertVideosChunked(admin, insertPayload);
@@ -817,6 +823,8 @@ async function persistAndClassifyFetchedVideos(options: {
       comment_count: v.comment_count,
       hot_badge: hot?.hot_badge ?? null,
       hot_score: hot?.hot_score ?? 0,
+      is_upcoming: v.is_upcoming === true,
+      scheduled_start_at: v.scheduled_start_at ?? null,
       ...(inheritedManualIds.has(v.video_id) ? { is_manual_tag: true } : {}),
     };
   });

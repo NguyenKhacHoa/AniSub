@@ -127,6 +127,8 @@ export type VideoRow = {
   comment_count?: number | null;
   hot_badge?: HotBadge;
   hot_score?: number | null;
+  is_upcoming?: boolean | null;
+  scheduled_start_at?: string | null;
   created_at: string;
 };
 
@@ -275,6 +277,8 @@ export type Database = {
           comment_count?: number | null;
           hot_badge?: HotBadge;
           hot_score?: number | null;
+          is_upcoming?: boolean | null;
+          scheduled_start_at?: string | null;
           created_at?: string;
         };
         Update: {
@@ -305,6 +309,8 @@ export type Database = {
           comment_count?: number | null;
           hot_badge?: HotBadge;
           hot_score?: number | null;
+          is_upcoming?: boolean | null;
+          scheduled_start_at?: string | null;
           created_at?: string;
         };
         Relationships: [

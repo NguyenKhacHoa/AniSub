@@ -26,12 +26,16 @@ export async function POST(request: Request) {
     channelId?: string;
     seriesKey?: string;
     status?: UserSeriesStatus | null;
+    introSeconds?: number | null;
+    outroSeconds?: number | null;
   };
   try {
     body = (await request.json()) as {
       channelId?: string;
       seriesKey?: string;
       status?: UserSeriesStatus | null;
+      introSeconds?: number | null;
+      outroSeconds?: number | null;
     };
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
@@ -40,6 +44,17 @@ export async function POST(request: Request) {
   const channelId = body.channelId?.trim();
   const seriesKey = body.seriesKey?.trim();
   const status = body.status ?? null;
+  const hasSkipUpdate =
+    typeof body.introSeconds === 'number' ||
+    typeof body.outroSeconds === 'number';
+  const safeIntro =
+    typeof body.introSeconds === 'number' && Number.isFinite(body.introSeconds)
+      ? Math.max(0, Math.min(600, Math.floor(body.introSeconds)))
+      : undefined;
+  const safeOutro =
+    typeof body.outroSeconds === 'number' && Number.isFinite(body.outroSeconds)
+      ? Math.max(0, Math.min(600, Math.floor(body.outroSeconds)))
+      : undefined;
 
   if (!channelId || !seriesKey) {
     return NextResponse.json(
@@ -56,6 +71,54 @@ export async function POST(request: Request) {
   }
 
   const admin = createAdminClient();
+
+  // Nếu chỉ lưu cài đặt Bỏ Intro / Outro mà không đổi status
+  if (hasSkipUpdate && body.status === undefined) {
+    const nowIso = new Date().toISOString();
+    const { data: existingRow } = await admin
+      .from('user_series_status')
+      .select('status')
+      .eq('user_id', auth.userId)
+      .eq('series_key', seriesKey)
+      .maybeSingle();
+
+    const targetStatus: UserSeriesStatus =
+      existingRow?.status && VALID_STATUSES.includes(existingRow.status as UserSeriesStatus)
+        ? (existingRow.status as UserSeriesStatus)
+        : 'following';
+
+    const { error } = await admin.from('user_series_status').upsert(
+      {
+        user_id: auth.userId,
+        channel_id: channelId,
+        series_key: seriesKey,
+        status: targetStatus,
+        ...(safeIntro !== undefined ? { intro_seconds: safeIntro } : {}),
+        ...(safeOutro !== undefined ? { outro_seconds: safeOutro } : {}),
+        updated_at: nowIso,
+      } as never,
+      { onConflict: 'user_id,series_key' },
+    );
+
+    if (error) {
+      // Nếu DB chưa thêm cột intro_seconds / outro_seconds thì vẫn trả ok (client đã lưu trên localStorage)
+      return NextResponse.json({
+        ok: true,
+        seriesKey,
+        introSeconds: safeIntro ?? 0,
+        outroSeconds: safeOutro ?? 0,
+        localOnly: true,
+      });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      seriesKey,
+      introSeconds: safeIntro ?? 0,
+      outroSeconds: safeOutro ?? 0,
+      updatedAt: nowIso,
+    });
+  }
 
   if (status === null) {
     const { error } = await admin

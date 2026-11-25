@@ -22,10 +22,17 @@ import {
   EyeOff,
   Bookmark,
   ArrowUpRight,
+  Pause,
+  PictureInPicture2,
+  ListOrdered,
+  Sparkles,
+  Zap,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { AiCinemaInsightPanel } from '@/components/workspace/AiCinemaInsightPanel';
+import { TheaterQueuePanel } from '@/components/workspace/TheaterQueuePanel';
 import { useYouTubePlayer } from '@/hooks/useYouTubePlayer';
 import {
   GENRE_DOT_STYLES,
@@ -36,9 +43,51 @@ import {
 import type { CinemaInsightData } from '@/types/ai-insight';
 import type { SeriesGroup } from '@/lib/series-parser';
 import type { UserSeriesStatus } from '@/types/database';
+import type { TimestampHighlight, VideoChapter } from '@/lib/youtube/chapters';
 
 const PLAYBACK_RATE_STORAGE_KEY = 'anisub_playback_rate';
+const SERIES_SKIP_PREFS_KEY = 'anisub_series_skip_prefs';
 const PLAYBACK_RATES = [1, 1.25, 1.5, 1.75, 2] as const;
+
+interface SeriesSkipPref {
+  introSeconds: number;
+  outroSeconds: number;
+}
+
+function readSeriesSkipPref(seriesKey: string): SeriesSkipPref {
+  if (typeof window === 'undefined' || !seriesKey) {
+    return { introSeconds: 0, outroSeconds: 0 };
+  }
+  try {
+    const raw = window.localStorage.getItem(SERIES_SKIP_PREFS_KEY);
+    if (!raw) return { introSeconds: 0, outroSeconds: 0 };
+    const parsed = JSON.parse(raw) as Record<string, SeriesSkipPref>;
+    const entry = parsed[seriesKey];
+    if (entry && typeof entry === 'object') {
+      return {
+        introSeconds: Math.max(0, Math.min(600, Number(entry.introSeconds) || 0)),
+        outroSeconds: Math.max(0, Math.min(600, Number(entry.outroSeconds) || 0)),
+      };
+    }
+  } catch {
+    // Ignore storage error
+  }
+  return { introSeconds: 0, outroSeconds: 0 };
+}
+
+function writeSeriesSkipPref(seriesKey: string, pref: SeriesSkipPref): void {
+  if (typeof window === 'undefined' || !seriesKey) return;
+  try {
+    const raw = window.localStorage.getItem(SERIES_SKIP_PREFS_KEY);
+    const parsed = raw
+      ? (JSON.parse(raw) as Record<string, SeriesSkipPref>)
+      : {};
+    parsed[seriesKey] = pref;
+    window.localStorage.setItem(SERIES_SKIP_PREFS_KEY, JSON.stringify(parsed));
+  } catch {
+    // Ignore storage error
+  }
+}
 
 function readSavedPlaybackRate(): number {
   if (typeof window === 'undefined') return 1;
@@ -65,6 +114,14 @@ interface TheaterStageProps {
   ) => void;
   isWatchLater?: boolean;
   onToggleWatchLater?: (videoId: string) => void;
+  watchQueue?: CinemaVideoItem[];
+  onRemoveFromQueue?: (videoId: string) => void;
+  onMoveQueueItem?: (index: number, direction: 'up' | 'down') => void;
+  onClearQueue?: () => void;
+  onPlayFromQueue?: (video: CinemaVideoItem) => void;
+  isMinimized?: boolean;
+  onMinimize?: () => void;
+  onExpandFromMini?: () => void;
   onScrollToMainStage?: () => void;
   isChannelSubscribed?: boolean;
   isSubscribingChannel?: boolean;
@@ -87,6 +144,14 @@ export function TheaterStage({
   onUpdateSeriesStatus,
   isWatchLater = false,
   onToggleWatchLater,
+  watchQueue = [],
+  onRemoveFromQueue,
+  onMoveQueueItem,
+  onClearQueue,
+  onPlayFromQueue,
+  isMinimized = false,
+  onMinimize,
+  onExpandFromMini,
   onScrollToMainStage,
   isChannelSubscribed = true,
   isSubscribingChannel = false,
@@ -100,6 +165,72 @@ export function TheaterStage({
   const fullscreenContainerRef = useRef<HTMLDivElement>(null);
   const [isTheaterWide, setIsTheaterWide] = useState(false);
   const [isMiniPlayer, setIsMiniPlayer] = useState(false);
+  const [showQueuePanel, setShowQueuePanel] = useState(false);
+  const [showSkipSettings, setShowSkipSettings] = useState(false);
+
+  const skipPrefKey =
+    activeSeries?.seriesKey ||
+    video.youtube_playlist_id ||
+    `${video.channel_id}::default`;
+
+  const [skipPref, setSkipPref] = useState<SeriesSkipPref>(() =>
+    readSeriesSkipPref(skipPrefKey),
+  );
+  const [introInput, setIntroInput] = useState<string>(() =>
+    String(readSeriesSkipPref(skipPrefKey).introSeconds),
+  );
+  const [outroInput, setOutroInput] = useState<string>(() =>
+    String(readSeriesSkipPref(skipPrefKey).outroSeconds),
+  );
+  const autoSkippedIntroForRef = useRef<string | null>(null);
+  const autoSkippedOutroForRef = useRef<string | null>(null);
+
+  const [playerMeta, setPlayerMeta] = useState<{
+    videoId: string;
+    chapters: VideoChapter[];
+    timestampHighlights: TimestampHighlight[];
+  }>({
+    videoId: video.video_id,
+    chapters: [],
+    timestampHighlights: [],
+  });
+
+  const chapters =
+    playerMeta.videoId === video.video_id ? playerMeta.chapters : [];
+  const timestampHighlights =
+    playerMeta.videoId === video.video_id ? playerMeta.timestampHighlights : [];
+
+  // Tải Chapters (từ description) & Timestamp Highlights (bình luận gắn mốc giờ) theo từng video
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(
+      `/api/videos/player-meta?videoId=${encodeURIComponent(video.video_id)}`,
+      { signal: controller.signal, cache: 'no-store' },
+    )
+      .then((res) => (res.ok ? res.json() : null))
+      .then(
+        (
+          data: {
+            chapters?: VideoChapter[];
+            timestampHighlights?: TimestampHighlight[];
+          } | null,
+        ) => {
+          if (!data || controller.signal.aborted) return;
+          setPlayerMeta({
+            videoId: video.video_id,
+            chapters: Array.isArray(data.chapters) ? data.chapters : [],
+            timestampHighlights: Array.isArray(data.timestampHighlights)
+              ? data.timestampHighlights
+              : [],
+          });
+        },
+      )
+      .catch(() => {});
+
+    return () => controller.abort();
+  }, [video.video_id]);
+
+  const effectiveMiniPlayer = isMinimized || isMiniPlayer;
   const [insightState, setInsightState] = useState<{
     videoId: string;
     open: boolean;
@@ -152,8 +283,10 @@ export function TheaterStage({
     return [...activeSeries.episodes].reverse();
   }, [activeSeries, playlistSortOrder]);
 
-  // Tập tiếp theo trong Series (theo thứ tự tăng dần từ Tập 1 -> Tập cuối)
+  // Tập tiếp theo: Ưu tiên 1 là Hàng đợi phát (`watchQueue[0]`), sau đó tới tập tiếp theo trong Series, cuối cùng là nextVideo
+  const nextQueuedVideo = watchQueue.length > 0 ? watchQueue[0] : null;
   const effectiveNextVideo = useMemo(() => {
+    if (nextQueuedVideo) return nextQueuedVideo;
     if (activeSeries && activeSeries.episodes.length > 1) {
       const asc = [...activeSeries.episodes].reverse();
       const idx = asc.findIndex((ep) => ep.video.video_id === video.video_id);
@@ -163,7 +296,21 @@ export function TheaterStage({
       return null;
     }
     return nextVideo;
-  }, [activeSeries, video.video_id, nextVideo]);
+  }, [nextQueuedVideo, activeSeries, video.video_id, nextVideo]);
+
+  const handleAdvanceToNext = useCallback(() => {
+    if (nextQueuedVideo) {
+      if (onPlayFromQueue) {
+        onPlayFromQueue(nextQueuedVideo);
+      } else {
+        onSelectVideo(nextQueuedVideo);
+      }
+      return;
+    }
+    if (effectiveNextVideo) {
+      onSelectVideo(effectiveNextVideo);
+    }
+  }, [nextQueuedVideo, onPlayFromQueue, effectiveNextVideo, onSelectVideo]);
 
   // Tập trước đó trong Series (phục vụ Media Session previoustrack)
   const effectivePrevVideo = useMemo(() => {
@@ -179,9 +326,13 @@ export function TheaterStage({
 
   const handleVideoEnded = useCallback(() => {
     if (!effectiveNextVideo) return;
-    toast.info(`Đang tự động chuyển sang tập tiếp theo...`);
-    onSelectVideo(effectiveNextVideo);
-  }, [effectiveNextVideo, onSelectVideo]);
+    toast.info(
+      nextQueuedVideo
+        ? `Đang phát video tiếp theo trong Hàng đợi...`
+        : `Đang tự động chuyển sang tập tiếp theo...`,
+    );
+    handleAdvanceToNext();
+  }, [effectiveNextVideo, nextQueuedVideo, handleAdvanceToNext]);
 
   const {
     containerRef,
@@ -201,6 +352,85 @@ export function TheaterStage({
     onSaveProgress,
     onEnded: handleVideoEnded,
   });
+
+  // Tự động bỏ qua Intro khi bắt đầu phát tập mới nếu bộ phim đã lưu `introSeconds`
+  useEffect(() => {
+    if (
+      !isPlaying ||
+      skipPref.introSeconds <= 0 ||
+      autoSkippedIntroForRef.current === video.video_id
+    ) {
+      return;
+    }
+    if (video.progress_seconds < skipPref.introSeconds && currentTime < skipPref.introSeconds - 1) {
+      autoSkippedIntroForRef.current = video.video_id;
+      seekTo(skipPref.introSeconds);
+      toast.info(`⏩ Đã tự động bỏ qua Intro (${skipPref.introSeconds}s)`);
+    }
+  }, [
+    isPlaying,
+    skipPref.introSeconds,
+    video.video_id,
+    video.progress_seconds,
+    currentTime,
+    seekTo,
+  ]);
+
+  // Tự động chuyển tập trước Outro khi chạm mốc `duration - outroSeconds`
+  useEffect(() => {
+    if (
+      !isPlaying ||
+      skipPref.outroSeconds <= 0 ||
+      !effectiveNextVideo ||
+      autoSkippedOutroForRef.current === video.video_id
+    ) {
+      return;
+    }
+    const effectiveDur = duration > 0 ? duration : video.duration_seconds;
+    if (
+      effectiveDur > skipPref.outroSeconds + 30 &&
+      currentTime >= effectiveDur - skipPref.outroSeconds
+    ) {
+      autoSkippedOutroForRef.current = video.video_id;
+      toast.info(`⏭️ Bỏ qua Outro — chuyển sang tập tiếp theo...`);
+      handleAdvanceToNext();
+    }
+  }, [
+    isPlaying,
+    skipPref.outroSeconds,
+    effectiveNextVideo,
+    video.video_id,
+    video.duration_seconds,
+    duration,
+    currentTime,
+    handleAdvanceToNext,
+  ]);
+
+  const handleSaveSkipPrefs = useCallback(async () => {
+    const intro = Math.max(0, Math.min(600, Math.floor(Number(introInput) || 0)));
+    const outro = Math.max(0, Math.min(600, Math.floor(Number(outroInput) || 0)));
+    const nextPref = { introSeconds: intro, outroSeconds: outro };
+    setSkipPref(nextPref);
+    setIntroInput(String(intro));
+    setOutroInput(String(outro));
+    writeSeriesSkipPref(skipPrefKey, nextPref);
+    setShowSkipSettings(false);
+    toast.success(
+      `Đã lưu tự động bỏ qua: Intro ${intro}s • Outro ${outro}s cho bộ phim này`,
+    );
+
+    // Đồng bộ ngầm lên bảng user_series_status (không chặn UI)
+    void fetch('/api/series/status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        channelId: video.channel_id,
+        seriesKey: skipPrefKey,
+        introSeconds: intro,
+        outroSeconds: outro,
+      }),
+    }).catch(() => {});
+  }, [introInput, outroInput, skipPrefKey, video.channel_id]);
 
   // Tích hợp Web Media Session API (navigator.mediaSession) cho phím media & màn hình khóa
   useEffect(() => {
@@ -466,10 +696,20 @@ export function TheaterStage({
   return (
     <section
       aria-label="Sân khấu trình chiếu Theater Stage"
-      className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3.5 transition-all duration-300 sm:p-4"
+      className={
+        isMinimized
+          ? 'pointer-events-none h-0 overflow-visible border-0 bg-transparent p-0'
+          : 'rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3.5 transition-all duration-300 sm:p-4'
+      }
     >
       {/* Thanh điều khiển trên cùng của Theater Stage */}
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <div
+        className={
+          isMinimized
+            ? 'hidden'
+            : 'mb-3 flex flex-wrap items-center justify-between gap-2'
+        }
+      >
         <div className="flex items-center gap-2">
           {genreStyle && (
             <span
@@ -493,6 +733,33 @@ export function TheaterStage({
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
+          {/* Nút Hàng đợi (N) */}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              setShowQueuePanel((prev) => !prev);
+              if (!showQueuePanel) {
+                setInsightState((prev) => ({
+                  videoId: video.video_id,
+                  open: false,
+                  data: prev.videoId === video.video_id ? prev.data : null,
+                }));
+              }
+            }}
+            title="Mở / Đóng Hàng đợi phát tức thì"
+            className={`h-8 rounded-lg border px-2.5 text-xs font-medium cursor-pointer ${
+              showQueuePanel
+                ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                : watchQueue.length > 0
+                  ? 'border-emerald-500/45 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                  : 'border-[var(--border-subtle)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+            }`}
+          >
+            <ListOrdered className="mr-1.5 size-3.5" />
+            <span>Hàng đợi ({watchQueue.length})</span>
+          </Button>
+
           {onToggleWatchLater && (
             <Button
               type="button"
@@ -526,6 +793,19 @@ export function TheaterStage({
                     ? 'Đã lưu'
                     : 'Xem sau'}
               </span>
+            </Button>
+          )}
+
+          {onMinimize && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onMinimize}
+              title="Thu nhỏ xuống Trình phát nổi (Miniplayer) để lướt chọn phim khác"
+              className="h-8 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-2.5 text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+            >
+              <PictureInPicture2 className="mr-1.5 size-3.5" />
+              <span>Thu nhỏ</span>
             </Button>
           )}
 
@@ -583,9 +863,13 @@ export function TheaterStage({
           {/* Anchor cố định giữ chiều cao 16:9 trong layout flow để IntersectionObserver theo dõi */}
           <div
             ref={playerAnchorRef}
-            className="relative aspect-video w-full rounded-xl border border-[var(--border-subtle)] bg-black/80"
+            className={
+              isMinimized
+                ? 'relative h-0 w-0 overflow-visible'
+                : 'relative aspect-video w-full rounded-xl border border-[var(--border-subtle)] bg-black/80'
+            }
           >
-            {isMiniPlayer && (
+            {effectiveMiniPlayer && !isMinimized && (
               <div className="flex size-full flex-col items-center justify-center gap-2 p-4 text-center">
                 <p className="text-xs font-medium text-[var(--text-secondary)]">
                   Đang phát ở Trình phát thu nhỏ góc màn hình
@@ -604,45 +888,73 @@ export function TheaterStage({
               </div>
             )}
 
-            {/* Container cố định của YT.Player: chỉ chuyển đổi class CSS sang fixed khi cuộn qua Vùng A */}
+            {/* Container cố định của YT.Player: chỉ chuyển đổi class CSS sang fixed khi thu nhỏ hoặc cuộn qua Vùng A */}
             <div
               ref={fullscreenContainerRef}
               className={
-                isMiniPlayer
-                  ? 'fixed bottom-20 right-4 z-50 flex w-80 flex-col overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-2xl sm:w-96 md:bottom-4'
+                effectiveMiniPlayer
+                  ? 'pointer-events-auto fixed bottom-20 right-4 z-50 flex w-[340px] flex-col overflow-hidden rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-2xl sm:w-[360px] md:bottom-4'
                   : 'relative size-full overflow-hidden rounded-xl bg-black'
               }
             >
-              {isMiniPlayer && (
+              {effectiveMiniPlayer && (
                 <div className="flex items-center justify-between gap-2 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 py-1.5">
-                  <p className="min-w-0 flex-1 truncate text-xs font-semibold text-[var(--text-primary)]">
-                    {activeSeries
-                      ? `${activeSeries.seriesTitle}${video.episode_number !== null ? ` • Tập ${video.episode_number}` : ''}`
-                      : video.title}
-                  </p>
-                  <div className="flex shrink-0 items-center gap-1">
-                    {onScrollToMainStage && (
-                      <button
-                        type="button"
-                        onClick={onScrollToMainStage}
-                        title="Phóng to / Cuộn lên rạp chính"
-                        aria-label="Phóng to / Cuộn lên rạp chính"
-                        className="flex size-6 items-center justify-center rounded-md text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] cursor-pointer"
-                      >
-                        <Maximize2 className="size-3.5" />
-                      </button>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-semibold text-[var(--text-primary)]">
+                      {activeSeries
+                        ? `${activeSeries.seriesTitle}${video.episode_number !== null ? ` • Tập ${video.episode_number}` : ''}`
+                        : video.title}
+                    </p>
+                    {watchQueue.length > 0 && (
+                      <p className="truncate text-[10px] font-medium text-emerald-500">
+                        Hàng đợi: {watchQueue.length} video chờ
+                      </p>
                     )}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => (isPlaying ? pauseVideo() : playVideo())}
+                      title={isPlaying ? 'Tạm dừng' : 'Tiếp tục phát'}
+                      aria-label={isPlaying ? 'Tạm dừng' : 'Tiếp tục phát'}
+                      className="flex size-6 items-center justify-center rounded-md text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] cursor-pointer"
+                    >
+                      {isPlaying ? (
+                        <Pause className="size-3.5" />
+                      ) : (
+                        <Play className="size-3.5 fill-current" />
+                      )}
+                    </button>
                     {effectiveNextVideo && (
                       <button
                         type="button"
-                        onClick={() => onSelectVideo(effectiveNextVideo)}
-                        title="Tập tiếp theo"
-                        aria-label="Tập tiếp theo"
+                        onClick={handleAdvanceToNext}
+                        title={
+                          nextQueuedVideo
+                            ? 'Phát video kế tiếp trong Hàng đợi'
+                            : 'Tập tiếp theo'
+                        }
+                        aria-label="Video tiếp theo"
                         className="flex size-6 items-center justify-center rounded-md text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] cursor-pointer"
                       >
                         <SkipForward className="size-3.5" />
                       </button>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isMinimized && onExpandFromMini) {
+                          onExpandFromMini();
+                        } else {
+                          onScrollToMainStage?.();
+                        }
+                      }}
+                      title="Phóng to lại TheaterStage"
+                      aria-label="Phóng to lại TheaterStage"
+                      className="flex size-6 items-center justify-center rounded-md text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] cursor-pointer"
+                    >
+                      <Maximize2 className="size-3.5" />
+                    </button>
                     <button
                       type="button"
                       onClick={onClose}
@@ -658,7 +970,7 @@ export function TheaterStage({
 
               <div
                 className={
-                  isMiniPlayer
+                  effectiveMiniPlayer
                     ? 'relative aspect-video w-full bg-black'
                     : 'relative size-full bg-black'
                 }
@@ -668,71 +980,196 @@ export function TheaterStage({
             </div>
           </div>
 
-          {/* Thanh công cụ nhanh: Tua Bỏ Qua Intro (+30s / +60s / +90s) & Khóa Tốc Độ Phát */}
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 py-2">
-            {/* Cụm nút Tua nhanh bỏ Intro */}
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--text-secondary)]">
-                <FastForward className="size-3.5 text-[var(--accent-primary)]" />
-                <span className="hidden sm:inline">Tua nhanh:</span>
-              </span>
-              <button
-                type="button"
-                onClick={() => handleSkipIntro(30)}
-                className="inline-flex h-7 items-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 text-xs font-medium tabular-nums text-[var(--text-primary)] transition-colors hover:border-[var(--accent-primary)]/60 hover:bg-[var(--bg-elevated)] cursor-pointer"
-              >
-                +30s
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSkipIntro(60)}
-                title="Bỏ qua Intro +60 giây (Phím S)"
-                className="inline-flex h-7 items-center gap-1 rounded-lg border border-[var(--accent-primary)]/45 bg-[var(--accent-soft)] px-2.5 text-xs font-semibold tabular-nums text-[var(--accent-primary)] transition-opacity hover:opacity-90 cursor-pointer"
-              >
-                <span>+60s (Bỏ Intro)</span>
-                <kbd className="hidden rounded bg-black/20 px-1 font-mono text-[10px] sm:inline">
-                  S
-                </kbd>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSkipIntro(90)}
-                className="inline-flex h-7 items-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 text-xs font-medium tabular-nums text-[var(--text-primary)] transition-colors hover:border-[var(--accent-primary)]/60 hover:bg-[var(--bg-elevated)] cursor-pointer"
-              >
-                +90s
-              </button>
-            </div>
+          {/* Thanh công cụ nhanh: Tua Bỏ Qua Intro (+30s / +60s / +90s), Auto-Skip Intro/Outro & Khóa Tốc Độ Phát */}
+          <div
+            className={
+              isMinimized
+                ? 'hidden'
+                : 'flex flex-col gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-3 py-2'
+            }
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              {/* Cụm nút Tua nhanh bỏ Intro */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--text-secondary)]">
+                  <FastForward className="size-3.5 text-[var(--accent-primary)]" />
+                  <span className="hidden sm:inline">Tua nhanh:</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleSkipIntro(30)}
+                  className="inline-flex h-7 items-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 text-xs font-medium tabular-nums text-[var(--text-primary)] transition-colors hover:border-[var(--accent-primary)]/60 hover:bg-[var(--bg-elevated)] cursor-pointer"
+                >
+                  +30s
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSkipIntro(60)}
+                  title="Bỏ qua Intro +60 giây (Phím S)"
+                  className="inline-flex h-7 items-center gap-1 rounded-lg border border-[var(--accent-primary)]/45 bg-[var(--accent-soft)] px-2.5 text-xs font-semibold tabular-nums text-[var(--accent-primary)] transition-opacity hover:opacity-90 cursor-pointer"
+                >
+                  <span>+60s (Bỏ Intro)</span>
+                  <kbd className="hidden rounded bg-black/20 px-1 font-mono text-[10px] sm:inline">
+                    S
+                  </kbd>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSkipIntro(90)}
+                  className="inline-flex h-7 items-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 text-xs font-medium tabular-nums text-[var(--text-primary)] transition-colors hover:border-[var(--accent-primary)]/60 hover:bg-[var(--bg-elevated)] cursor-pointer"
+                >
+                  +90s
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowSkipSettings((prev) => !prev)}
+                  title="Cài đặt tự động bỏ qua Intro & chuyển tập trước Outro riêng cho bộ phim này"
+                  className={`inline-flex h-7 items-center gap-1 rounded-lg border px-2 text-[11px] font-medium transition-colors cursor-pointer ${
+                    skipPref.introSeconds > 0 || skipPref.outroSeconds > 0
+                      ? 'border-emerald-500/45 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                      : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                  }`}
+                >
+                  <SlidersHorizontal className="size-3 shrink-0" />
+                  <span>
+                    {skipPref.introSeconds > 0 || skipPref.outroSeconds > 0
+                      ? `Auto: ${skipPref.introSeconds}s / -${skipPref.outroSeconds}s`
+                      : 'Nhớ Intro/Outro'}
+                  </span>
+                </button>
+              </div>
 
-            {/* Cụm chọn & khóa Tốc độ phát */}
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--text-secondary)]">
-                <Gauge className="size-3.5 text-[var(--accent-primary)]" />
-                <span className="hidden sm:inline">Tốc độ:</span>
-              </span>
-              <div
-                role="group"
-                aria-label="Khóa tốc độ phát video"
-                className="inline-flex items-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-0.5"
-              >
-                {PLAYBACK_RATES.map((rate) => {
-                  const active = playbackRate === rate;
-                  return (
-                    <button
-                      key={rate}
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() => handleSelectPlaybackRate(rate)}
-                      className={`h-6 rounded-md px-2 text-[11px] font-semibold tabular-nums transition-colors cursor-pointer ${active
-                        ? 'bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
-                        : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                        }`}
-                    >
-                      {rate}x
-                    </button>
-                  );
-                })}
+              {/* Cụm chọn & khóa Tốc độ phát */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--text-secondary)]">
+                  <Gauge className="size-3.5 text-[var(--accent-primary)]" />
+                  <span className="hidden sm:inline">Tốc độ:</span>
+                </span>
+                <div
+                  role="group"
+                  aria-label="Khóa tốc độ phát video"
+                  className="inline-flex items-center rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-0.5"
+                >
+                  {PLAYBACK_RATES.map((rate) => {
+                    const active = playbackRate === rate;
+                    return (
+                      <button
+                        key={rate}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => handleSelectPlaybackRate(rate)}
+                        className={`h-6 rounded-md px-2 text-[11px] font-semibold tabular-nums transition-colors cursor-pointer ${active
+                          ? 'bg-[var(--accent-primary)] text-[var(--accent-foreground)]'
+                          : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                          }`}
+                      >
+                        {rate}x
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
+
+            {/* Khung cài đặt gọn Auto-Skip Intro/Outro theo bộ phim */}
+            {showSkipSettings && (
+              <div className="flex flex-wrap items-center gap-2 border-t border-[var(--border-subtle)] pt-2 text-xs">
+                <label className="inline-flex items-center gap-1.5 text-[var(--text-secondary)]">
+                  <span>Bỏ qua Intro (giây):</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={600}
+                    value={introInput}
+                    onChange={(e) => setIntroInput(e.target.value)}
+                    className="h-7 w-16 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 text-xs tabular-nums text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none"
+                  />
+                </label>
+                <label className="inline-flex items-center gap-1.5 text-[var(--text-secondary)]">
+                  <span>Chuyển tập trước Outro (giây):</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={600}
+                    value={outroInput}
+                    onChange={(e) => setOutroInput(e.target.value)}
+                    className="h-7 w-16 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 text-xs tabular-nums text-[var(--text-primary)] focus:border-[var(--accent-primary)] focus:outline-none"
+                  />
+                </label>
+                <Button
+                  type="button"
+                  onClick={() => void handleSaveSkipPrefs()}
+                  className="h-7 rounded-md bg-[var(--accent-primary)] px-3 text-xs font-semibold text-[var(--accent-foreground)] hover:opacity-90 cursor-pointer"
+                >
+                  Lưu mốc bộ này
+                </Button>
+              </div>
+            )}
+
+            {/* Dải Chapters tự động trích xuất từ mô tả video */}
+            {chapters.length >= 2 && (
+              <div className="flex flex-col gap-1.5 border-t border-[var(--border-subtle)] pt-2">
+                <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--text-secondary)]">
+                  <Sparkles className="size-3 text-[var(--accent-primary)]" />
+                  <span>Mục lục tập / Chapters ({chapters.length})</span>
+                </div>
+                <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+                  {chapters.map((ch, idx) => {
+                    const nextStart =
+                      idx + 1 < chapters.length
+                        ? chapters[idx + 1].startSeconds
+                        : Number.POSITIVE_INFINITY;
+                    const isCurrentChapter =
+                      currentTime >= ch.startSeconds && currentTime < nextStart;
+
+                    return (
+                      <button
+                        key={`${ch.startSeconds}-${ch.title}`}
+                        type="button"
+                        onClick={() => seekTo(ch.startSeconds)}
+                        title={`Nhảy tới ${ch.timeLabel} — ${ch.title}`}
+                        className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] transition-colors cursor-pointer ${
+                          isCurrentChapter
+                            ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] font-semibold text-[var(--accent-primary)]'
+                            : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:border-[var(--accent-primary)]/50 hover:text-[var(--text-primary)]'
+                        }`}
+                      >
+                        <span className="font-mono font-semibold tabular-nums text-[var(--accent-primary)]">
+                          {ch.timeLabel}
+                        </span>
+                        <span className="max-w-[160px] truncate">{ch.title}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Dải thẻ Highlight từ bình luận gắn mốc giờ cộng đồng */}
+            {timestampHighlights.length > 0 && (
+              <div className="flex flex-col gap-1.5 border-t border-[var(--border-subtle)] pt-2">
+                <div className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-500 dark:text-amber-300">
+                  <Zap className="size-3.5 shrink-0 fill-current" />
+                  <span>Cảnh đắt giá từ cộng đồng</span>
+                </div>
+                <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+                  {timestampHighlights.map((item) => (
+                    <button
+                      key={`${item.seconds}-${item.author}`}
+                      type="button"
+                      onClick={() => seekTo(item.seconds)}
+                      title={`${item.author}: ${item.quote}`}
+                      className="inline-flex max-w-[260px] shrink-0 items-center gap-1.5 rounded-lg border border-amber-500/35 bg-amber-500/10 px-2.5 py-1 text-left text-[11px] text-[var(--text-primary)] transition-colors hover:border-amber-400 hover:bg-amber-500/20 cursor-pointer"
+                    >
+                      <span className="shrink-0 font-mono font-bold tabular-nums text-amber-600 dark:text-amber-300">
+                        {item.timeLabel}
+                      </span>
+                      <span className="truncate">— &ldquo;{item.quote}&rdquo;</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Khi mở AI Insight ở cột phải: giữ Tiêu đề, Tiến độ & Nút hành động ngay dưới trình phát */}
@@ -822,8 +1259,37 @@ export function TheaterStage({
           )}
         </div>
 
-        {/* CỘT PHẢI (~33% trên Desktop, chiều cao khớp cột trái): AI Insight & Chat HOẶC Playlist Bộ phim HOẶC Thông tin video lẻ */}
-        {showAiInsight ? (
+        {/* CỘT PHẢI (~33% trên Desktop, chiều cao khớp cột trái): Hàng đợi / AI Insight & Chat / Playlist Bộ phim / Thông tin video lẻ */}
+        {isMinimized ? null : showQueuePanel ? (
+          <div
+            className={`${
+              isTheaterWide ? 'w-full' : 'lg:relative lg:col-span-4'
+            }`}
+          >
+            <div
+              className={`${
+                isTheaterWide
+                  ? 'h-[480px]'
+                  : 'h-[480px] lg:absolute lg:inset-0 lg:h-auto'
+              }`}
+            >
+              <TheaterQueuePanel
+                queue={watchQueue}
+                onPlayItem={(item) => {
+                  if (onPlayFromQueue) {
+                    onPlayFromQueue(item);
+                  } else {
+                    onSelectVideo(item);
+                  }
+                }}
+                onRemoveItem={(vid) => onRemoveFromQueue?.(vid)}
+                onMoveItem={(idx, dir) => onMoveQueueItem?.(idx, dir)}
+                onClearQueue={() => onClearQueue?.()}
+                onClosePanel={() => setShowQueuePanel(false)}
+              />
+            </div>
+          </div>
+        ) : showAiInsight ? (
           <div
             className={`${
               isTheaterWide ? 'w-full' : 'lg:relative lg:col-span-4'

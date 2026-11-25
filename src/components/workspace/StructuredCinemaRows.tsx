@@ -17,6 +17,7 @@ import {
   Bookmark,
   Flame,
   Star,
+  ListPlus,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { VideoThumbnail } from '@/components/workspace/VideoThumbnail';
@@ -56,10 +57,12 @@ interface StructuredCinemaRowsProps {
   onLoadMoreExplore?: () => void;
   selectedChannelIds?: Set<string>;
   watchLaterIds?: Set<string>;
+  queuedVideoIds?: Set<string>;
   subscribingChannelId?: string | null;
   onSelectVideo: (video: CinemaVideoItem) => void;
   onCycleVideoGenre?: (video: CinemaVideoItem, nextGenre: PrimaryGenreTag) => void;
   onToggleWatchLater?: (videoId: string) => void;
+  onAddToQueue?: (video: CinemaVideoItem) => void;
   onSubscribeChannel?: (channelId: string, channelTitle?: string) => void;
   onVideoUnavailable?: (videoId: string) => void;
   onOpenVault: () => void;
@@ -97,6 +100,7 @@ interface MovieCardProps {
   viewMode: WorkspaceViewMode;
   isPlaying: boolean;
   isWatchLater: boolean;
+  isQueued?: boolean;
   isChannelSubscribed: boolean;
   isSubscribing: boolean;
   onSelectVideo: (video: CinemaVideoItem) => void;
@@ -105,6 +109,7 @@ interface MovieCardProps {
     nextGenre: PrimaryGenreTag,
   ) => void;
   onToggleWatchLater?: (videoId: string) => void;
+  onAddToQueue?: (video: CinemaVideoItem) => void;
   onSubscribeChannel?: (channelId: string, channelTitle?: string) => void;
   onVideoUnavailable?: (videoId: string) => void;
 }
@@ -114,11 +119,13 @@ const MovieCard = React.memo(function MovieCard({
   viewMode,
   isPlaying,
   isWatchLater,
+  isQueued = false,
   isChannelSubscribed,
   isSubscribing,
   onSelectVideo,
   onCycleVideoGenre,
   onToggleWatchLater,
+  onAddToQueue,
   onSubscribeChannel,
   onVideoUnavailable,
 }: MovieCardProps) {
@@ -194,31 +201,68 @@ const MovieCard = React.memo(function MovieCard({
           </div>
         )}
 
-        {onToggleWatchLater && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleWatchLater(video.video_id);
-            }}
-            aria-label={
-              isWatchLater
-                ? 'Xóa khỏi danh sách Xem sau'
-                : 'Lưu vào danh sách Xem sau'
-            }
-            title={
-              isWatchLater ? 'Đã lưu Xem sau — Bấm để gỡ' : 'Lưu Xem sau'
-            }
-            className={`absolute right-2 top-2 flex size-7 items-center justify-center rounded-lg transition-all cursor-pointer ${
-              isWatchLater
-                ? 'bg-amber-500 text-black shadow-md opacity-100'
-                : 'bg-black/80 text-white/85 opacity-85 hover:bg-black/95 hover:text-white sm:opacity-0 sm:group-hover:opacity-100'
-            }`}
-          >
-            <Bookmark
-              className={`size-3.5 ${isWatchLater ? 'fill-current' : ''}`}
-            />
-          </button>
+        {(onToggleWatchLater || onAddToQueue) && (
+          <div className="absolute right-2 top-2 flex items-center gap-1">
+            {onAddToQueue && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAddToQueue(video);
+                }}
+                aria-label={
+                  isQueued
+                    ? 'Đã có trong Hàng đợi phát'
+                    : 'Thêm vào Hàng đợi phát'
+                }
+                title={
+                  isQueued
+                    ? 'Đã có trong Hàng đợi phát'
+                    : '+ Hàng đợi phát'
+                }
+                className={`inline-flex h-7 items-center gap-1 rounded-lg px-2 text-[11px] font-semibold transition-all cursor-pointer ${
+                  isQueued
+                    ? 'bg-emerald-600 text-white opacity-100 shadow-md'
+                    : 'bg-black/80 text-white/90 opacity-85 hover:bg-[var(--accent-primary)] hover:text-[var(--accent-foreground)] sm:opacity-0 sm:group-hover:opacity-100'
+                }`}
+              >
+                {isQueued ? (
+                  <Check className="size-3 shrink-0" />
+                ) : (
+                  <ListPlus className="size-3.5 shrink-0" />
+                )}
+                <span className="hidden sm:inline">
+                  {isQueued ? 'Đã thêm' : 'Hàng đợi'}
+                </span>
+              </button>
+            )}
+            {onToggleWatchLater && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleWatchLater(video.video_id);
+                }}
+                aria-label={
+                  isWatchLater
+                    ? 'Xóa khỏi danh sách Xem sau'
+                    : 'Lưu vào danh sách Xem sau'
+                }
+                title={
+                  isWatchLater ? 'Đã lưu Xem sau — Bấm để gỡ' : 'Lưu Xem sau'
+                }
+                className={`flex size-7 items-center justify-center rounded-lg transition-all cursor-pointer ${
+                  isWatchLater
+                    ? 'bg-amber-500 text-black shadow-md opacity-100'
+                    : 'bg-black/80 text-white/85 opacity-85 hover:bg-black/95 hover:text-white sm:opacity-0 sm:group-hover:opacity-100'
+                }`}
+              >
+                <Bookmark
+                  className={`size-3.5 ${isWatchLater ? 'fill-current' : ''}`}
+                />
+              </button>
+            )}
+          </div>
         )}
 
         <span className="absolute bottom-2 right-2 rounded bg-black/85 px-1.5 py-0.5 text-xs font-medium tabular-nums text-white">
@@ -361,10 +405,12 @@ export function StructuredCinemaRows({
   onLoadMoreExplore,
   selectedChannelIds,
   watchLaterIds,
+  queuedVideoIds,
   subscribingChannelId = null,
   onSelectVideo,
   onCycleVideoGenre,
   onToggleWatchLater,
+  onAddToQueue,
   onSubscribeChannel,
   onVideoUnavailable,
   onOpenVault,
@@ -810,6 +856,7 @@ export function StructuredCinemaRows({
                 viewMode={viewMode}
                 isPlaying={video.video_id === activeVideoId}
                 isWatchLater={Boolean(watchLaterIds?.has(video.video_id))}
+                isQueued={Boolean(queuedVideoIds?.has(video.video_id))}
                 isChannelSubscribed={Boolean(
                   selectedChannelIds?.has(video.channel_id),
                 )}
@@ -817,6 +864,7 @@ export function StructuredCinemaRows({
                 onSelectVideo={onSelectVideo}
                 onCycleVideoGenre={onCycleVideoGenre}
                 onToggleWatchLater={onToggleWatchLater}
+                onAddToQueue={onAddToQueue}
                 onSubscribeChannel={onSubscribeChannel}
                 onVideoUnavailable={onVideoUnavailable}
               />

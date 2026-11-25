@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { FloatingRail } from '@/components/workspace/FloatingRail';
 import { CommandHub } from '@/components/workspace/CommandHub';
 import { ContinueWatchingShelf } from '@/components/workspace/ContinueWatchingShelf';
+import { UpcomingPremieresShelf } from '@/components/workspace/UpcomingPremieresShelf';
 import { TheaterStage } from '@/components/workspace/TheaterStage';
 import { StructuredCinemaRows } from '@/components/workspace/StructuredCinemaRows';
 import { SeriesGrid } from '@/components/workspace/SeriesGrid';
@@ -279,8 +280,92 @@ export function UnifiedCinemaWorkspace({
 
   const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
   const [activeSeriesKey, setActiveSeriesKey] = useState<string | null>(null);
+  const [isPlayerMinimized, setIsPlayerMinimized] = useState(false);
+  const [watchQueue, setWatchQueue] = useState<CinemaVideoItem[]>([]);
   const [recommendedOrderIds, setRecommendedOrderIds] = useState<string[]>([]);
   const [isVaultOpen, setIsVaultOpen] = useState(false);
+
+  // Khôi phục Hàng đợi phát tức thì (`watchQueue`) từ sessionStorage
+  useEffect(() => {
+    const rafId = window.requestAnimationFrame(() => {
+      try {
+        const raw = window.sessionStorage.getItem('anisub_watch_queue');
+        if (raw) {
+          const parsed = JSON.parse(raw) as CinemaVideoItem[];
+          if (Array.isArray(parsed)) {
+            setWatchQueue(parsed.slice(0, 50));
+          }
+        }
+      } catch {
+        // Ignore storage error
+      }
+    });
+    return () => window.cancelAnimationFrame(rafId);
+  }, []);
+
+  const persistQueue = useCallback((nextQueue: CinemaVideoItem[]) => {
+    try {
+      window.sessionStorage.setItem(
+        'anisub_watch_queue',
+        JSON.stringify(nextQueue.slice(0, 50)),
+      );
+    } catch {
+      // Ignore storage error
+    }
+  }, []);
+
+  const queuedVideoIds = useMemo(
+    () => new Set(watchQueue.map((v) => v.video_id)),
+    [watchQueue],
+  );
+
+  const handleAddToQueue = useCallback(
+    (video: CinemaVideoItem) => {
+      setWatchQueue((prev) => {
+        if (prev.some((v) => v.video_id === video.video_id)) {
+          toast.info('Video đã có trong hàng đợi phát');
+          return prev;
+        }
+        const next = [...prev, video];
+        persistQueue(next);
+        toast.success('Đã thêm vào hàng đợi phát');
+        return next;
+      });
+    },
+    [persistQueue],
+  );
+
+  const handleRemoveFromQueue = useCallback(
+    (videoId: string) => {
+      setWatchQueue((prev) => {
+        const next = prev.filter((v) => v.video_id !== videoId);
+        persistQueue(next);
+        return next;
+      });
+    },
+    [persistQueue],
+  );
+
+  const handleMoveQueueItem = useCallback(
+    (index: number, direction: 'up' | 'down') => {
+      setWatchQueue((prev) => {
+        const target = direction === 'up' ? index - 1 : index + 1;
+        if (target < 0 || target >= prev.length) return prev;
+        const copy = [...prev];
+        const [moved] = copy.splice(index, 1);
+        copy.splice(target, 0, moved);
+        persistQueue(copy);
+        return copy;
+      });
+    },
+    [persistQueue],
+  );
+
+  const handleClearQueue = useCallback(() => {
+    setWatchQueue([]);
+    persistQueue([]);
+    toast.info('Đã xóa toàn bộ hàng đợi phát');
+  }, [persistQueue]);
   const [isWhitelistOpen, setIsWhitelistOpen] = useState(false);
   const [isSyncingAllLibrary, setIsSyncingAllLibrary] = useState(false);
   const [fullLibrarySyncProgress, setFullLibrarySyncProgress] = useState<{
@@ -619,6 +704,7 @@ export function UnifiedCinemaWorkspace({
   const handleSelectVideo = useCallback(
     (video: CinemaVideoItem) => {
       skipNextScrollRestoreRef.current = true;
+      setIsPlayerMinimized(false);
       setActiveVideoId(video.video_id);
       if (
         activeSeries &&
@@ -647,10 +733,40 @@ export function UnifiedCinemaWorkspace({
     [allVideos, selectedChannelIds, activeSeries, viewMode],
   );
 
+  // Phát 1 video từ Hàng đợi phát (`watchQueue`) đồng thời gỡ khỏi hàng đợi
+  const handlePlayFromQueue = useCallback(
+    (video: CinemaVideoItem) => {
+      handleRemoveFromQueue(video.video_id);
+      handleSelectVideo(video);
+    },
+    [handleRemoveFromQueue, handleSelectVideo],
+  );
+
+  // Danh sách tập sắp công chiếu (`is_upcoming = true`) thuộc các kênh đang bật
+  const upcomingPremiereVideos = useMemo(() => {
+    return allVideos
+      .filter(
+        (v) =>
+          v.is_upcoming === true &&
+          (selectedChannelIds.size === 0 ||
+            selectedChannelIds.has(v.channel_id)),
+      )
+      .sort((a, b) => {
+        const aMs = a.scheduled_start_at
+          ? new Date(a.scheduled_start_at).getTime()
+          : Number.POSITIVE_INFINITY;
+        const bMs = b.scheduled_start_at
+          ? new Date(b.scheduled_start_at).getTime()
+          : Number.POSITIVE_INFINITY;
+        return aMs - bMs;
+      });
+  }, [allVideos, selectedChannelIds]);
+
   // Chọn 1 Bộ phim (Series Card) -> mở sân khấu TheaterStage ở chế độ Playlist & phát tập phù hợp nhất
   const handleSelectSeries = useCallback(
     (series: SeriesGroup) => {
       skipNextScrollRestoreRef.current = true;
+      setIsPlayerMinimized(false);
       const targetVideo = series.recommendedEpisode.video;
       setActiveSeriesKey(series.seriesKey);
       setActiveVideoId(targetVideo.video_id);
@@ -854,13 +970,24 @@ export function UnifiedCinemaWorkspace({
   const handleChangeViewMode = useCallback(
     (mode: WorkspaceViewMode) => {
       saveCurrentTabScroll();
+      // Khi đang phát video và chuyển sang không gian khác (Khám phá / Phim Chiếu Rạp / Xem sau), tự động thu nhỏ thành Floating Miniplayer không ngắt phát
+      if (activeVideoId && mode !== viewMode) {
+        setIsPlayerMinimized(true);
+      }
       setViewMode(mode);
       setIsVaultOpen(false);
       if (mode === 'explore' && !hasLoadedExplore && !isLoadingExplore) {
         void loadExploreFeed(false);
       }
     },
-    [saveCurrentTabScroll, hasLoadedExplore, isLoadingExplore, loadExploreFeed],
+    [
+      saveCurrentTabScroll,
+      activeVideoId,
+      viewMode,
+      hasLoadedExplore,
+      isLoadingExplore,
+      loadExploreFeed,
+    ],
   );
 
   const handleChangeVideoType = useCallback(
@@ -2507,7 +2634,7 @@ export function UnifiedCinemaWorkspace({
         className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto pr-0.5"
       >
         <div ref={theaterStageRef}>
-          {activeVideo ? (
+          {activeVideo && (
             <TheaterStage
               key={activeVideo.video_id}
               video={activeVideo}
@@ -2521,6 +2648,17 @@ export function UnifiedCinemaWorkspace({
               onUpdateSeriesStatus={handleUpdateSeriesStatus}
               isWatchLater={watchLaterSet.has(activeVideo.video_id)}
               onToggleWatchLater={handleToggleWatchLater}
+              watchQueue={watchQueue}
+              onRemoveFromQueue={handleRemoveFromQueue}
+              onMoveQueueItem={handleMoveQueueItem}
+              onClearQueue={handleClearQueue}
+              onPlayFromQueue={handlePlayFromQueue}
+              isMinimized={isPlayerMinimized}
+              onMinimize={() => setIsPlayerMinimized(true)}
+              onExpandFromMini={() => {
+                setIsPlayerMinimized(false);
+                handleScrollToMainStage();
+              }}
               onScrollToMainStage={handleScrollToMainStage}
               isChannelSubscribed={selectedChannelIds.has(
                 activeVideo.channel_id,
@@ -2533,11 +2671,14 @@ export function UnifiedCinemaWorkspace({
               onSaveProgress={handleSaveWatchProgress}
               onSummaryGenerated={handleSummaryGenerated}
               onClose={() => {
+                setIsPlayerMinimized(false);
                 setActiveVideoId(null);
                 setActiveSeriesKey(null);
               }}
             />
-          ) : (
+          )}
+
+          {(!activeVideo || isPlayerMinimized) && (
             <CommandHub
               viewMode={viewMode}
               onChangeViewMode={handleChangeViewMode}
@@ -2584,8 +2725,19 @@ export function UnifiedCinemaWorkspace({
           )}
         </div>
 
+        {/* Lịch công chiếu sắp ra mắt (`Upcoming Premieres`) — chỉ hiển thị khi có ít nhất 1 video is_upcoming */}
+        {(!activeVideo || isPlayerMinimized) &&
+          authStatus === 'authenticated' &&
+          viewMode === 'cinema' &&
+          upcomingPremiereVideos.length > 0 && (
+            <UpcomingPremieresShelf
+              videos={upcomingPremiereVideos}
+              onSelectVideo={handleSelectVideo}
+            />
+          )}
+
         {/* Thanh "Xem Tiếp" (Continue Watching Shelf) ngay dưới Command Hub ở tab Tất cả & Tập mới */}
-        {!activeVideo &&
+        {(!activeVideo || isPlayerMinimized) &&
           authStatus === 'authenticated' &&
           viewMode === 'cinema' &&
           (videoType === 'all' || videoType === 'episode') &&
@@ -2608,6 +2760,8 @@ export function UnifiedCinemaWorkspace({
             seriesStatuses={seriesStatuses}
             sortBy={sortBy}
             shuffleSeed={shuffleSeed}
+            queuedVideoIds={queuedVideoIds}
+            onAddToQueue={handleAddToQueue}
             onSelectSeries={handleSelectSeries}
             onUpdateSeriesStatus={handleUpdateSeriesStatus}
             onVideoUnavailable={handleVideoUnavailable}
@@ -2631,6 +2785,8 @@ export function UnifiedCinemaWorkspace({
             onLoadMoreTheatrical={() => void runTheatricalDiscover(true, true, true)}
             selectedChannelIds={selectedChannelIds}
             watchLaterIds={watchLaterSet}
+            queuedVideoIds={queuedVideoIds}
+            onAddToQueue={handleAddToQueue}
             subscribingChannelId={subscribingChannelId}
             sectionHeading={
               viewMode === 'explore'

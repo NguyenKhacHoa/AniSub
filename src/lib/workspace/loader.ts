@@ -70,6 +70,8 @@ interface RawVideoRow {
   comment_count?: number | null;
   hot_badge?: HotBadge;
   hot_score?: number | null;
+  is_upcoming?: boolean | null;
+  scheduled_start_at?: string | null;
   created_at: string;
 }
 
@@ -100,6 +102,8 @@ const DESIRED_VIDEO_COLUMNS = [
   'comment_count',
   'hot_badge',
   'hot_score',
+  'is_upcoming',
+  'scheduled_start_at',
   'created_at',
 ] as const;
 
@@ -500,6 +504,8 @@ export async function loadWorkspaceDataForUser(
         hot_score: hasStoredHot
           ? storedScore
           : (fallbackHot?.hot_score ?? 0),
+        is_upcoming: v.is_upcoming === true,
+        scheduled_start_at: v.scheduled_start_at ?? null,
         detected_genre:
           v.detected_genre === 'Phim AI'
             ? 'Phim AI'

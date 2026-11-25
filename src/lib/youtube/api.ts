@@ -25,6 +25,8 @@ export interface YouTubeFetchedVideo {
   view_count: number;
   like_count: number;
   comment_count: number;
+  is_upcoming?: boolean;
+  scheduled_start_at?: string | null;
 }
 
 export interface YouTubePlaylistSummary {
@@ -105,6 +107,7 @@ interface YouTubeVideosResponse {
       description?: string;
       tags?: string[];
       publishedAt?: string;
+      liveBroadcastContent?: string;
       thumbnails?: {
         maxres?: { url?: string };
         standard?: { url?: string };
@@ -120,6 +123,11 @@ interface YouTubeVideosResponse {
       viewCount?: string;
       likeCount?: string;
       commentCount?: string;
+    };
+    liveStreamingDetails?: {
+      scheduledStartTime?: string;
+      actualStartTime?: string;
+      actualEndTime?: string;
     };
   }>;
   error?: {
@@ -361,7 +369,10 @@ export async function fetchVideoDetailsByIds(
   for (let i = 0; i < videoIds.length; i += 50) {
     const batchIds = videoIds.slice(i, i + 50);
     const videosUrl = new URL('https://www.googleapis.com/youtube/v3/videos');
-    videosUrl.searchParams.set('part', 'snippet,contentDetails,statistics');
+    videosUrl.searchParams.set(
+      'part',
+      'snippet,contentDetails,statistics,liveStreamingDetails',
+    );
     videosUrl.searchParams.set('id', batchIds.join(','));
     videosUrl.searchParams.set('key', apiKey);
 
@@ -418,6 +429,10 @@ export async function fetchVideoDetailsByIds(
       const viewCount = Number(item.statistics?.viewCount ?? 0);
       const likeCount = Number(item.statistics?.likeCount ?? 0);
       const commentCount = Number(item.statistics?.commentCount ?? 0);
+      const isUpcoming = item.snippet?.liveBroadcastContent === 'upcoming';
+      const scheduledStartAt = isUpcoming
+        ? (item.liveStreamingDetails?.scheduledStartTime ?? null)
+        : null;
 
       results.push({
         video_id: item.id,
@@ -429,11 +444,13 @@ export async function fetchVideoDetailsByIds(
         vision_thumbnail_url: visionThumbnailUrl,
         published_at: item.snippet?.publishedAt || new Date().toISOString(),
         duration_seconds: durationSeconds,
-        is_short,
+        is_short: isUpcoming ? false : is_short,
         video_type,
         view_count: Number.isFinite(viewCount) ? viewCount : 0,
         like_count: Number.isFinite(likeCount) ? likeCount : 0,
         comment_count: Number.isFinite(commentCount) ? commentCount : 0,
+        is_upcoming: isUpcoming,
+        scheduled_start_at: scheduledStartAt,
       });
     }
   }

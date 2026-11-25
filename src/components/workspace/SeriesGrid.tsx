@@ -11,6 +11,8 @@ import {
   Star,
   EyeOff,
   Eye,
+  ListPlus,
+  Check,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { VideoThumbnail } from '@/components/workspace/VideoThumbnail';
@@ -21,6 +23,7 @@ import {
   formatRelativeTimeVi,
   formatViewCountVi,
   normalizeHotBadge,
+  type CinemaVideoItem,
   type SortOption,
 } from '@/types/workspace';
 import { isTheatricalSeries, type SeriesGroup } from '@/lib/series-parser';
@@ -41,6 +44,8 @@ interface SeriesGridProps {
     nextStatus: UserSeriesStatus | null,
   ) => void;
   onVideoUnavailable?: (videoId: string) => void;
+  queuedVideoIds?: Set<string>;
+  onAddToQueue?: (video: CinemaVideoItem) => void;
   onOpenVault?: () => void;
 }
 
@@ -49,12 +54,14 @@ interface SeriesCardProps {
   isSelected: boolean;
   status: UserSeriesStatus | null;
   isHiddenView: boolean;
+  isQueued?: boolean;
   onSelectSeries: (series: SeriesGroup) => void;
   onUpdateSeriesStatus: (
     series: SeriesGroup,
     nextStatus: UserSeriesStatus | null,
   ) => void;
   onVideoUnavailable?: (videoId: string) => void;
+  onAddToQueue?: (video: CinemaVideoItem) => void;
 }
 
 const SeriesCard = React.memo(function SeriesCard({
@@ -62,9 +69,11 @@ const SeriesCard = React.memo(function SeriesCard({
   isSelected,
   status,
   isHiddenView,
+  isQueued = false,
   onSelectSeries,
   onUpdateSeriesStatus,
   onVideoUnavailable,
+  onAddToQueue,
 }: SeriesCardProps) {
   const genreStyle = GENRE_DOT_STYLES[series.detectedGenre];
   const isFollowing = status === 'following';
@@ -164,6 +173,39 @@ const SeriesCard = React.memo(function SeriesCard({
               </span>
             ) : null}
           </div>
+
+          {/* Nút + Hàng đợi góc trên phải (Optimistic UI 0ms) */}
+          {onAddToQueue && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddToQueue(series.recommendedEpisode.video);
+              }}
+              title={
+                isQueued
+                  ? 'Đã có trong Hàng đợi phát'
+                  : 'Thêm vào Hàng đợi phát'
+              }
+              aria-label={
+                isQueued
+                  ? 'Đã có trong Hàng đợi phát'
+                  : 'Thêm vào Hàng đợi phát'
+              }
+              className={`absolute right-2 top-2 inline-flex h-7 items-center gap-1 rounded-lg px-2 text-[11px] font-semibold shadow-sm transition-opacity cursor-pointer ${
+                isQueued
+                  ? 'bg-emerald-600 text-white opacity-100'
+                  : 'bg-black/85 text-white opacity-0 hover:bg-[var(--accent-primary)] hover:text-[var(--accent-foreground)] group-hover:opacity-100 focus:opacity-100'
+              }`}
+            >
+              {isQueued ? (
+                <Check className="size-3 shrink-0" />
+              ) : (
+                <ListPlus className="size-3.5 shrink-0" />
+              )}
+              <span>{isQueued ? 'Đã thêm' : '+ Hàng đợi'}</span>
+            </button>
+          )}
 
           {/* Badge góc phải: ≡ {totalEpisodes} tập */}
           <span className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-md bg-black/85 px-2 py-0.5 text-xs font-semibold tabular-nums text-white">
@@ -293,6 +335,8 @@ export function SeriesGrid({
   onSelectSeries,
   onUpdateSeriesStatus,
   onVideoUnavailable,
+  queuedVideoIds,
+  onAddToQueue,
   onOpenVault,
 }: SeriesGridProps) {
   const [showHiddenSection, setShowHiddenSection] = useState(false);
@@ -506,9 +550,13 @@ export function SeriesGrid({
                 isSelected={series.seriesKey === activeSeriesKey}
                 status={seriesStatuses[series.seriesKey] ?? null}
                 isHiddenView={false}
+                isQueued={Boolean(
+                  queuedVideoIds?.has(series.recommendedEpisode.video.video_id),
+                )}
                 onSelectSeries={onSelectSeries}
                 onUpdateSeriesStatus={onUpdateSeriesStatus}
                 onVideoUnavailable={onVideoUnavailable}
+                onAddToQueue={onAddToQueue}
               />
             ))}
           </div>

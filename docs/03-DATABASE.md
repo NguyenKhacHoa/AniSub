@@ -138,6 +138,8 @@ CREATE TABLE public.videos (
   comment_count BIGINT DEFAULT 0, -- Số lượng bình luận từ YouTube Data API
   hot_badge TEXT, -- Nhãn độ hot tự động: 'Phim Hot' | 'Đáng xem' | NULL
   hot_score NUMERIC DEFAULT 0, -- Điểm độ hot tính theo vận tốc lượt xem, baseline kênh, tương tác & điểm AI
+  is_upcoming BOOLEAN DEFAULT FALSE, -- TRUE khi video là buổi công chiếu sắp ra mắt (`liveBroadcastContent === 'upcoming'`)
+  scheduled_start_at TIMESTAMPTZ, -- Thời điểm bắt đầu công chiếu (`liveStreamingDetails.scheduledStartTime`)
   is_unavailable BOOLEAN DEFAULT FALSE, -- TRUE khi video gốc bị xóa/ẩn trên YouTube (thumbnail trả về 120x90)
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -156,6 +158,8 @@ CREATE TABLE public.videos (
 -- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS comment_count BIGINT DEFAULT 0;
 -- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS hot_badge TEXT;
 -- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS hot_score NUMERIC DEFAULT 0;
+-- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS is_upcoming BOOLEAN DEFAULT FALSE;
+-- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS scheduled_start_at TIMESTAMPTZ;
 -- ALTER TABLE public.videos ADD COLUMN IF NOT EXISTS is_unavailable BOOLEAN DEFAULT FALSE;
 
 CREATE INDEX idx_videos_channel_published ON public.videos(channel_id, published_at DESC);
@@ -228,10 +232,16 @@ CREATE TABLE IF NOT EXISTS public.user_series_status (
   channel_id TEXT NOT NULL REFERENCES public.channels(channel_id) ON DELETE CASCADE,
   series_key TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('following', 'completed', 'hidden')),
+  intro_seconds INTEGER DEFAULT 0, -- Mốc tự động bỏ qua Intro riêng theo bộ phim (giây)
+  outro_seconds INTEGER DEFAULT 0, -- Mốc tự động chuyển tập trước Outro riêng theo bộ phim (giây)
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(user_id, series_key)
 );
+
+-- Migration bổ sung cột Intro/Outro cho user_series_status:
+-- ALTER TABLE public.user_series_status ADD COLUMN IF NOT EXISTS intro_seconds INTEGER DEFAULT 0;
+-- ALTER TABLE public.user_series_status ADD COLUMN IF NOT EXISTS outro_seconds INTEGER DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_user_series_status_user ON public.user_series_status(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_user_series_status_lookup ON public.user_series_status(user_id, series_key);

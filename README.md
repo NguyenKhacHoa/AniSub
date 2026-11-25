@@ -76,9 +76,11 @@ AniSub là rạp chiếu phim riêng tư dành cho chủ sở hữu và nhóm b�
 - **Trình phát `TheaterStage` 2 cột & AI Cinema Insight:**
   - **Bố cục 2 cột ngang hàng:** Cột trái giữ trình phát video cố định tầm nhìn; cột phải hiển thị **Bảng Phân Tích & Khung Chat AI** (hoặc **Danh Sách Tập Series Playlist**) với thanh cuộn độc lập.
   - **AI Cinema Insight & Trợ lý Hỏi Đáp:** Tự động đọc lời thoại/phụ đề thực tế bên trong video (`Transcript` kèm mốc `[MM:SS]` bấm để tua nhanh), quét 25 bình luận nhiều like nhất từ YouTube, chấm điểm thang **100** (kèm 4 chỉ số *Cốt truyện, Hình ảnh, Âm thanh, Nhịp độ*), tổng hợp *Điểm cộng / Điểm trừ cộng đồng*, và cho phép **Chat hỏi đáp trực tiếp với AI** theo ngữ cảnh tập phim (cache 7 ngày trên Supabase).
-  - **Tua bỏ Intro 1 chạm:** Các nút `+30s`, **`+60s (Bỏ Intro)`** (phím **`S`**), `+90s`.
+  - **Tua bỏ Intro 1 chạm & Tự động bỏ qua Intro/Outro theo bộ:** Các nút `+30s`, **`+60s (Bỏ Intro)`** (phím **`S`**), `+90s` kèm cài đặt **`Nhớ Intro/Outro`** theo từng bộ phim (tự động tua qua Intro đầu tập và chuyển tập trước Outro cuối tập).
+  - **Tự động đọc Chapters & Cảnh đắt giá từ cộng đồng (`⚡ Timestamp Highlights`):** Tự trích xuất mục lục Chapters từ mô tả video và tối đa 8 bình luận gắn mốc giờ nhiều like nhất — bấm 1 chạm để nhảy thẳng tới đoạn cao trào.
+  - **Hàng đợi phát tức thì (`+ Hàng đợi`) & Lịch công chiếu (`Upcoming Premieres`):** Thêm nhanh phim vào hàng đợi phát liên tục không cần mở, xem đếm ngược thời gian thực tới giờ công chiếu các tập sắp ra mắt.
   - **Khóa tốc độ phát (`1x` – `2x`):** Chọn tốc độ ưa thích một lần, AniSub tự lưu và giữ nguyên tốc độ đó cho mọi tập kế tiếp khi **Auto-Next**.
-  - **Floating Mini-Player:** Khi đang xem mà cuộn xuống tìm phim khác, khung video tự thu nhỏ nổi góc dưới bên phải và phát liên tục không bị gián đoạn.
+  - **Floating Miniplayer (`360x202px`):** Bấm nút **Thu nhỏ**, chuyển sang tab `Khám phá`/`Phim Chiếu Rạp`, hoặc cuộn xuống tìm phim khác — khung video tự thu nhỏ nổi góc dưới bên phải và phát liên tục không tải lại, kèm đầy đủ nút **Phát/Tạm dừng, Tiếp theo, Phóng to, Đóng**.
   - **Điều khiển Media hệ thống:** Hỗ trợ phím Play/Pause/Next/Prev trên bàn phím và màn hình khóa điện thoại qua Web Media Session API.
 - **Tự động đồng bộ 24/7 mỗi 3 tiếng (3-Hour Automated Sync Pipeline):** GitHub Actions (`.github/workflows/auto-sync.yml`, lịch `0 */3 * * *`) tự động gọi `/api/cron/auto-sync` (xác thực `CRON_SECRET`, chạy bằng Supabase Service Role không phụ thuộc trình duyệt) để kéo tập mới, đồng bộ YouTube Playlists, cập nhật lượt xem/`🔥 Phim Hot` và quét Phim Chiếu Rạp mỗi 3 tiếng/lần. Trên giao diện cũng hiển thị đồng hồ đếm ngược 3 giờ kèm nút **"Cập nhật tập mới"** / **"Đồng bộ toàn bộ kho phim"** để ép đồng bộ ngay bất cứ lúc nào.
 
