@@ -49,11 +49,28 @@ export type VideoTypeFilter = 'all' | 'episode' | 'full_movie';
 export type GenreFilter = 'all' | GenreTag;
 export type PrimaryGenreTag = GenreTag;
 export type SortOption =
+  | 'shuffle'
   | 'newest'
   | 'hot'
   | 'most_viewed'
   | 'longest'
   | 'title_asc';
+
+/**
+ * Tạo khóa xáo trộn xác định (pure & deterministic cho React 19) dựa trên `id` + `seed`
+ * để đảo ngẫu nhiên toàn bộ kho phim mỗi khi người dùng bấm logo AniSub.
+ */
+export function computeShuffleScore(id: string, seed: number): number {
+  let hash = (seed ^ 0x811c9dc5) >>> 0;
+  for (let i = 0; i < id.length; i += 1) {
+    hash ^= id.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x85ebca6b) >>> 0;
+  hash ^= hash >>> 13;
+  return hash >>> 0;
+}
 export type CinemaFormatFilter = 'all' | CinemaFormat;
 export type TheatricalCategoryFilter =
   | 'all'

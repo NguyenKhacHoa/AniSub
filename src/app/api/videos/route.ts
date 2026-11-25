@@ -85,12 +85,56 @@ interface RawVideoRow {
   created_at: string;
 }
 
-const VIDEOS_SELECT_STATS_FULL =
-  'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, is_manual_tag, is_theatrical_movie, theatrical_release_year, cinema_format, cinema_genres, is_unavailable, youtube_playlist_id, playlist_position, view_count, like_count, comment_count, hot_badge, hot_score, created_at';
-const VIDEOS_SELECT_CINEMA =
-  'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, is_manual_tag, is_theatrical_movie, theatrical_release_year, cinema_format, cinema_genres, is_unavailable, created_at';
-const VIDEOS_SELECT_BASIC =
-  'video_id, channel_id, title, description, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, ai_summary, created_at';
+const DESIRED_VIDEO_COLUMNS = [
+  'video_id',
+  'channel_id',
+  'title',
+  'description',
+  'thumbnail_url',
+  'published_at',
+  'duration_seconds',
+  'is_short',
+  'video_type',
+  'detected_genre',
+  'series_name',
+  'episode_number',
+  'ai_summary',
+  'is_manual_tag',
+  'is_theatrical_movie',
+  'theatrical_release_year',
+  'cinema_format',
+  'cinema_genres',
+  'is_unavailable',
+  'youtube_playlist_id',
+  'playlist_position',
+  'view_count',
+  'like_count',
+  'comment_count',
+  'hot_badge',
+  'hot_score',
+  'created_at',
+] as const;
+
+const missingApiVideoCols = new Set<string>();
+
+function extractMissingApiColumn(errorMessage?: string | null): string | null {
+  if (!errorMessage) return null;
+  const m1 = errorMessage.match(
+    /column\s+(?:[a-zA-Z0-9_]+\.)?([a-zA-Z0-9_]+)\s+does\s+not\s+exist/i,
+  );
+  if (m1?.[1]) return m1[1];
+  const m2 = errorMessage.match(
+    /Could not find the\s+['"]([a-zA-Z0-9_]+)['"]\s+column/i,
+  );
+  if (m2?.[1]) return m2[1];
+  return null;
+}
+
+function buildApiVideoSelect(): string {
+  return DESIRED_VIDEO_COLUMNS.filter(
+    (col) => !missingApiVideoCols.has(col),
+  ).join(', ');
+}
 
 /**
  * GET /api/videos — Trả về 100% toàn bộ video không phải Shorts khớp ngữ cảnh
@@ -208,63 +252,60 @@ export async function GET(request: Request) {
 
   const fetchedVideos: RawVideoRow[] = [];
   let from = 0;
-  let selectTier: 'stats_full' | 'cinema' | 'basic' = 'stats_full';
 
   while (true) {
     const to = from + DB_FETCH_BATCH_SIZE - 1;
-    const columns =
-      selectTier === 'stats_full'
-        ? VIDEOS_SELECT_STATS_FULL
-        : selectTier === 'cinema'
-          ? VIDEOS_SELECT_CINEMA
-          : VIDEOS_SELECT_BASIC;
+    let batchData: RawVideoRow[] | null = null;
 
-    let qBuilder = admin
-      .from('videos')
-      .select(columns)
-      .in('channel_id', eligibleChannelIds)
-      .eq('is_short', false);
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      let qBuilder = admin
+        .from('videos')
+        .select(buildApiVideoSelect())
+        .in('channel_id', eligibleChannelIds)
+        .eq('is_short', false);
 
-    if (genre !== 'all') {
-      qBuilder = qBuilder.eq('detected_genre', genre);
-    }
-
-    if (!showTrailers) {
-      qBuilder = qBuilder.neq('video_type', 'trailer');
-    }
-
-    if (tab === 'episode') {
-      qBuilder = qBuilder.eq('video_type', 'episode');
-    } else if (tab === 'full_movie') {
-      qBuilder = qBuilder.eq('video_type', 'full_movie');
-    } else if (tab === 'continue' && continueVideoIds) {
-      qBuilder = qBuilder.in('video_id', continueVideoIds);
-    }
-
-    if (safeQ) {
-      const orParts = [
-        `title.ilike.%${safeQ}%`,
-        `series_name.ilike.%${safeQ}%`,
-      ];
-      if (matchingChannelIdsByName.length > 0) {
-        orParts.push(`channel_id.in.(${matchingChannelIdsByName.join(',')})`);
+      if (genre !== 'all') {
+        qBuilder = qBuilder.eq('detected_genre', genre);
       }
-      qBuilder = qBuilder.or(orParts.join(','));
-    }
 
-    const res = await qBuilder
-      .order('published_at', { ascending: false })
-      .range(from, to);
+      if (!showTrailers) {
+        qBuilder = qBuilder.neq('video_type', 'trailer');
+      }
 
-    if (res.error) {
-      if (selectTier === 'stats_full') {
-        selectTier = 'cinema';
+      if (tab === 'episode') {
+        qBuilder = qBuilder.eq('video_type', 'episode');
+      } else if (tab === 'full_movie') {
+        qBuilder = qBuilder.eq('video_type', 'full_movie');
+      } else if (tab === 'continue' && continueVideoIds) {
+        qBuilder = qBuilder.in('video_id', continueVideoIds);
+      }
+
+      if (safeQ) {
+        const orParts = [
+          `title.ilike.%${safeQ}%`,
+          `series_name.ilike.%${safeQ}%`,
+        ];
+        if (matchingChannelIdsByName.length > 0) {
+          orParts.push(`channel_id.in.(${matchingChannelIdsByName.join(',')})`);
+        }
+        qBuilder = qBuilder.or(orParts.join(','));
+      }
+
+      const res = await qBuilder
+        .order('published_at', { ascending: false })
+        .range(from, to);
+
+      if (!res.error) {
+        batchData = (res.data ?? []) as unknown as RawVideoRow[];
+        break;
+      }
+
+      const missingCol = extractMissingApiColumn(res.error.message);
+      if (missingCol && !missingApiVideoCols.has(missingCol)) {
+        missingApiVideoCols.add(missingCol);
         continue;
       }
-      if (selectTier === 'cinema') {
-        selectTier = 'basic';
-        continue;
-      }
+
       console.error('[GET /api/videos] Lỗi truy vấn videos:', res.error);
       return NextResponse.json(
         { error: 'Không thể tải danh sách video.' },
@@ -272,9 +313,9 @@ export async function GET(request: Request) {
       );
     }
 
-    const batch = (res.data ?? []) as unknown as RawVideoRow[];
-    fetchedVideos.push(...batch);
-    if (batch.length < DB_FETCH_BATCH_SIZE) break;
+    if (!batchData) break;
+    fetchedVideos.push(...batchData);
+    if (batchData.length < DB_FETCH_BATCH_SIZE) break;
     from += DB_FETCH_BATCH_SIZE;
   }
 

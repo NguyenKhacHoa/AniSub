@@ -75,12 +75,51 @@ interface RawVideoRow {
 
 // Chỉ SELECT các cột nhẹ cần thiết cho lưới thẻ phim ngoài màn hình chính
 // (loại bỏ cột nặng như description, ai_summary, insight_data; chỉ tải chi tiết khi mở TheaterStage)
-const VIDEO_SELECT_FULL =
-  'video_id, channel_id, title, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, is_manual_tag, is_theatrical_movie, theatrical_release_year, cinema_format, cinema_genres, is_unavailable, youtube_playlist_id, playlist_position, view_count, like_count, comment_count, hot_badge, hot_score, created_at';
-const VIDEO_SELECT_THEATRICAL =
-  'video_id, channel_id, title, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, is_manual_tag, is_theatrical_movie, theatrical_release_year, created_at';
-const VIDEO_SELECT_BASIC =
-  'video_id, channel_id, title, thumbnail_url, published_at, duration_seconds, is_short, video_type, detected_genre, series_name, episode_number, created_at';
+const DESIRED_VIDEO_COLUMNS = [
+  'video_id',
+  'channel_id',
+  'title',
+  'thumbnail_url',
+  'published_at',
+  'duration_seconds',
+  'is_short',
+  'video_type',
+  'detected_genre',
+  'series_name',
+  'episode_number',
+  'is_manual_tag',
+  'is_theatrical_movie',
+  'theatrical_release_year',
+  'cinema_format',
+  'cinema_genres',
+  'is_unavailable',
+  'youtube_playlist_id',
+  'playlist_position',
+  'view_count',
+  'like_count',
+  'comment_count',
+  'hot_badge',
+  'hot_score',
+  'created_at',
+] as const;
+
+// Cache các cột chưa tồn tại trên DB thực tế để chỉ lược bỏ ĐÚNG cột thiếu (tuyệt đối không bỏ nhầm view_count / youtube_playlist_id / hot_badge)
+const missingVideoColumnsCache = new Set<string>();
+
+function extractMissingColumn(errorMessage?: string | null): string | null {
+  if (!errorMessage) return null;
+  const m1 = errorMessage.match(/column\s+(?:[a-zA-Z0-9_]+\.)?([a-zA-Z0-9_]+)\s+does\s+not\s+exist/i);
+  if (m1?.[1]) return m1[1];
+  const m2 = errorMessage.match(/Could not find the\s+['"]([a-zA-Z0-9_]+)['"]\s+column/i);
+  if (m2?.[1]) return m2[1];
+  return null;
+}
+
+function buildAvailableVideoSelect(): string {
+  return DESIRED_VIDEO_COLUMNS.filter(
+    (col) => !missingVideoColumnsCache.has(col),
+  ).join(', ');
+}
 
 /**
  * Tải KHÔNG GIỚI HẠN toàn bộ kho Phim Chiếu Rạp đã xác minh (`is_theatrical_movie = true` hoặc `[CHIẾU RẠP]`)
@@ -91,57 +130,45 @@ async function fetchGlobalTheatricalVideos(
 ): Promise<RawVideoRow[]> {
   const allRows: RawVideoRow[] = [];
   let from = 0;
-  let selectTier: 'full' | 'theatrical' | 'basic' = 'full';
 
   while (true) {
     const to = from + DB_FETCH_BATCH_SIZE - 1;
+    let batchData: RawVideoRow[] | null = null;
 
-    if (selectTier === 'full') {
-      const res = await admin
-        .from('videos')
-        .select(VIDEO_SELECT_FULL)
-        .or('is_theatrical_movie.eq.true,series_name.ilike.%[CHIẾU RẠP]%')
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const selectStr = buildAvailableVideoSelect();
+      const hasTheatricalCol = !missingVideoColumnsCache.has(
+        'is_theatrical_movie',
+      );
+
+      const baseQuery = admin.from('videos').select(selectStr);
+      const filteredQuery = hasTheatricalCol
+        ? baseQuery.or(
+            'is_theatrical_movie.eq.true,series_name.ilike.%[CHIẾU RẠP]%',
+          )
+        : baseQuery.ilike('series_name', '%[CHIẾU RẠP]%');
+
+      const res = await filteredQuery
         .order('published_at', { ascending: false })
         .range(from, to);
 
-      if (res.error) {
-        selectTier = 'theatrical';
+      if (!res.error) {
+        batchData = (res.data ?? []) as unknown as RawVideoRow[];
+        break;
+      }
+
+      const missingCol = extractMissingColumn(res.error.message);
+      if (missingCol && !missingVideoColumnsCache.has(missingCol)) {
+        missingVideoColumnsCache.add(missingCol);
         continue;
       }
-      const batch = (res.data ?? []) as RawVideoRow[];
-      allRows.push(...batch);
-      if (batch.length < DB_FETCH_BATCH_SIZE) break;
-      from += DB_FETCH_BATCH_SIZE;
-    } else if (selectTier === 'theatrical') {
-      const res = await admin
-        .from('videos')
-        .select(VIDEO_SELECT_THEATRICAL)
-        .or('is_theatrical_movie.eq.true,series_name.ilike.%[CHIẾU RẠP]%')
-        .order('published_at', { ascending: false })
-        .range(from, to);
-
-      if (res.error) {
-        selectTier = 'basic';
-        continue;
-      }
-      const batch = (res.data ?? []) as RawVideoRow[];
-      allRows.push(...batch);
-      if (batch.length < DB_FETCH_BATCH_SIZE) break;
-      from += DB_FETCH_BATCH_SIZE;
-    } else {
-      const res = await admin
-        .from('videos')
-        .select(VIDEO_SELECT_BASIC)
-        .ilike('series_name', '%[CHIẾU RẠP]%')
-        .order('published_at', { ascending: false })
-        .range(from, to);
-
-      if (res.error) break;
-      const batch = (res.data ?? []) as RawVideoRow[];
-      allRows.push(...batch);
-      if (batch.length < DB_FETCH_BATCH_SIZE) break;
-      from += DB_FETCH_BATCH_SIZE;
+      break;
     }
+
+    if (!batchData) break;
+    allRows.push(...batchData);
+    if (batchData.length < DB_FETCH_BATCH_SIZE) break;
+    from += DB_FETCH_BATCH_SIZE;
   }
 
   return allRows;
@@ -160,75 +187,62 @@ async function fetchAllSelectedVideos(
   if (selectedChannelIds.length === 0) return { rows: [], hasMore: false };
   const allRows: RawVideoRow[] = [];
   let from = 0;
-  let selectTier: 'full' | 'theatrical' | 'basic' = 'full';
 
   if (typeof initialLimit === 'number' && initialLimit > 0) {
-    while (true) {
-      const selectStr =
-        selectTier === 'full'
-          ? VIDEO_SELECT_FULL
-          : selectTier === 'theatrical'
-            ? VIDEO_SELECT_THEATRICAL
-            : VIDEO_SELECT_BASIC;
-
+    for (let attempt = 0; attempt < 12; attempt += 1) {
       const res = await admin
         .from('videos')
-        .select(selectStr)
+        .select(buildAvailableVideoSelect())
         .in('channel_id', selectedChannelIds)
         .eq('is_short', false)
         .order('published_at', { ascending: false })
         .range(0, initialLimit - 1);
 
-      if (res.error) {
-        if (selectTier === 'full') {
-          selectTier = 'theatrical';
-          continue;
-        }
-        if (selectTier === 'theatrical') {
-          selectTier = 'basic';
-          continue;
-        }
-        return { rows: [], hasMore: false };
+      if (!res.error) {
+        const batch = (res.data ?? []) as unknown as RawVideoRow[];
+        return { rows: batch, hasMore: batch.length >= initialLimit };
       }
 
-      const batch = (res.data ?? []) as unknown as RawVideoRow[];
-      return { rows: batch, hasMore: batch.length >= initialLimit };
+      const missingCol = extractMissingColumn(res.error.message);
+      if (missingCol && !missingVideoColumnsCache.has(missingCol)) {
+        missingVideoColumnsCache.add(missingCol);
+        continue;
+      }
+      return { rows: [], hasMore: false };
     }
+    return { rows: [], hasMore: false };
   }
 
   while (true) {
     const to = from + DB_FETCH_BATCH_SIZE - 1;
-    const selectStr =
-      selectTier === 'full'
-        ? VIDEO_SELECT_FULL
-        : selectTier === 'theatrical'
-          ? VIDEO_SELECT_THEATRICAL
-          : VIDEO_SELECT_BASIC;
+    let batchData: RawVideoRow[] | null = null;
 
-    const res = await admin
-      .from('videos')
-      .select(selectStr)
-      .in('channel_id', selectedChannelIds)
-      .eq('is_short', false)
-      .order('published_at', { ascending: false })
-      .range(from, to);
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const res = await admin
+        .from('videos')
+        .select(buildAvailableVideoSelect())
+        .in('channel_id', selectedChannelIds)
+        .eq('is_short', false)
+        .order('published_at', { ascending: false })
+        .range(from, to);
 
-    if (res.error) {
-      if (selectTier === 'full') {
-        selectTier = 'theatrical';
-        continue;
+      if (!res.error) {
+        batchData = (res.data ?? []) as unknown as RawVideoRow[];
+        break;
       }
-      if (selectTier === 'theatrical') {
-        selectTier = 'basic';
+
+      const missingCol = extractMissingColumn(res.error.message);
+      if (missingCol && !missingVideoColumnsCache.has(missingCol)) {
+        missingVideoColumnsCache.add(missingCol);
         continue;
       }
       console.error('[WorkspaceLoader] Lỗi tải full catalog videos:', res.error);
       break;
     }
 
-    const batch = (res.data ?? []) as unknown as RawVideoRow[];
-    allRows.push(...batch);
-    if (batch.length < DB_FETCH_BATCH_SIZE) break;
+    if (!batchData) break;
+    allRows.push(...batchData);
+    if (batchData.length < DB_FETCH_BATCH_SIZE) break;
     from += DB_FETCH_BATCH_SIZE;
   }
 

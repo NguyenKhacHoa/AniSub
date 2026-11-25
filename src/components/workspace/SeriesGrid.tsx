@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { VideoThumbnail } from '@/components/workspace/VideoThumbnail';
 import {
   GENRE_DOT_STYLES,
+  computeShuffleScore,
   computeViewsPerHour,
   formatRelativeTimeVi,
   formatViewCountVi,
@@ -33,6 +34,7 @@ interface SeriesGridProps {
   totalEpisodesCount: number;
   seriesStatuses: Record<string, UserSeriesStatus>;
   sortBy?: SortOption;
+  shuffleSeed?: number;
   onSelectSeries: (series: SeriesGroup) => void;
   onUpdateSeriesStatus: (
     series: SeriesGroup,
@@ -287,6 +289,7 @@ export function SeriesGrid({
   totalEpisodesCount,
   seriesStatuses,
   sortBy = 'newest',
+  shuffleSeed = 1,
   onSelectSeries,
   onUpdateSeriesStatus,
   onVideoUnavailable,
@@ -310,7 +313,13 @@ export function SeriesGrid({
     }
 
     let targetVisible = visible;
-    if (sortBy === 'hot') {
+    if (sortBy === 'shuffle') {
+      targetVisible = [...visible].sort(
+        (a, b) =>
+          computeShuffleScore(a.seriesKey, shuffleSeed) -
+          computeShuffleScore(b.seriesKey, shuffleSeed),
+      );
+    } else if (sortBy === 'hot') {
       const hotOnly = visible.filter(
         (s) => normalizeHotBadge(s.hotBadge) !== null,
       );
@@ -392,10 +401,10 @@ export function SeriesGrid({
       hiddenSeries: hidden,
       followingCount: fCount,
     };
-  }, [seriesList, seriesStatuses, sortBy]);
+  }, [seriesList, seriesStatuses, sortBy, shuffleSeed]);
 
   // Zero-Latency Progressive Window Rendering (cụm 30 thẻ từ RAM, tự động reset về 30 khi đổi bộ lọc)
-  const windowKey = `${sortBy}|${seriesList.length}|${seriesList[0]?.seriesKey ?? ''}`;
+  const windowKey = `${sortBy}|${shuffleSeed}|${seriesList.length}|${seriesList[0]?.seriesKey ?? ''}`;
   const [windowState, setWindowState] = useState<{
     key: string;
     count: number;

@@ -12,7 +12,7 @@ Toàn bộ trải nghiệm rạp chiếu phim được hợp nhất trên **1 m�
 - **Desktop / Tablet (`md` trở lên):** Thanh nổi cạnh trái rộng `64px` (có nút mở rộng lên `224px`), bo góc `16px`, đặt trên nền `--bg-surface` với viền `--border-subtle`.
 - **Mobile (`< md`):** Tự động chuyển thành thanh **Bottom Bar** cố định dưới đáy màn hình (`h-16`, `pb-[env(safe-area-inset-bottom)]`).
 - **Thành phần bên trong:**
-  1. Logo **AniSub** (reset về không gian Đã đăng ký).
+  1. Logo **AniSub**: Bấm để tải lại toàn trang (`window.location.reload()` giúp PWA nhận ngay bản deploy Vercel mới nhất mà không cần đóng/mở lại app), đồng thời nếu không tích chọn sắp xếp nào (hoặc đang ở mặc định) thì liên tục đảo ngẫu nhiên (`shuffleSeed`) danh sách phim mỗi lần bấm. Bấm lại vào nút sắp xếp đang sáng cũng tự bỏ chọn để chuyển sang chế độ đảo ngẫu nhiên.
   2. Chuyển không gian & chế độ xem: **Đã đăng ký (Rạp Phim)**, **Khám phá YouTube (Explore)**, **Đang Cày Dở**, **Xem sau (`{count}`)**, nút mở **Kho Kênh Đăng Ký**, và nút **Khiên Quản Trị** (dành riêng Admin).
   3. Cụm chấm lọc nhanh 2 thể loại chuẩn: `Phim AI`, `HH2D`.
   4. Cụm đáy: Nút **Đổi Theme** (chọn nhanh 4 bộ Theme) + nút **Tài khoản Google** (Avatar + tên thật, Popover quản lý Whitelist & Đăng xuất).

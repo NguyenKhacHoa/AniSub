@@ -419,7 +419,9 @@ export function CommandHub({
                         type="button"
                         aria-pressed={active}
                         onClick={() =>
-                          startFilterTransition(() => onChangeSortBy(opt.value))
+                          startFilterTransition(() =>
+                            onChangeSortBy(active ? 'shuffle' : opt.value),
+                          )
                         }
                         className={`h-6 rounded-md px-2 text-xs font-medium transition-colors cursor-pointer ${
                           active
@@ -512,7 +514,9 @@ export function CommandHub({
                       type="button"
                       aria-pressed={active}
                       onClick={() =>
-                        startFilterTransition(() => onChangeSortBy(opt.value))
+                        startFilterTransition(() =>
+                          onChangeSortBy(active ? 'shuffle' : opt.value),
+                        )
                       }
                       className={`h-6 rounded-md px-2 text-xs font-medium transition-colors cursor-pointer ${
                         active

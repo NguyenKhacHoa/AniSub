@@ -51,6 +51,7 @@ interface FloatingRailProps {
   onNavigateLogin: () => void;
   onOpenWhitelistModal: () => void;
   onSignOut: () => void;
+  onBrandReload?: () => void;
 }
 
 const GENRE_DOTS: Array<Extract<GenreFilter, 'Phim AI' | 'HH2D'>> = [
@@ -76,6 +77,7 @@ export function FloatingRail({
   onNavigateLogin,
   onOpenWhitelistModal,
   onSignOut,
+  onBrandReload,
 }: FloatingRailProps) {
   const { theme, setTheme } = useTheme();
   const [expanded, setExpanded] = useState(false);
@@ -138,10 +140,16 @@ export function FloatingRail({
             <button
               type="button"
               onClick={() => {
-                onChangeViewMode('cinema');
-                onChangeGenreFilter('all');
+                if (onBrandReload) {
+                  onBrandReload();
+                } else if (typeof window !== 'undefined') {
+                  window.location.reload();
+                } else {
+                  onChangeViewMode('cinema');
+                  onChangeGenreFilter('all');
+                }
               }}
-              title="AniSub — Unified Cinema Workspace"
+              title="AniSub — Bấm để tải lại trang mới nhất & đảo ngẫu nhiên kho phim"
               className="flex items-center gap-2.5 cursor-pointer"
             >
               <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-primary)] text-[var(--accent-foreground)]">

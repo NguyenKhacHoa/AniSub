@@ -18,6 +18,7 @@ import {
   type SeriesGroup,
 } from '@/lib/series-parser';
 import {
+  computeShuffleScore,
   computeViewsPerHour,
   isTheatricalMovieVideo,
   mapDefaultCategoryToGenre,
@@ -219,7 +220,62 @@ export function UnifiedCinemaWorkspace({
   const [showTrailers, setShowTrailers] = useState(false);
   const [genreFilter, setGenreFilter] = useState<GenreFilter>('all');
   const [sortBy, setSortBy] = useState<SortOption>('newest');
+  const [shuffleSeed, setShuffleSeed] = useState<number>(1);
   const [onlyUnwatched, setOnlyUnwatched] = useState(false);
+
+  // Khôi phục trạng thái đảo ngẫu nhiên khi người dùng vừa bấm logo AniSub để tải lại trang mới nhất
+  useEffect(() => {
+    const rafId = window.requestAnimationFrame(() => {
+      try {
+        const savedSeed = Number(
+          window.sessionStorage.getItem('anisub_shuffle_seed') || '0',
+        );
+        const autoShuffle =
+          window.sessionStorage.getItem('anisub_auto_shuffle') === '1';
+        if (Number.isFinite(savedSeed) && savedSeed > 0) {
+          setShuffleSeed(savedSeed);
+        }
+        if (autoShuffle) {
+          setSortBy('shuffle');
+        }
+      } catch {
+        // Ignore storage error
+      }
+    });
+    return () => window.cancelAnimationFrame(rafId);
+  }, []);
+
+  const handleChangeSortBy = useCallback((nextSort: SortOption) => {
+    setSortBy(nextSort);
+    try {
+      if (nextSort === 'shuffle') {
+        const nextSeed = Date.now() ^ Math.floor(Math.random() * 0xffffffff);
+        setShuffleSeed(nextSeed);
+        window.sessionStorage.setItem('anisub_shuffle_seed', String(nextSeed));
+        window.sessionStorage.setItem('anisub_auto_shuffle', '1');
+      } else {
+        window.sessionStorage.removeItem('anisub_auto_shuffle');
+      }
+    } catch {
+      // Ignore storage error
+    }
+  }, []);
+
+  // Bấm vào logo / chữ AniSub: lưu seed đảo ngẫu nhiên mới (nếu không khóa sắp xếp) và tải lại toàn trang để nhận bản deploy Vercel mới nhất
+  const handleBrandReload = useCallback(() => {
+    try {
+      if (sortBy === 'shuffle' || sortBy === 'newest') {
+        const nextSeed = Date.now() ^ Math.floor(Math.random() * 0xffffffff);
+        window.sessionStorage.setItem('anisub_shuffle_seed', String(nextSeed));
+        window.sessionStorage.setItem('anisub_auto_shuffle', '1');
+      }
+    } catch {
+      // Ignore storage error
+    }
+    if (typeof window !== 'undefined') {
+      window.location.reload();
+    }
+  }, [sortBy]);
 
   const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
   const [activeSeriesKey, setActiveSeriesKey] = useState<string | null>(null);
@@ -349,6 +405,13 @@ export function UnifiedCinemaWorkspace({
       return true;
     });
 
+    if (sortBy === 'shuffle') {
+      return [...matched].sort(
+        (a, b) =>
+          computeShuffleScore(a.video_id, shuffleSeed) -
+          computeShuffleScore(b.video_id, shuffleSeed),
+      );
+    }
     if (sortBy === 'hot') {
       const hotOnly = matched.filter(
         (v) => normalizeHotBadge(v.hot_badge) !== null,
@@ -412,6 +475,7 @@ export function UnifiedCinemaWorkspace({
     genreFilter,
     debouncedSearchQuery,
     sortBy,
+    shuffleSeed,
     unavailableSet,
   ]);
 
@@ -2429,6 +2493,7 @@ export function UnifiedCinemaWorkspace({
         onNavigateLogin={handleNavigateLogin}
         onOpenWhitelistModal={() => setIsWhitelistOpen(true)}
         onSignOut={handleSignOut}
+        onBrandReload={handleBrandReload}
       />
 
       <main
@@ -2484,7 +2549,7 @@ export function UnifiedCinemaWorkspace({
               onChangeTheatricalCategory={setTheatricalCategory}
               totalTheatricalCount={totalTheatricalCount}
               sortBy={sortBy}
-              onChangeSortBy={setSortBy}
+              onChangeSortBy={handleChangeSortBy}
               onlyUnwatched={onlyUnwatched}
               onToggleOnlyUnwatched={setOnlyUnwatched}
               isRealtimeConnected={authStatus === 'authenticated'}
@@ -2536,6 +2601,7 @@ export function UnifiedCinemaWorkspace({
             totalEpisodesCount={totalSeriesEpisodesCount}
             seriesStatuses={seriesStatuses}
             sortBy={sortBy}
+            shuffleSeed={shuffleSeed}
             onSelectSeries={handleSelectSeries}
             onUpdateSeriesStatus={handleUpdateSeriesStatus}
             onVideoUnavailable={handleVideoUnavailable}
