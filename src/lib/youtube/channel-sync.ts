@@ -2,6 +2,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import {
   fetchChannelPlaylists,
   fetchChannelVideosPage,
+  fetchPlaylistTailVideos,
   fetchPlaylistVideosAll,
   type YouTubeFetchedVideo,
 } from '@/lib/youtube/api';
@@ -10,7 +11,11 @@ import {
   verifyTheatricalReleaseWithGoogleSearch,
   type MultimodalClassificationResult,
 } from '@/lib/ai/classifier';
-import { extractSeriesInfo, parseEpisodeInfo } from '@/lib/series-parser';
+import {
+  extractSeriesInfo,
+  normalizeSeriesSlug,
+  parseEpisodeInfo,
+} from '@/lib/series-parser';
 import type { Database, HotBadge } from '@/types/database';
 import {
   VERIFIED_THEATRICAL_TAG,
@@ -431,6 +436,79 @@ async function persistAndClassifyFetchedVideos(options: {
   const existingVideos: YouTubeFetchedVideo[] = fetchedVideos.filter((v) =>
     existingMap.has(v.video_id),
   );
+
+  // Tự động kế thừa `youtube_playlist_id` cho các tập mới kéo từ luồng `uploads`
+  // nếu bộ phim đó đã có Playlist chính thức trong DB -> tập mới nổi ngay lên đầu bộ phim!
+  const needsPlaylistInheritance = brandNewVideos.some(
+    (v) => !v.youtube_playlist_id && !v.is_short && v.video_type !== 'trailer',
+  );
+  if (needsPlaylistInheritance) {
+    const plRowsRes = await admin
+      .from('videos')
+      .select('title, series_name, youtube_playlist_id')
+      .eq('channel_id', channelId)
+      .not('youtube_playlist_id', 'is', null)
+      .limit(1000);
+
+    if (!plRowsRes.error && Array.isArray(plRowsRes.data) && plRowsRes.data.length > 0) {
+      const playlistBySlug = new Map<
+        string,
+        { playlistId: string; playlistTitle: string | null }
+      >();
+      for (const row of plRowsRes.data as Array<{
+        title: string;
+        series_name: string | null;
+        youtube_playlist_id: string | null;
+      }>) {
+        const pid = row.youtube_playlist_id?.trim();
+        if (!pid) continue;
+        if (row.series_name && !row.series_name.includes('[CHIẾU RẠP]')) {
+          const plSlug = normalizeSeriesSlug(row.series_name);
+          if (plSlug.length >= 2 && !playlistBySlug.has(plSlug)) {
+            playlistBySlug.set(plSlug, {
+              playlistId: pid,
+              playlistTitle: row.series_name,
+            });
+          }
+        }
+        const extracted = extractSeriesInfo({
+          videoId: pid,
+          channelId,
+          title: row.title,
+          seriesName: row.series_name,
+        });
+        if (!extracted.isStandalone && !playlistBySlug.has(extracted.seriesSlug)) {
+          playlistBySlug.set(extracted.seriesSlug, {
+            playlistId: pid,
+            playlistTitle: row.series_name ?? extracted.seriesTitle,
+          });
+        }
+      }
+
+      if (playlistBySlug.size > 0) {
+        for (const v of brandNewVideos) {
+          if (v.youtube_playlist_id || v.is_short || v.video_type === 'trailer') {
+            continue;
+          }
+          const info = extractSeriesInfo({
+            videoId: v.video_id,
+            channelId: v.channel_id,
+            title: v.title,
+          });
+          if (!info.isStandalone) {
+            const matched = playlistBySlug.get(info.seriesSlug);
+            if (matched) {
+              v.youtube_playlist_id = matched.playlistId;
+              if (!v.playlist_title && matched.playlistTitle) {
+                v.playlist_title = matched.playlistTitle;
+              }
+              v.video_type = 'episode';
+            }
+          }
+        }
+      }
+    }
+  }
 
   // Luôn cập nhật thống kê lượt xem, độ hot & thông tin Playlist chính thức cho video đã có trong DB
   if (existingVideos.length > 0) {
@@ -925,6 +1003,89 @@ export async function syncChannelPlaylistsAll(options: {
 
   return {
     playlistsCount: sortedPlaylists.length,
+    fetchedCount: persisted.fetchedCount,
+    newVideosCount: persisted.newVideosCount,
+    warning: persisted.warning,
+  };
+}
+
+/**
+ * Phiên bản tối ưu tốc độ cho Cron 3 giờ: Kéo trang đầu & trang cuối (50 tập mới nhất ở cuối Playlist)
+ * cho các YouTube Playlists của kênh để tập mới nằm ở trang cuối Playlist luôn được cập nhật kịp thời.
+ */
+export async function syncChannelPlaylistsTail(options: {
+  channelId: string;
+  genreTags: PrimaryGenreTag[];
+  maxPlaylists?: number;
+  timeBudgetMs?: number;
+}): Promise<{
+  playlistsCount: number;
+  fetchedCount: number;
+  newVideosCount: number;
+  warning: string | null;
+}> {
+  const {
+    channelId,
+    genreTags,
+    maxPlaylists = 40,
+    timeBudgetMs = 8_000,
+  } = options;
+
+  const startedAt = Date.now();
+  const playlists = await fetchChannelPlaylists(channelId, 4);
+  const nonEmptyPlaylists = playlists.filter((p) => p.item_count > 0);
+  if (nonEmptyPlaylists.length === 0) {
+    return {
+      playlistsCount: 0,
+      fetchedCount: 0,
+      newVideosCount: 0,
+      warning: null,
+    };
+  }
+
+  const targetPlaylists = nonEmptyPlaylists.slice(0, maxPlaylists);
+  const videoMap = new Map<string, YouTubeFetchedVideo>();
+  const CONCURRENCY = 6;
+
+  for (let i = 0; i < targetPlaylists.length; i += CONCURRENCY) {
+    if (Date.now() - startedAt >= timeBudgetMs) break;
+    const batch = targetPlaylists.slice(i, i + CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map((pl) =>
+        fetchPlaylistTailVideos(channelId, pl.playlist_id, pl.title).catch(
+          () => [] as YouTubeFetchedVideo[],
+        ),
+      ),
+    );
+    for (const videos of batchResults) {
+      for (const v of videos) {
+        if (!videoMap.has(v.video_id)) {
+          videoMap.set(v.video_id, v);
+        }
+      }
+    }
+  }
+
+  const tailVideos = Array.from(videoMap.values());
+  if (tailVideos.length === 0) {
+    return {
+      playlistsCount: targetPlaylists.length,
+      fetchedCount: 0,
+      newVideosCount: 0,
+      warning: null,
+    };
+  }
+
+  const persisted = await persistAndClassifyFetchedVideos({
+    channelId,
+    genreTags,
+    fetchedVideos: tailVideos,
+    nextPageToken: null,
+    pagesFetched: targetPlaylists.length,
+  });
+
+  return {
+    playlistsCount: targetPlaylists.length,
     fetchedCount: persisted.fetchedCount,
     newVideosCount: persisted.newVideosCount,
     warning: persisted.warning,

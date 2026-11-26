@@ -592,6 +592,91 @@ export async function fetchPlaylistVideosAll(
 }
 
 /**
+ * Phiên bản tốc độ cao cho Cron 3 giờ: Kéo trang đầu (50 mục) VÀ trang cuối cùng (50 mục mới nhất)
+ * của một Playlist YouTube để không bao giờ bỏ sót tập mới nhất nằm ở cuối Playlist (khi Playlist > 50 tập).
+ */
+export async function fetchPlaylistTailVideos(
+  channelId: string,
+  playlistId: string,
+  playlistTitle: string,
+  maxWalkPages = 20,
+): Promise<YouTubeFetchedVideo[]> {
+  const apiKey = process.env.YOUTUBE_API_KEY?.trim();
+  if (!apiKey) return [];
+
+  let firstPageEntries: Array<{ vid: string; pos: number }> = [];
+  let lastPageEntries: Array<{ vid: string; pos: number }> = [];
+  let pageToken: string | undefined;
+  let pageCount = 0;
+
+  while (pageCount < maxWalkPages) {
+    const url = new URL('https://www.googleapis.com/youtube/v3/playlistItems');
+    url.searchParams.set('part', 'snippet,contentDetails');
+    url.searchParams.set('playlistId', playlistId);
+    url.searchParams.set('maxResults', '50');
+    if (pageToken) {
+      url.searchParams.set('pageToken', pageToken);
+    }
+    url.searchParams.set('key', apiKey);
+
+    const res = await fetch(url.toString(), { cache: 'no-store' });
+    const data = (await res
+      .json()
+      .catch(() => ({}))) as YouTubePlaylistItemsResponse;
+
+    if (!res.ok) {
+      break;
+    }
+
+    const currentEntries: Array<{ vid: string; pos: number }> = [];
+    for (const item of data.items ?? []) {
+      const rawTitle = item.snippet?.title?.trim();
+      if (rawTitle === 'Deleted video' || rawTitle === 'Private video') {
+        continue;
+      }
+      const vid =
+        item.contentDetails?.videoId || item.snippet?.resourceId?.videoId;
+      if (!vid) continue;
+      const pos =
+        typeof item.snippet?.position === 'number'
+          ? item.snippet.position
+          : pageCount * 50 + currentEntries.length;
+      currentEntries.push({ vid, pos });
+    }
+
+    if (pageCount === 0) {
+      firstPageEntries = currentEntries;
+    }
+    lastPageEntries = currentEntries;
+
+    if (!data.nextPageToken) break;
+    pageToken = data.nextPageToken;
+    pageCount += 1;
+  }
+
+  const positionByVideoId = new Map<string, number>();
+  const targetIds: string[] = [];
+  for (const entry of [...lastPageEntries, ...firstPageEntries]) {
+    if (!positionByVideoId.has(entry.vid)) {
+      positionByVideoId.set(entry.vid, entry.pos);
+      targetIds.push(entry.vid);
+    }
+  }
+
+  if (targetIds.length === 0) return [];
+
+  const details = await fetchVideoDetailsByIds(targetIds, channelId, apiKey);
+  return details.map((v) => ({
+    ...v,
+    video_type:
+      v.is_short || v.video_type === 'trailer' ? v.video_type : 'episode',
+    youtube_playlist_id: playlistId,
+    playlist_position: positionByVideoId.get(v.video_id) ?? null,
+    playlist_title: playlistTitle,
+  }));
+}
+
+/**
  * Helper tương thích ngược lấy nhanh danh sách video mới nhất (mặc định 50 video).
  */
 export async function fetchChannelLatestVideos(

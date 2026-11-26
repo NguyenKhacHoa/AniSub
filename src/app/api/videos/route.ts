@@ -12,6 +12,7 @@ import {
 } from '@/types/workspace';
 
 const DB_FETCH_BATCH_SIZE = 1000;
+export const dynamic = 'force-dynamic';
 
 function normalizeChannelTags(
   genreTags: string[] | null | undefined,
@@ -372,9 +373,16 @@ export async function GET(request: Request) {
       };
     });
 
-  return NextResponse.json({
-    videos: mergedVideos,
-    totalCount: mergedVideos.length,
-    hasMore: false,
-  });
+  return NextResponse.json(
+    {
+      videos: mergedVideos,
+      totalCount: mergedVideos.length,
+      hasMore: false,
+    },
+    {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+      },
+    },
+  );
 }
